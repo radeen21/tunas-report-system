@@ -1,1095 +1,1203 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  BookOpen,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
+  Save,
+  Search,
+  Users,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
-type Teacher = {
+type TeacherRow = {
   id: string;
-  full_name: string;
-  email: string | null;
-  phone: string | null;
-  teacher_code: string | null;
-  subjects: string[] | null;
+  full_name: string | null;
+  email?: string | null;
+  subjects?: string[] | string | null;
 };
 
-type StudentRelation = {
+type StudentRow = {
   id: string;
-  full_name: string;
-  grade: string | null;
-  level: string | null;
-  nis: string | null;
-  nisn: string | null;
-};
-
-type SubjectRelation = {
-  id: string;
-  name: string;
+  full_name: string | null;
   level: string | null;
   grade: string | null;
 };
 
-type AttendanceRow = {
+type SubjectRow = {
   id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  schedule_id: string | null;
-  attendance_date: string | null;
-  day_name: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  attendance_status: string | null;
-  understanding_status: string | null;
-  material_topic: string | null;
-  notes: string | null;
-  created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
-};
-
-type Attendance = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  schedule_id: string | null;
-  attendance_date: string | null;
-  day_name: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  attendance_status: string | null;
-  understanding_status: string | null;
-  material_topic: string | null;
-  notes: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+  name: string | null;
+  level?: string | null;
+  grade?: string | null;
 };
 
 type ScheduleRow = {
   id: string;
-  student_id: string | null;
   teacher_id: string | null;
+  student_id: string | null;
   subject_id: string | null;
-  day_name: string | null;
   schedule_date: string | null;
   start_time: string | null;
   end_time: string | null;
   session_name: string | null;
   material_topic: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+  semester?: string | null;
 };
 
-type Schedule = {
+type AttendanceRow = {
   id: string;
-  student_id: string | null;
   teacher_id: string | null;
+  student_id: string | null;
   subject_id: string | null;
-  day_name: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  session_name: string | null;
-  material_topic: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+  attendance_date: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  attendance_status?: string | null;
+  understanding_status?: string | null;
+  material_topic?: string | null;
+  note?: string | null;
 };
 
-type AttendanceForm = {
-  schedule_id: string;
-  student_id: string;
-  subject_id: string;
-  attendance_date: string;
-  day_name: string;
+type CurriculumProgram = {
+  id: string;
+  teacher_id: string | null;
+  program_type: string | null;
+  level: string | null;
+  grade: string | null;
+  subject_name: string | null;
+  semester: string | null;
+  academic_year: string | null;
+  status: string | null;
+};
+
+type CurriculumChapter = {
+  id: string;
+  curriculum_program_id: string | null;
+  chapter_title: string | null;
+  chapter_order: number | null;
+};
+
+type CurriculumSubChapter = {
+  id: string;
+  curriculum_chapter_id: string | null;
+  sub_chapter_title: string | null;
+  sub_chapter_order: number | null;
+  target_month: string | null;
+  planned_week: number | null;
+};
+
+type RombelSchedule = {
+  key: string;
+  teacher_id: string;
+  subject_id: string | null;
+  subject_name: string;
+  schedule_date: string;
   start_time: string;
   end_time: string;
-  attendance_status: string;
-  understanding_status: string;
+  session_name: string;
   material_topic: string;
-  notes: string;
+  semester: string;
+  schedules: ScheduleRow[];
+  students: StudentRow[];
+  alreadyAttendance: boolean;
 };
 
-const initialForm: AttendanceForm = {
-  schedule_id: "",
-  student_id: "",
-  subject_id: "",
-  attendance_date: new Date().toISOString().slice(0, 10),
-  day_name: "",
-  start_time: "",
-  end_time: "",
-  attendance_status: "Hadir",
-  understanding_status: "Paham",
-  material_topic: "",
-  notes: "",
+type AttendanceStudent = StudentRow & {
+  attendanceStatus: string;
+  understandingStatus: string;
+  note: string;
 };
 
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
+type ProgramWithChildren = CurriculumProgram & {
+  chapters: Array<
+    CurriculumChapter & {
+      sub_chapters: CurriculumSubChapter[];
+    }
+  >;
+};
+
+const attendanceOptions = ["Hadir", "Tidak Hadir", "Izin", "Sakit"];
+const understandingOptions = ["Paham", "Cukup Paham", "Belum Paham"];
+
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
-function formatDate(date: string | null) {
-  if (!date) return "-";
+function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
+  if (!subjects) return "Guru";
 
-  const parsedDate = new Date(date);
+  if (Array.isArray(subjects)) {
+    return `Guru — ${subjects.slice(0, 4).join(", ")}`;
+  }
 
-  return parsedDate.toLocaleDateString("id-ID", {
+  return `Guru — ${subjects}`;
+}
+
+function toYMD(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function todayYMD() {
+  return toYMD(new Date());
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(new Date(value));
 }
 
-function formatTime(time: string | null) {
-  if (!time) return "-";
-
-  return time.slice(0, 5);
+function formatTime(value?: string | null) {
+  if (!value) return "-";
+  return value.slice(0, 5);
 }
 
-function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
+function createRombelKey(schedule: ScheduleRow) {
+  return [
+    schedule.teacher_id || "",
+    schedule.subject_id || "",
+    schedule.schedule_date || "",
+    schedule.start_time || "",
+    schedule.end_time || "",
+    schedule.session_name || "",
+    schedule.material_topic || "",
+    schedule.semester || "",
+  ].join("|");
 }
 
-function getAttendanceBadge(status: string | null) {
-  if (status === "Hadir") return "bg-emerald-100 text-emerald-700";
-  if (status === "Sakit") return "bg-yellow-100 text-yellow-700";
-  if (status === "Izin") return "bg-blue-100 text-blue-700";
-  if (status === "Alpha") return "bg-red-100 text-red-700";
+function sameSubject(programSubject?: string | null, subjectName?: string | null) {
+  if (!programSubject || !subjectName) return false;
 
-  return "bg-slate-200 text-slate-700";
-}
-
-function getUnderstandingBadge(status: string | null) {
-  if (status === "Paham") return "bg-emerald-100 text-emerald-700";
-  if (status === "Bisa") return "bg-blue-100 text-blue-700";
-  if (status === "Mengerti") return "bg-purple-100 text-purple-700";
-  if (status === "Tidak Mengerti") return "bg-red-100 text-red-700";
-
-  return "bg-yellow-100 text-yellow-700";
-}
-
-function getDayNameFromDate(dateString: string) {
-  if (!dateString) return "";
-
-  const dayNames = [
-    "Minggu",
-    "Senin",
-    "Selasa",
-    "Rabu",
-    "Kamis",
-    "Jumat",
-    "Sabtu",
-  ];
-
-  const date = new Date(dateString);
-
-  return dayNames[date.getDay()] || "";
+  return normalizeText(programSubject) === normalizeText(subjectName);
 }
 
 export default function TeacherAbsensiPage() {
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [teacher, setTeacher] = useState<TeacherRow | null>(null);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
+  const [programs, setPrograms] = useState<ProgramWithChildren[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("Semua Status");
-  const [dateFilter, setDateFilter] = useState("");
+  const [dateFilter, setDateFilter] = useState(todayYMD());
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form, setForm] = useState<AttendanceForm>(initialForm);
+  const [selectedRombelKey, setSelectedRombelKey] = useState("");
+  const [rombelStudents, setRombelStudents] = useState<AttendanceStudent[]>([]);
 
-  async function fetchActiveTeacher() {
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+  const [selectedProgramId, setSelectedProgramId] = useState("");
+  const [selectedChapterId, setSelectedChapterId] = useState("");
+  const [selectedSubChapterId, setSelectedSubChapterId] = useState("");
 
-    if (error) throw new Error(error.message);
+  async function getCurrentTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
 
-    const teacherList = data || [];
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
 
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
+    if (email) {
+      const { data } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
 
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
-  }
-
-  async function fetchSchedules(teacherId: string) {
-    const { data, error } = await supabase
-      .from("schedules")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        day_name,
-        schedule_date,
-        start_time,
-        end_time,
-        session_name,
-        material_topic,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("schedule_date", { ascending: true })
-      .order("start_time", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as ScheduleRow[];
-
-    const normalizedSchedules: Schedule[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      day_name: item.day_name,
-      schedule_date: item.schedule_date,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      session_name: item.session_name,
-      material_topic: item.material_topic,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setSchedules(normalizedSchedules);
-  }
-
-  async function fetchAttendance(teacherId: string) {
-    const { data, error } = await supabase
-      .from("attendance")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        schedule_id,
-        attendance_date,
-        day_name,
-        start_time,
-        end_time,
-        attendance_status,
-        understanding_status,
-        material_topic,
-        notes,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("attendance_date", { ascending: false })
-      .order("start_time", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as AttendanceRow[];
-
-    const normalizedAttendance: Attendance[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      schedule_id: item.schedule_id,
-      attendance_date: item.attendance_date,
-      day_name: item.day_name,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      attendance_status: item.attendance_status,
-      understanding_status: item.understanding_status,
-      material_topic: item.material_topic,
-      notes: item.notes,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setAttendanceList(normalizedAttendance);
-  }
-
-  async function fetchPageData() {
-    setLoading(true);
-    setErrorMessage("");
-
-    try {
-      const activeTeacher = await fetchActiveTeacher();
-
-      if (!activeTeacher) {
-        setErrorMessage("Belum ada data guru di table teachers.");
-        setLoading(false);
-        return;
-      }
-
-      await Promise.all([
-        fetchSchedules(activeTeacher.id),
-        fetchAttendance(activeTeacher.id),
-      ]);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal mengambil data absensi.");
-      }
-    } finally {
-      setLoading(false);
+      if (data) return data as TeacherRow;
     }
+
+    const { data } = await supabase
+      .from("teachers")
+      .select("*")
+      .order("full_name")
+      .limit(1)
+      .maybeSingle();
+
+    return data as TeacherRow | null;
+  }
+
+  async function fetchData() {
+    setLoading(true);
+
+    const currentTeacher = await getCurrentTeacher();
+    setTeacher(currentTeacher);
+
+    if (!currentTeacher?.id) {
+      setStudents([]);
+      setSubjects([]);
+      setSchedules([]);
+      setAttendance([]);
+      setPrograms([]);
+      setLoading(false);
+      return;
+    }
+
+    const [
+      studentsRes,
+      subjectsRes,
+      schedulesRes,
+      attendanceRes,
+      programsRes,
+      chaptersRes,
+      subChaptersRes,
+    ] = await Promise.all([
+      supabase.from("students").select("*").order("full_name"),
+      supabase.from("subjects").select("*").order("name"),
+      supabase
+        .from("schedules")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id)
+        .order("schedule_date", { ascending: false }),
+      supabase
+        .from("attendance")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+      supabase
+        .from("curriculum_programs")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id)
+        .order("updated_at", { ascending: false }),
+      supabase
+        .from("curriculum_chapters")
+        .select("*")
+        .order("chapter_order", { ascending: true }),
+      supabase
+        .from("curriculum_sub_chapters")
+        .select("*")
+        .order("sub_chapter_order", { ascending: true }),
+    ]);
+
+    const studentsData = (studentsRes.data || []) as StudentRow[];
+    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+    const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
+    const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
+    const programsData = (programsRes.data || []) as CurriculumProgram[];
+    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
+    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
+
+    const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
+
+    subChaptersData.forEach((subChapter) => {
+      if (!subChapter.curriculum_chapter_id) return;
+
+      const current = subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
+      current.push(subChapter);
+      subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
+    });
+
+    const chaptersByProgram = new Map<
+      string,
+      Array<CurriculumChapter & { sub_chapters: CurriculumSubChapter[] }>
+    >();
+
+    chaptersData.forEach((chapter) => {
+      if (!chapter.curriculum_program_id) return;
+
+      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
+
+      current.push({
+        ...chapter,
+        sub_chapters: subChaptersByChapter.get(chapter.id) || [],
+      });
+
+      chaptersByProgram.set(chapter.curriculum_program_id, current);
+    });
+
+    const programsWithChildren: ProgramWithChildren[] = programsData.map(
+      (program) => ({
+        ...program,
+        chapters: chaptersByProgram.get(program.id) || [],
+      })
+    );
+
+    setStudents(studentsData);
+    setSubjects(subjectsData);
+    setSchedules(schedulesData);
+    setAttendance(attendanceData);
+    setPrograms(programsWithChildren);
+
+    setLoading(false);
   }
 
   useEffect(() => {
-    fetchPageData();
+    fetchData();
+
+    const channel = supabase
+      .channel("teacher-absensi-kbm-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "schedules" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_programs" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_chapters" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_sub_chapters" },
+        fetchData
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const filteredAttendance = useMemo(() => {
-    const keyword = search.toLowerCase();
+  const subjectMap = useMemo(() => {
+    return new Map(subjects.map((subject) => [subject.id, subject]));
+  }, [subjects]);
 
-    return attendanceList.filter((attendance) => {
-      const matchSearch =
-        attendance.students?.full_name?.toLowerCase().includes(keyword) ||
-        attendance.students?.grade?.toLowerCase().includes(keyword) ||
-        attendance.subjects?.name?.toLowerCase().includes(keyword) ||
-        attendance.material_topic?.toLowerCase().includes(keyword) ||
-        attendance.notes?.toLowerCase().includes(keyword);
+  const studentMap = useMemo(() => {
+    return new Map(students.map((student) => [student.id, student]));
+  }, [students]);
 
-      const matchStatus =
-        statusFilter === "Semua Status" ||
-        attendance.attendance_status === statusFilter;
+  const rombelSchedules = useMemo(() => {
+    const grouped = new Map<string, RombelSchedule>();
 
-      const matchDate =
-        !dateFilter || attendance.attendance_date === dateFilter;
+    schedules
+      .filter((schedule) => {
+        if (!dateFilter) return true;
+        return schedule.schedule_date === dateFilter;
+      })
+      .forEach((schedule) => {
+        const key = createRombelKey(schedule);
 
-      return matchSearch && matchStatus && matchDate;
+        const subject = schedule.subject_id
+          ? subjectMap.get(schedule.subject_id)
+          : null;
+
+        const student = schedule.student_id
+          ? studentMap.get(schedule.student_id)
+          : null;
+
+        const current = grouped.get(key);
+
+        const hasAttendance = attendance.some((item) => {
+          return (
+            item.teacher_id === schedule.teacher_id &&
+            item.subject_id === schedule.subject_id &&
+            item.attendance_date === schedule.schedule_date &&
+            item.start_time === schedule.start_time &&
+            item.end_time === schedule.end_time &&
+            item.student_id === schedule.student_id
+          );
+        });
+
+        if (!current) {
+          grouped.set(key, {
+            key,
+            teacher_id: schedule.teacher_id || "",
+            subject_id: schedule.subject_id,
+            subject_name: subject?.name || "-",
+            schedule_date: schedule.schedule_date || "",
+            start_time: schedule.start_time || "",
+            end_time: schedule.end_time || "",
+            session_name: schedule.session_name || "-",
+            material_topic: schedule.material_topic || "-",
+            semester: schedule.semester || "-",
+            schedules: [schedule],
+            students: student ? [student] : [],
+            alreadyAttendance: hasAttendance,
+          });
+
+          return;
+        }
+
+        current.schedules.push(schedule);
+
+        if (student && !current.students.some((item) => item.id === student.id)) {
+          current.students.push(student);
+        }
+
+        current.alreadyAttendance = current.alreadyAttendance || hasAttendance;
+      });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      return `${a.schedule_date} ${a.start_time}`.localeCompare(
+        `${b.schedule_date} ${b.start_time}`
+      );
     });
-  }, [attendanceList, search, statusFilter, dateFilter]);
+  }, [schedules, attendance, dateFilter, subjectMap, studentMap]);
 
-  const todayAttendance = attendanceList.filter(
-    (attendance) => attendance.attendance_date === getTodayDate()
-  ).length;
+  const filteredRombelSchedules = useMemo(() => {
+    const q = normalizeText(search);
 
-  const totalPresent = attendanceList.filter(
-    (attendance) => attendance.attendance_status === "Hadir"
-  ).length;
+    return rombelSchedules.filter((rombel) => {
+      if (!q) return true;
 
-  const attendancePercentage =
-    attendanceList.length > 0
-      ? Math.round((totalPresent / attendanceList.length) * 100)
-      : 0;
+      return (
+        normalizeText(rombel.subject_name).includes(q) ||
+        normalizeText(rombel.session_name).includes(q) ||
+        normalizeText(rombel.material_topic).includes(q) ||
+        rombel.students.some((student) =>
+          normalizeText(student.full_name).includes(q)
+        )
+      );
+    });
+  }, [rombelSchedules, search]);
 
-  const totalNotPresent = attendanceList.filter(
-    (attendance) => attendance.attendance_status !== "Hadir"
-  ).length;
+  const selectedRombel = useMemo(() => {
+    return rombelSchedules.find((rombel) => rombel.key === selectedRombelKey) || null;
+  }, [rombelSchedules, selectedRombelKey]);
 
-  function openModal(schedule?: Schedule) {
-    setErrorMessage("");
+  const availablePrograms = useMemo(() => {
+    if (!selectedRombel) return programs;
 
-    if (schedule) {
-      setForm({
-        schedule_id: schedule.id,
-        student_id: schedule.student_id || "",
-        subject_id: schedule.subject_id || "",
-        attendance_date:
-          schedule.schedule_date || new Date().toISOString().slice(0, 10),
-        day_name:
-          schedule.day_name ||
-          getDayNameFromDate(new Date().toISOString().slice(0, 10)),
-        start_time: schedule.start_time || "",
-        end_time: schedule.end_time || "",
-        attendance_status: "Hadir",
-        understanding_status: "Paham",
-        material_topic: schedule.material_topic || "",
-        notes: "",
-      });
-    } else {
-      setForm({
-        ...initialForm,
-        attendance_date: new Date().toISOString().slice(0, 10),
-        day_name: getDayNameFromDate(new Date().toISOString().slice(0, 10)),
-      });
-    }
+    return programs.filter((program) => {
+      const matchSubject = sameSubject(
+        program.subject_name,
+        selectedRombel.subject_name
+      );
 
-    setIsModalOpen(true);
-  }
+      const matchLevel = selectedRombel.students.some(
+        (student) => student.level === program.level
+      );
 
-  function handleScheduleChange(scheduleId: string) {
-    const selectedSchedule = schedules.find(
-      (schedule) => schedule.id === scheduleId
+      const matchGrade = selectedRombel.students.some(
+        (student) => student.grade === program.grade
+      );
+
+      return matchSubject || (matchLevel && matchGrade);
+    });
+  }, [programs, selectedRombel]);
+
+  const selectedProgram = useMemo(() => {
+    return programs.find((program) => program.id === selectedProgramId) || null;
+  }, [programs, selectedProgramId]);
+
+  const selectedChapter = useMemo(() => {
+    return (
+      selectedProgram?.chapters.find(
+        (chapter) => chapter.id === selectedChapterId
+      ) || null
     );
+  }, [selectedProgram, selectedChapterId]);
 
-    if (!selectedSchedule) {
-      setForm({
-        ...form,
-        schedule_id: "",
-        student_id: "",
-        subject_id: "",
-        day_name: getDayNameFromDate(form.attendance_date),
-        start_time: "",
-        end_time: "",
-        material_topic: "",
-      });
+  const selectedSubChapter = useMemo(() => {
+    return (
+      selectedChapter?.sub_chapters.find(
+        (subChapter) => subChapter.id === selectedSubChapterId
+      ) || null
+    );
+  }, [selectedChapter, selectedSubChapterId]);
+
+  const summary = useMemo(() => {
+    const totalRombel = rombelSchedules.length;
+
+    const totalStudents = rombelSchedules.reduce((sum, rombel) => {
+      return sum + rombel.students.length;
+    }, 0);
+
+    const completed = rombelSchedules.filter(
+      (rombel) => rombel.alreadyAttendance
+    ).length;
+
+    const pending = totalRombel - completed;
+
+    return {
+      totalRombel,
+      totalStudents,
+      completed,
+      pending,
+    };
+  }, [rombelSchedules]);
+
+  function handleSelectRombel(rombelKey: string) {
+    setSelectedRombelKey(rombelKey);
+
+    const rombel = rombelSchedules.find((item) => item.key === rombelKey);
+
+    if (!rombel) {
+      setRombelStudents([]);
       return;
     }
 
-    setForm({
-      ...form,
-      schedule_id: selectedSchedule.id,
-      student_id: selectedSchedule.student_id || "",
-      subject_id: selectedSchedule.subject_id || "",
-      attendance_date:
-        selectedSchedule.schedule_date ||
-        form.attendance_date ||
-        new Date().toISOString().slice(0, 10),
-      day_name:
-        selectedSchedule.day_name ||
-        getDayNameFromDate(form.attendance_date),
-      start_time: selectedSchedule.start_time || "",
-      end_time: selectedSchedule.end_time || "",
-      material_topic: selectedSchedule.material_topic || "",
+    const existingAttendanceByStudent = new Map<string, AttendanceRow>();
+
+    attendance.forEach((item) => {
+      if (
+        item.teacher_id === rombel.teacher_id &&
+        item.subject_id === rombel.subject_id &&
+        item.attendance_date === rombel.schedule_date &&
+        item.start_time === rombel.start_time &&
+        item.end_time === rombel.end_time &&
+        item.student_id
+      ) {
+        existingAttendanceByStudent.set(item.student_id, item);
+      }
     });
+
+    const nextStudents: AttendanceStudent[] = rombel.students.map((student) => {
+      const existing = existingAttendanceByStudent.get(student.id);
+
+      return {
+        ...student,
+        attendanceStatus: existing?.attendance_status || "Hadir",
+        understandingStatus: existing?.understanding_status || "Paham",
+        note: existing?.note || "",
+      };
+    });
+
+    setRombelStudents(nextStudents);
+
+    setSelectedProgramId("");
+    setSelectedChapterId("");
+    setSelectedSubChapterId("");
   }
 
-  async function handleSubmitAttendance(
-    event: React.FormEvent<HTMLFormElement>
+  function updateStudentAttendance(
+    studentId: string,
+    field: "attendanceStatus" | "understandingStatus" | "note",
+    value: string
   ) {
-    event.preventDefault();
-    setErrorMessage("");
+    setRombelStudents((prev) =>
+      prev.map((student) => {
+        if (student.id !== studentId) return student;
 
+        const next = {
+          ...student,
+          [field]: value,
+        };
+
+        if (field === "attendanceStatus" && value === "Hadir") {
+          next.note = "";
+        }
+
+        if (field === "attendanceStatus" && value !== "Hadir") {
+          next.understandingStatus = "-";
+        }
+
+        return next;
+      })
+    );
+  }
+
+  function markAllPresent() {
+    if (rombelStudents.length === 0) {
+      alert("Pilih jadwal/rombel terlebih dahulu.");
+      return;
+    }
+
+    setRombelStudents((prev) =>
+      prev.map((student) => ({
+        ...student,
+        attendanceStatus: "Hadir",
+        understandingStatus: "Paham",
+        note: "",
+      }))
+    );
+  }
+
+  function validateBeforeSave() {
     if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
-      return;
+      alert("Data guru tidak ditemukan.");
+      return false;
     }
 
-    if (!form.schedule_id) {
-      setErrorMessage("Jadwal wajib dipilih.");
-      return;
+    if (!selectedRombel) {
+      alert("Pilih jadwal/rombel terlebih dahulu.");
+      return false;
     }
 
-    if (!form.student_id) {
-      setErrorMessage("Siswa wajib dipilih dari jadwal.");
-      return;
+    if (rombelStudents.length === 0) {
+      alert("Tidak ada murid di rombel ini.");
+      return false;
     }
 
-    if (!form.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih dari jadwal.");
-      return;
+    const missingNote = rombelStudents.find((student) => {
+      return student.attendanceStatus !== "Hadir" && !student.note.trim();
+    });
+
+    if (missingNote) {
+      alert(
+        `Keterangan wajib diisi untuk murid yang tidak hadir: ${missingNote.full_name}`
+      );
+      return false;
     }
 
-    if (!form.attendance_date) {
-      setErrorMessage("Tanggal absensi wajib diisi.");
+    if (!selectedProgramId) {
+      alert("Pilih Program Semester terlebih dahulu.");
+      return false;
+    }
+
+    if (!selectedChapterId) {
+      alert("Pilih Bab terlebih dahulu.");
+      return false;
+    }
+
+    if (!selectedSubChapterId) {
+      alert("Pilih Sub Bab terlebih dahulu.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function handleSaveAttendance() {
+    if (!validateBeforeSave()) return;
+    if (!teacher?.id || !selectedRombel || !selectedProgram || !selectedChapter || !selectedSubChapter) {
       return;
     }
 
     setSaving(true);
 
-    try {
-      const { error } = await supabase.from("attendance").insert({
-        student_id: form.student_id,
-        teacher_id: teacher.id,
-        subject_id: form.subject_id,
-        schedule_id: form.schedule_id || null,
-        attendance_date: form.attendance_date,
-        day_name: form.day_name || getDayNameFromDate(form.attendance_date),
-        start_time: form.start_time || null,
-        end_time: form.end_time || null,
-        attendance_status: form.attendance_status,
-        understanding_status: form.understanding_status,
-        material_topic: form.material_topic.trim() || null,
-        notes: form.notes.trim() || null,
-      });
+    const now = new Date().toISOString();
 
-      if (error) {
-        throw new Error(error.message);
-      }
+    const { error: deleteAttendanceError } = await supabase
+      .from("attendance")
+      .delete()
+      .eq("teacher_id", teacher.id)
+      .eq("subject_id", selectedRombel.subject_id)
+      .eq("attendance_date", selectedRombel.schedule_date)
+      .eq("start_time", selectedRombel.start_time)
+      .eq("end_time", selectedRombel.end_time);
 
-      setForm({
-        ...initialForm,
-        attendance_date: new Date().toISOString().slice(0, 10),
-      });
-      setIsModalOpen(false);
-      await fetchAttendance(teacher.id);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal menyimpan absensi.");
-      }
-    } finally {
+    if (deleteAttendanceError) {
       setSaving(false);
+      alert(`Gagal reset absensi lama: ${deleteAttendanceError.message}`);
+      return;
     }
-  }
 
-  function closeModal() {
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm({
-      ...initialForm,
-      attendance_date: new Date().toISOString().slice(0, 10),
-    });
-  }
+    const attendancePayload = rombelStudents.map((student) => ({
+      teacher_id: teacher.id,
+      student_id: student.id,
+      subject_id: selectedRombel.subject_id,
+      attendance_date: selectedRombel.schedule_date,
+      start_time: selectedRombel.start_time,
+      end_time: selectedRombel.end_time,
+      attendance_status: student.attendanceStatus,
+      understanding_status:
+        student.attendanceStatus === "Hadir" ? student.understandingStatus : "-",
+      material_topic: selectedRombel.material_topic,
+      note: student.note.trim() || null,
+      created_at: now,
+      updated_at: now,
+    }));
 
-  const selectedSchedule = schedules.find(
-    (schedule) => schedule.id === form.schedule_id
-  );
+    const { error: insertAttendanceError } = await supabase
+      .from("attendance")
+      .insert(attendancePayload);
+
+    if (insertAttendanceError) {
+      setSaving(false);
+      alert(`Gagal simpan absensi: ${insertAttendanceError.message}`);
+      return;
+    }
+
+    await supabase
+      .from("curriculum_progress")
+      .delete()
+      .eq("teacher_id", teacher.id)
+      .eq("curriculum_program_id", selectedProgram.id)
+      .eq("curriculum_chapter_id", selectedChapter.id)
+      .eq("curriculum_sub_chapter_id", selectedSubChapter.id)
+      .eq("teaching_date", selectedRombel.schedule_date);
+
+    const presentStudents = rombelStudents.filter(
+      (student) => student.attendanceStatus === "Hadir"
+    );
+
+    if (presentStudents.length > 0) {
+      const progressPayload = presentStudents.map((student) => ({
+        curriculum_program_id: selectedProgram.id,
+        curriculum_chapter_id: selectedChapter.id,
+        curriculum_sub_chapter_id: selectedSubChapter.id,
+        teacher_id: teacher.id,
+        student_id: student.id,
+        teaching_date: selectedRombel.schedule_date,
+        status: "completed",
+        created_at: now,
+        updated_at: now,
+      }));
+
+      const { error: progressError } = await supabase
+        .from("curriculum_progress")
+        .insert(progressPayload);
+
+      if (progressError) {
+        setSaving(false);
+        alert(
+          `Absensi tersimpan, tapi checklist Program Semester gagal: ${progressError.message}`
+        );
+        return;
+      }
+    }
+
+    await fetchData();
+
+    setSaving(false);
+    alert("Absensi KBM berhasil disimpan dan Program Semester sudah ter-update.");
+
+    setSelectedRombelKey("");
+    setRombelStudents([]);
+    setSelectedProgramId("");
+    setSelectedChapterId("");
+    setSelectedSubChapterId("");
+  }
 
   return (
     <TeacherLayout
       activeMenu="Absensi KBM"
-      searchPlaceholder="Cari absensi KBM..."
-      buttonLabel="+ Input Absensi"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={formatTeacherSubject(teacher?.subjects)}
+      searchPlaceholder="Cari absensi..."
     >
-      <div className="w-full max-w-full overflow-hidden">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#6B4A3A]">
-              Teacher Portal
-            </p>
+      <section className="space-y-7">
+        <div>
+          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+            Teacher Portal
+          </p>
 
-            <h1 className="mt-1 text-[30px] font-bold tracking-tight">
-              Absensi KBM
-            </h1>
+          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+            Absensi KBM
+          </h1>
 
-            <p className="mt-1 text-sm text-[#6B4A3A]">
-              Input dan pantau kehadiran siswa untuk{" "}
-              <span className="font-bold text-[#2B1B18]">
-                {teacher?.full_name || "guru aktif"}
-              </span>
-              .
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => openModal()}
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-          >
-            + Input Absensi
-          </button>
+          <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
+            Pilih jadwal/rombel, pilih Program Semester, Bab, Sub Bab, lalu
+            input absensi murid. Sub Bab yang dipilih otomatis menjadi checklist
+            realisasi Program Semester.
+          </p>
         </div>
 
-        {errorMessage && !isModalOpen && (
-          <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errorMessage}
-          </div>
-        )}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<CalendarDays className="h-5 w-5" />}
+            label="Rombel Hari Ini"
+            value={summary.totalRombel}
+            info={formatDate(dateFilter)}
+            tone="pink"
+          />
 
-        {loading && (
-          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Loading absensi KBM...
-          </div>
-        )}
+          <SummaryCard
+            icon={<Users className="h-5 w-5" />}
+            label="Total Murid"
+            value={summary.totalStudents}
+            info="Rombel"
+            tone="blue"
+          />
 
-        {!loading && (
-          <>
-            <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Total Absensi</p>
-                <p className="mt-4 text-3xl font-bold">
-                  {attendanceList.length}
-                </p>
-              </div>
+          <SummaryCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="Sudah Diabsen"
+            value={summary.completed}
+            info="Done"
+            tone="green"
+          />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Absensi Hari Ini</p>
-                <p className="mt-4 text-3xl font-bold">{todayAttendance}</p>
-              </div>
+          <SummaryCard
+            icon={<ClipboardCheck className="h-5 w-5" />}
+            label="Belum Diabsen"
+            value={summary.pending}
+            info="Pending"
+            tone="orange"
+          />
+        </div>
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Kehadiran</p>
-                <p className="mt-4 text-3xl font-bold">
-                  {attendancePercentage}%
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Tidak Hadir</p>
-                <p className="mt-4 text-3xl font-bold">{totalNotPresent}</p>
-              </div>
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr]">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari mapel, sesi, materi, atau nama murid..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
             </div>
 
-            <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_220px_220px]">
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, kelas, mapel, materi, catatan..."
-                  className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                />
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(event) => {
+                setDateFilter(event.target.value);
+                setSelectedRombelKey("");
+                setRombelStudents([]);
+              }}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </div>
+        </div>
 
-                <select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                >
-                  <option>Semua Status</option>
-                  <option>Hadir</option>
-                  <option>Sakit</option>
-                  <option>Izin</option>
-                  <option>Alpha</option>
-                </select>
-
-                <input
-                  type="date"
-                  value={dateFilter}
-                  onChange={(event) => setDateFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                />
-              </div>
+        <div className="grid gap-5 xl:grid-cols-[0.9fr_1.4fr]">
+          <div className="rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+            <div className="border-b border-[#EADACA] px-5 py-4">
+              <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+                Pilih Jadwal / Rombel
+              </h2>
+              <p className="mt-1 text-[13px] text-[#6F5549]">
+                Data diambil dari Jadwal Mengajar.
+              </p>
             </div>
 
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
-              <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-                <div className="border-b border-[#E8D6C1] px-6 py-5">
-                  <h2 className="text-lg font-bold">Rekap Absensi</h2>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Data absensi KBM yang tersimpan di Supabase.
-                  </p>
-                </div>
+            <div className="max-h-[620px] space-y-3 overflow-y-auto p-5">
+              {loading ? (
+                <p className="py-10 text-center text-[14px] text-[#6F5549]">
+                  Memuat jadwal...
+                </p>
+              ) : filteredRombelSchedules.length === 0 ? (
+                <p className="py-10 text-center text-[14px] text-[#6F5549]">
+                  Tidak ada jadwal pada tanggal ini.
+                </p>
+              ) : (
+                filteredRombelSchedules.map((rombel) => (
+                  <button
+                    key={rombel.key}
+                    type="button"
+                    onClick={() => handleSelectRombel(rombel.key)}
+                    className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
+                      selectedRombelKey === rombel.key
+                        ? "border-[#8C0F2D] bg-[#FFF2F5]"
+                        : "border-[#EADACA] bg-[#FFFCF8] hover:bg-[#FFF8EF]"
+                    }`}
+                  >
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[15px] font-extrabold text-[#2B1B18]">
+                          {rombel.subject_name}
+                        </p>
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          {formatTime(rombel.start_time)} -{" "}
+                          {formatTime(rombel.end_time)} • {rombel.session_name}
+                        </p>
+                      </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1180px] text-left">
-                    <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
-                      <tr>
-                        <th className="px-4 py-4">Hari</th>
-                        <th className="px-4 py-4">Tanggal</th>
-                        <th className="px-4 py-4">Jam</th>
-                        <th className="px-4 py-4">Siswa</th>
-                        <th className="px-4 py-4">Kelas</th>
-                        <th className="px-4 py-4">Mapel</th>
-                        <th className="px-4 py-4">Kehadiran</th>
-                        <th className="px-4 py-4">Pemahaman</th>
-                        <th className="px-4 py-4">Materi</th>
-                        <th className="px-4 py-4">Catatan</th>
-                        <th className="px-4 py-4">Aksi</th>
-                      </tr>
-                    </thead>
+                      <span
+                        className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${
+                          rombel.alreadyAttendance
+                            ? "bg-[#C7F0DA] text-[#158A58]"
+                            : "bg-[#FFF2B8] text-[#B26A00]"
+                        }`}
+                      >
+                        {rombel.alreadyAttendance ? "Sudah" : "Belum"}
+                      </span>
+                    </div>
 
-                    <tbody className="divide-y divide-[#E8D6C1]">
-                      {filteredAttendance.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={11}
-                            className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
-                          >
-                            Belum ada data absensi untuk guru ini.
-                          </td>
-                        </tr>
-                      )}
-
-                      {filteredAttendance.map((attendance) => (
-                        <tr key={attendance.id} className="hover:bg-[#FFF8EF]">
-                          <td className="px-4 py-4 font-semibold">
-                            {attendance.day_name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {formatDate(attendance.attendance_date)}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {formatTime(attendance.start_time)} -{" "}
-                            {formatTime(attendance.end_time)}
-                          </td>
-
-                          <td className="px-4 py-4 font-semibold">
-                            {attendance.students?.full_name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {attendance.students?.grade || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {attendance.subjects?.name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-bold ${getAttendanceBadge(
-                                attendance.attendance_status
-                              )}`}
-                            >
-                              {attendance.attendance_status || "-"}
-                            </span>
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-bold ${getUnderstandingBadge(
-                                attendance.understanding_status
-                              )}`}
-                            >
-                              {attendance.understanding_status || "-"}
-                            </span>
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {attendance.material_topic || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {attendance.notes || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const schedule = schedules.find(
-                                  (item) => item.id === attendance.schedule_id
-                                );
-                                openModal(schedule);
-                              }}
-                              className="rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
-                            >
-                              + Input Lagi
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Guru Aktif</h2>
-
-                  <div className="mt-5 rounded-2xl bg-[#FFF8EF] p-5">
-                    <p className="text-sm text-[#6B4A3A]">Nama Guru</p>
-                    <p className="mt-2 text-xl font-bold">
-                      {teacher?.full_name || "-"}
+                    <p className="text-[13px] text-[#6F5549]">
+                      Materi: {rombel.material_topic}
                     </p>
 
-                    <div className="mt-4 space-y-2 text-sm text-[#6B4A3A]">
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Kode:
-                        </span>{" "}
-                        {teacher?.teacher_code || "-"}
-                      </p>
-
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Email:
-                        </span>{" "}
-                        {teacher?.email || "-"}
-                      </p>
-
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Mapel:
-                        </span>{" "}
-                        {teacher?.subjects?.join(", ") || "-"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Jadwal Tersedia</h2>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Pilih jadwal saat input absensi.
-                  </p>
-
-                  <div className="mt-5 space-y-3">
-                    {schedules.length === 0 && (
-                      <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
-                        Belum ada jadwal mengajar.
-                      </div>
-                    )}
-
-                    {schedules.slice(0, 4).map((schedule) => (
-                      <div
-                        key={schedule.id}
-                        className="rounded-xl border border-[#E8D6C1] p-4"
-                      >
-                        <p className="font-bold">
-                          {schedule.students?.full_name || "-"}
-                        </p>
-
-                        <p className="mt-1 text-sm text-[#6B4A3A]">
-                          {schedule.day_name || "-"} •{" "}
-                          {formatTime(schedule.start_time)} -{" "}
-                          {formatTime(schedule.end_time)}
-                        </p>
-
-                        <p className="mt-1 text-sm text-[#6B4A3A]">
-                          {schedule.subjects?.name || "-"} •{" "}
-                          {schedule.material_topic || "-"}
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => openModal(schedule)}
-                          className="mt-3 w-full rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
-                        >
-                          + Input Absensi
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Catatan</h2>
-                  <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Tombol{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      + Input Absensi
-                    </span>{" "}
-                    akan membuka form absensi. Jika dipilih dari jadwal, data
-                    murid, mapel, jam, dan materi akan otomatis terisi.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Input Absensi KBM</h2>
-
-              <button
-                type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
+                    <p className="mt-2 text-[12px] font-bold text-[#8A5A48]">
+                      {rombel.students.length} murid
+                    </p>
+                  </button>
+                ))
               )}
+            </div>
+          </div>
 
-              <form onSubmit={handleSubmitAttendance} className="space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Pilih Jadwal</label>
+          <div className="space-y-5">
+            <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+              <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+                Program Semester
+              </h2>
+
+              <p className="mt-1 text-[13px] text-[#6F5549]">
+                Pilih Program, Bab, dan Sub Bab yang sedang diajarkan.
+              </p>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <FormGroup label="Program">
                   <select
-                    value={form.schedule_id}
-                    onChange={(event) =>
-                      handleScheduleChange(event.target.value)
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    value={selectedProgramId}
+                    onChange={(event) => {
+                      setSelectedProgramId(event.target.value);
+                      setSelectedChapterId("");
+                      setSelectedSubChapterId("");
+                    }}
+                    disabled={!selectedRombel}
+                    className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <option value="">Pilih jadwal</option>
-                    {schedules.map((schedule) => (
-                      <option key={schedule.id} value={schedule.id}>
-                        {schedule.students?.full_name || "-"} —{" "}
-                        {schedule.subjects?.name || "-"} —{" "}
-                        {schedule.day_name || "-"}{" "}
-                        {formatTime(schedule.start_time)}
+                    <option value="">Pilih Program</option>
+                    {availablePrograms.map((program) => (
+                      <option key={program.id} value={program.id}>
+                        {program.subject_name} — {program.level} {program.grade}
                       </option>
                     ))}
                   </select>
-                </div>
+                </FormGroup>
 
-                <div>
-                  <label className="text-sm font-bold">Murid</label>
-                  <input
-                    value={selectedSchedule?.students?.full_name || ""}
-                    readOnly
-                    placeholder="Otomatis dari jadwal"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-sm outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <input
-                    value={selectedSchedule?.subjects?.name || ""}
-                    readOnly
-                    placeholder="Otomatis dari jadwal"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-sm outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Tanggal</label>
-                    <input
-                      type="date"
-                      value={form.attendance_date}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          attendance_date: event.target.value,
-                          day_name: getDayNameFromDate(event.target.value),
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Hari</label>
-                    <input
-                      value={form.day_name}
-                      onChange={(event) =>
-                        setForm({ ...form, day_name: event.target.value })
-                      }
-                      placeholder="Senin"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Jam Mulai</label>
-                    <input
-                      type="time"
-                      value={form.start_time}
-                      onChange={(event) =>
-                        setForm({ ...form, start_time: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Jam Selesai</label>
-                    <input
-                      type="time"
-                      value={form.end_time}
-                      onChange={(event) =>
-                        setForm({ ...form, end_time: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Materi</label>
-                  <input
-                    value={form.material_topic}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        material_topic: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: Pecahan Senilai"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Kehadiran</label>
-                    <select
-                      value={form.attendance_status}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          attendance_status: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Hadir</option>
-                      <option>Sakit</option>
-                      <option>Izin</option>
-                      <option>Alpha</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Pemahaman</label>
-                    <select
-                      value={form.understanding_status}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          understanding_status: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Paham</option>
-                      <option>Mengerti</option>
-                      <option>Bisa</option>
-                      <option>Tahu</option>
-                      <option>Tidak Mengerti</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Catatan</label>
-                  <textarea
-                    value={form.notes}
-                    onChange={(event) =>
-                      setForm({ ...form, notes: event.target.value })
-                    }
-                    placeholder="Catatan absensi atau pemahaman siswa"
-                    rows={3}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                <FormGroup label="Bab">
+                  <select
+                    value={selectedChapterId}
+                    onChange={(event) => {
+                      setSelectedChapterId(event.target.value);
+                      setSelectedSubChapterId("");
+                    }}
+                    disabled={!selectedProgram}
+                    className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {saving ? "Menyimpan..." : "Simpan Absensi"}
-                  </button>
+                    <option value="">Pilih Bab</option>
+                    {selectedProgram?.chapters.map((chapter) => (
+                      <option key={chapter.id} value={chapter.id}>
+                        Bab {chapter.chapter_order}. {chapter.chapter_title}
+                      </option>
+                    ))}
+                  </select>
+                </FormGroup>
+
+                <FormGroup label="Sub Bab">
+                  <select
+                    value={selectedSubChapterId}
+                    onChange={(event) =>
+                      setSelectedSubChapterId(event.target.value)
+                    }
+                    disabled={!selectedChapter}
+                    className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <option value="">Pilih Sub Bab</option>
+                    {selectedChapter?.sub_chapters.map((subChapter) => (
+                      <option key={subChapter.id} value={subChapter.id}>
+                        {subChapter.sub_chapter_order}.{" "}
+                        {subChapter.sub_chapter_title}
+                      </option>
+                    ))}
+                  </select>
+                </FormGroup>
+              </div>
+
+              {selectedSubChapter ? (
+                <div className="mt-4 rounded-2xl border border-[#EADACA] bg-[#FFF8EF] px-4 py-3 text-[13px] text-[#6F5549]">
+                  Sub Bab dipilih:{" "}
+                  <span className="font-extrabold text-[#2B1B18]">
+                    {selectedSubChapter.sub_chapter_title}
+                  </span>
                 </div>
-              </form>
+              ) : null}
+            </div>
+
+            <div className="rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+              <div className="flex flex-col justify-between gap-3 border-b border-[#EADACA] px-5 py-4 md:flex-row md:items-center">
+                <div>
+                  <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+                    Input Absensi Murid
+                  </h2>
+
+                  <p className="mt-1 text-[13px] text-[#6F5549]">
+                    {selectedRombel
+                      ? `${selectedRombel.subject_name} • ${formatDate(
+                          selectedRombel.schedule_date
+                        )}`
+                      : "Pilih jadwal/rombel terlebih dahulu."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={markAllPresent}
+                  disabled={rombelStudents.length === 0}
+                  className="h-10 rounded-xl border border-[#DCC8B6] px-4 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Tandai Semua Hadir
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] border-collapse">
+                  <thead>
+                    <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                      <th className="px-5 py-4">Murid</th>
+                      <th className="px-5 py-4">Kelas</th>
+                      <th className="px-5 py-4">Kehadiran</th>
+                      <th className="px-5 py-4">Pemahaman</th>
+                      <th className="px-5 py-4">Keterangan</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {rombelStudents.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={5}
+                          className="px-5 py-12 text-center text-[#6F5549]"
+                        >
+                          Belum ada rombel dipilih.
+                        </td>
+                      </tr>
+                    ) : (
+                      rombelStudents.map((student) => (
+                        <tr
+                          key={student.id}
+                          className="border-b border-[#F0E1D4] text-[14px]"
+                        >
+                          <td className="px-5 py-4 font-extrabold text-[#2B1B18]">
+                            {student.full_name}
+                          </td>
+
+                          <td className="px-5 py-4 text-[#6F5549]">
+                            {student.level} — {student.grade}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <select
+                              value={student.attendanceStatus}
+                              onChange={(event) =>
+                                updateStudentAttendance(
+                                  student.id,
+                                  "attendanceStatus",
+                                  event.target.value
+                                )
+                              }
+                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none focus:border-[#9C0824]"
+                            >
+                              {attendanceOptions.map((option) => (
+                                <option key={option}>{option}</option>
+                              ))}
+                            </select>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <select
+                              value={student.understandingStatus}
+                              onChange={(event) =>
+                                updateStudentAttendance(
+                                  student.id,
+                                  "understandingStatus",
+                                  event.target.value
+                                )
+                              }
+                              disabled={student.attendanceStatus !== "Hadir"}
+                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {student.attendanceStatus !== "Hadir" ? (
+                                <option>-</option>
+                              ) : (
+                                understandingOptions.map((option) => (
+                                  <option key={option}>{option}</option>
+                                ))
+                              )}
+                            </select>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <input
+                              value={student.note}
+                              onChange={(event) =>
+                                updateStudentAttendance(
+                                  student.id,
+                                  "note",
+                                  event.target.value
+                                )
+                              }
+                              placeholder={
+                                student.attendanceStatus === "Hadir"
+                                  ? "Opsional"
+                                  : "Wajib isi alasan"
+                              }
+                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+                            />
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="px-5 py-5">
+                <button
+                  type="button"
+                  onClick={handleSaveAttendance}
+                  disabled={saving || rombelStudents.length === 0}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] text-[15px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Save className="h-4 w-4" />
+                  {saving ? "Menyimpan..." : "Simpan Absensi KBM"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
+      </section>
     </TeacherLayout>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </div>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
+    </div>
+  );
+}
+
+function FormGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <p className="mb-2 text-[13px] font-extrabold text-[#2B1B18]">
+        {label}
+      </p>
+      {children}
+    </label>
   );
 }

@@ -1,692 +1,753 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
-type Teacher = {
+type StudentRow = {
   id: string;
   full_name: string;
-  email: string | null;
-};
-
-type Parent = {
-  id: string;
-  full_name: string;
-  email: string | null;
-  phone: string | null;
-  relation: string | null;
-};
-
-type Student = {
-  id: string;
-  nis: string | null;
-  nisn: string | null;
-  full_name: string;
-  level: string | null;
-  grade: string | null;
-  academic_year: string | null;
-  birth_date: string | null;
-  progress: number | null;
-  attendance: number | null;
-  parent_id: string | null;
-  homeroom_teacher_id: string | null;
-  parents: Parent | null;
-  teachers: Teacher | null;
-};
-
-type StudentForm = {
-  full_name: string;
-  birth_date: string;
   nis: string;
   nisn: string;
   level: string;
   grade: string;
-  parent_name: string;
-  teacher_id: string;
   academic_year: string;
+  birth_date: string;
+  parent_id?: string | null;
+  homeroom_teacher_id?: string | null;
+  parent_name: string;
+  teacher_name: string;
+  progress: number;
+  attendance: number;
+};
+
+type ParentRow = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
+type TeacherRow = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  teacher_code: string | null;
+};
+
+type StudentForm = {
+  full_name: string;
+  nis: string;
+  nisn: string;
+  level: string;
+  grade: string;
+  academic_year: string;
+  birth_date: string;
+  parent_id: string;
+  homeroom_teacher_id: string;
 };
 
 const initialForm: StudentForm = {
   full_name: "",
-  birth_date: "",
   nis: "",
   nisn: "",
   level: "Primary Level",
-  grade: "",
-  parent_name: "",
-  teacher_id: "",
+  grade: "Grade 4",
   academic_year: "2025/2026",
+  birth_date: "",
+  parent_id: "",
+  homeroom_teacher_id: "",
 };
 
 function getInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  if (!name) return "S";
+
+  const words = name.trim().split(" ").filter(Boolean);
+
+  if (words.length === 1) {
+    return words[0].charAt(0).toUpperCase();
+  }
+
+  return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
 }
 
-function formatBirthDate(date: string | null) {
-  if (!date) return "-";
+function formatBirthDate(value?: string | null) {
+  if (!value) return "-";
 
-  const parsedDate = new Date(date);
+  const date = new Date(value);
 
-  return parsedDate.toLocaleDateString("id-ID", {
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
 }
 
-export default function KepalaSekolahStudentsPage() {
-  const [students, setStudents] = useState<Student[]>([]);
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
+function clampPercent(value: number) {
+  if (Number.isNaN(value)) return 0;
 
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function levelLabel(level?: string | null, grade?: string | null) {
+  const safeLevel = level?.trim() || "Program Belum Diisi";
+  const safeGrade = grade?.trim() || "-";
+
+  return `${safeLevel} — ${safeGrade}`;
+}
+
+export default function KepalaSekolahStudentsPage() {
+  const router = useRouter();
+
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [parents, setParents] = useState<ParentRow[]>([]);
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [programFilter, setProgramFilter] = useState("Semua Program");
-  const [teacherFilter, setTeacherFilter] = useState("Semua Guru");
-
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [form, setForm] = useState<StudentForm>(initialForm);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [formError, setFormError] = useState("");
 
-  async function fetchTeachers() {
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email")
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setTeachers(data || []);
-  }
-
-  async function fetchStudents() {
+  async function fetchAllData() {
     setLoading(true);
-    setErrorMessage("");
 
-    const { data, error } = await supabase
-      .from("students")
-      .select(
-        `
-        id,
-        nis,
-        nisn,
-        full_name,
-        level,
-        grade,
-        academic_year,
-        birth_date,
-        progress,
-        attendance,
-        parent_id,
-        homeroom_teacher_id,
-        parents (
-          id,
-          full_name,
-          email,
-          phone,
-          relation
-        ),
-        teachers (
-          id,
-          full_name,
-          email
-        )
-      `
-      )
-      .order("created_at", { ascending: false });
+    const [
+      studentsRes,
+      parentsRes,
+      teachersRes,
+      reportsRes,
+      attendanceRes,
+    ] = await Promise.all([
+      supabase
+        .from("students")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-    if (error) {
-      console.error(error.message);
-      setErrorMessage(error.message);
-      setLoading(false);
-      return;
-    }
+      supabase
+        .from("parents")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-    const normalizedStudents: Student[] = (data || []).map((item) => {
-      const parentData = Array.isArray(item.parents)
-        ? item.parents[0] || null
-        : item.parents || null;
+      supabase
+        .from("teachers")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-      const teacherData = Array.isArray(item.teachers)
-        ? item.teachers[0] || null
-        : item.teachers || null;
+      supabase.from("academic_reports").select("*"),
+
+      supabase.from("attendance").select("*"),
+    ]);
+
+    const studentsData = studentsRes.data ?? [];
+    const parentsData = parentsRes.data ?? [];
+    const teachersData = teachersRes.data ?? [];
+    const reportsData = reportsRes.data ?? [];
+    const attendanceData = attendanceRes.data ?? [];
+
+    setParents(parentsData as ParentRow[]);
+    setTeachers(teachersData as TeacherRow[]);
+
+    const parentMap = new Map<string, any>();
+    const teacherMap = new Map<string, any>();
+
+    parentsData.forEach((parent: any) => {
+      if (parent?.id) parentMap.set(String(parent.id), parent);
+    });
+
+    teachersData.forEach((teacher: any) => {
+      if (teacher?.id) teacherMap.set(String(teacher.id), teacher);
+    });
+
+    const reportByStudent = new Map<string, any[]>();
+
+    reportsData.forEach((report: any) => {
+      const studentId = String(report.student_id ?? "");
+
+      if (!studentId) return;
+
+      if (!reportByStudent.has(studentId)) {
+        reportByStudent.set(studentId, []);
+      }
+
+      reportByStudent.get(studentId)?.push(report);
+    });
+
+    const attendanceByStudent = new Map<string, any[]>();
+
+    attendanceData.forEach((attendance: any) => {
+      const studentId = String(attendance.student_id ?? "");
+
+      if (!studentId) return;
+
+      if (!attendanceByStudent.has(studentId)) {
+        attendanceByStudent.set(studentId, []);
+      }
+
+      attendanceByStudent.get(studentId)?.push(attendance);
+    });
+
+    const mappedStudents: StudentRow[] = studentsData.map((student: any) => {
+      const parent =
+        parentMap.get(String(student.parent_id ?? "")) ??
+        parentMap.get(String(student.parentId ?? ""));
+
+      const teacher =
+        teacherMap.get(String(student.homeroom_teacher_id ?? "")) ??
+        teacherMap.get(String(student.teacher_id ?? "")) ??
+        teacherMap.get(String(student.homeroomTeacherId ?? ""));
+
+      const studentReports = reportByStudent.get(String(student.id)) ?? [];
+      const studentAttendance = attendanceByStudent.get(String(student.id)) ?? [];
+
+      const finalScores = studentReports
+        .map((report: any) => Number(report.final_score ?? report.score ?? 0))
+        .filter((score: number) => !Number.isNaN(score) && score > 0);
+
+      const progress =
+        finalScores.length > 0
+          ? clampPercent(
+              finalScores.reduce(
+                (sum: number, value: number) => sum + value,
+                0
+              ) / finalScores.length
+            )
+          : Number(student.progress ?? 0);
+
+      const hadirCount = studentAttendance.filter((attendance: any) => {
+        const status = String(
+          attendance.attendance_status ?? attendance.status ?? ""
+        ).toLowerCase();
+
+        return status === "hadir" || status === "present";
+      }).length;
+
+      const attendance =
+        studentAttendance.length > 0
+          ? clampPercent((hadirCount / studentAttendance.length) * 100)
+          : Number(student.attendance ?? 0);
 
       return {
-        id: item.id,
-        nis: item.nis,
-        nisn: item.nisn,
-        full_name: item.full_name,
-        level: item.level,
-        grade: item.grade,
-        academic_year: item.academic_year,
-        birth_date: item.birth_date,
-        progress: item.progress,
-        attendance: item.attendance,
-        parent_id: item.parent_id,
-        homeroom_teacher_id: item.homeroom_teacher_id,
-        parents: parentData,
-        teachers: teacherData,
+        id: String(student.id),
+        full_name: student.full_name ?? student.name ?? "Tanpa Nama",
+        nis: student.nis ?? "-",
+        nisn: student.nisn ?? "-",
+        level: student.level ?? student.program ?? "Program",
+        grade: student.grade ?? student.class_level ?? "-",
+        academic_year: student.academic_year ?? "-",
+        birth_date:
+          student.birth_date ??
+          student.date_of_birth ??
+          student.dob ??
+          student.birthdate ??
+          "",
+        parent_id: student.parent_id ?? null,
+        homeroom_teacher_id: student.homeroom_teacher_id ?? null,
+        parent_name: parent?.full_name ?? parent?.name ?? "-",
+        teacher_name: teacher?.full_name ?? teacher?.name ?? "-",
+        progress: clampPercent(Number(progress)),
+        attendance: clampPercent(Number(attendance)),
       };
     });
 
-    setStudents(normalizedStudents);
+    setStudents(mappedStudents);
     setLoading(false);
   }
 
   useEffect(() => {
-    fetchTeachers();
-    fetchStudents();
+    fetchAllData();
+
+    const channel = supabase
+      .channel("kepala-sekolah-students-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        fetchAllData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "parents" },
+        fetchAllData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        fetchAllData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "academic_reports" },
+        fetchAllData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        fetchAllData
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredStudents = useMemo(() => {
+    const query = search.toLowerCase().trim();
+
+    if (!query) return students;
+
     return students.filter((student) => {
-      const keyword = search.toLowerCase();
-
-      const matchSearch =
-        student.full_name.toLowerCase().includes(keyword) ||
-        student.nis?.toLowerCase().includes(keyword) ||
-        student.nisn?.toLowerCase().includes(keyword) ||
-        student.parents?.full_name?.toLowerCase().includes(keyword) ||
-        student.teachers?.full_name?.toLowerCase().includes(keyword);
-
-      const matchProgram =
-        programFilter === "Semua Program" || student.level === programFilter;
-
-      const matchTeacher =
-        teacherFilter === "Semua Guru" ||
-        student.teachers?.full_name === teacherFilter;
-
-      return matchSearch && matchProgram && matchTeacher;
+      return (
+        student.full_name.toLowerCase().includes(query) ||
+        student.nis.toLowerCase().includes(query) ||
+        student.nisn.toLowerCase().includes(query) ||
+        student.parent_name.toLowerCase().includes(query) ||
+        student.teacher_name.toLowerCase().includes(query) ||
+        student.level.toLowerCase().includes(query) ||
+        student.grade.toLowerCase().includes(query)
+      );
     });
-  }, [students, search, programFilter, teacherFilter]);
+  }, [students, search]);
 
-  const totalPrimary = students.filter(
-    (student) => student.level === "Primary Level"
-  ).length;
-
-  const totalSecondary = students.filter(
-    (student) => student.level === "Secondary Level"
-  ).length;
-
-  const totalEarly = students.filter(
-    (student) => student.level === "Early Learning"
-  ).length;
-
-  async function findOrCreateParent(parentName: string) {
-    const cleanedName = parentName.trim();
-
-    if (!cleanedName) return null;
-
-    const { data: existingParent, error: findError } = await supabase
-      .from("parents")
-      .select("id, full_name")
-      .ilike("full_name", cleanedName)
-      .maybeSingle();
-
-    if (findError) {
-      throw new Error(findError.message);
-    }
-
-    if (existingParent) {
-      return existingParent.id;
-    }
-
-    const { data: newParent, error: insertError } = await supabase
-      .from("parents")
-      .insert({
-        full_name: cleanedName,
-        relation: "Orang Tua",
-      })
-      .select("id")
-      .single();
-
-    if (insertError) {
-      throw new Error(insertError.message);
-    }
-
-    return newParent.id;
+  function openAddModal() {
+    setForm(initialForm);
+    setFormError("");
+    setShowAddModal(true);
   }
 
-  async function handleSubmitStudent(event: React.FormEvent<HTMLFormElement>) {
+  function closeAddModal() {
+    if (saving) return;
+
+    setShowAddModal(false);
+    setForm(initialForm);
+    setFormError("");
+  }
+
+  async function handleSaveStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setErrorMessage("");
+
+    setFormError("");
 
     if (!form.full_name.trim()) {
-      setErrorMessage("Nama lengkap wajib diisi.");
+      setFormError("Nama siswa wajib diisi.");
       return;
     }
 
     if (!form.nis.trim()) {
-      setErrorMessage("NIS wajib diisi.");
+      setFormError("NIS wajib diisi.");
       return;
     }
 
-    if (!form.nisn.trim()) {
-      setErrorMessage("NISN wajib diisi.");
+    if (!form.parent_id) {
+      setFormError("Orang tua wajib dipilih.");
       return;
     }
 
-    if (!form.teacher_id) {
-      setErrorMessage("Guru pendamping wajib dipilih.");
+    if (!form.homeroom_teacher_id) {
+      setFormError("Guru pendamping wajib dipilih.");
       return;
     }
 
     setSaving(true);
 
-    try {
-      const parentId = await findOrCreateParent(form.parent_name);
+    const { error } = await supabase.from("students").insert({
+      full_name: form.full_name.trim(),
+      nis: form.nis.trim(),
+      nisn: form.nisn.trim() || null,
+      level: form.level,
+      grade: form.grade,
+      academic_year: form.academic_year,
+      birth_date: form.birth_date || null,
+      parent_id: form.parent_id,
+      homeroom_teacher_id: form.homeroom_teacher_id,
+      progress: 0,
+      attendance: 0,
+    });
 
-      const { error } = await supabase.from("students").insert({
-        full_name: form.full_name.trim(),
-        birth_date: form.birth_date || null,
-        nis: form.nis.trim(),
-        nisn: form.nisn.trim(),
-        level: form.level,
-        grade: form.grade.trim(),
-        parent_id: parentId,
-        homeroom_teacher_id: form.teacher_id,
-        academic_year: form.academic_year,
-        progress: 0,
-        attendance: 0,
-        status: "active",
-      });
+    setSaving(false);
 
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setForm(initialForm);
-      setIsModalOpen(false);
-      await fetchStudents();
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal menyimpan data siswa.");
-      }
-    } finally {
-      setSaving(false);
+    if (error) {
+      setFormError(error.message);
+      return;
     }
+
+    setShowAddModal(false);
+    setForm(initialForm);
+    await fetchAllData();
   }
 
-  function closeModal() {
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm(initialForm);
+  async function handleDeleteStudent(studentId: string, studentName: string) {
+    const confirmed = window.confirm(
+      `Yakin mau hapus data siswa "${studentName}"?`
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("students")
+      .delete()
+      .eq("id", studentId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await fetchAllData();
   }
 
   return (
     <KepalaSekolahLayout
       activeMenu="Siswa"
       searchPlaceholder="Cari siswa, NIS, NISN, orang tua, atau guru..."
-      buttonLabel="+ Tambah Siswa"
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-[30px] font-bold tracking-tight">Data Siswa</h1>
-          <p className="mt-1 text-sm text-[#6B4A3A]">
-            Kelola data siswa, NIS, NISN, orang tua, guru pendamping, dan
-            progress belajar.
-          </p>
-        </div>
+      <section className="space-y-7">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-[28px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+              Student Management
+            </h1>
+            <p className="mt-1 text-[15px] text-[#6F5549]">
+              Kelola data murid Homeschooling HSTKB
+            </p>
+          </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setErrorMessage("");
-            setIsModalOpen(true);
-          }}
-          className="rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-        >
-          + Tambah Siswa
-        </button>
-      </div>
-
-      <div className="mt-7 grid grid-cols-4 gap-4">
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Total Siswa</p>
-          <p className="mt-4 text-3xl font-bold">{students.length}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Primary Level</p>
-          <p className="mt-4 text-3xl font-bold">{totalPrimary}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Secondary Level</p>
-          <p className="mt-4 text-3xl font-bold">{totalSecondary}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Early Learning</p>
-          <p className="mt-4 text-3xl font-bold">{totalEarly}</p>
-        </div>
-      </div>
-
-      <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-[1fr_200px_200px] gap-3">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Cari nama siswa..."
-            className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          />
-
-          <select
-            value={programFilter}
-            onChange={(event) => setProgramFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+          <button
+            onClick={openAddModal}
+            className="flex h-[46px] items-center gap-3 rounded-2xl bg-[#9C0824] px-6 text-[15px] font-bold text-white shadow-sm transition hover:brightness-105"
           >
-            <option>Semua Program</option>
-            <option>Primary Level</option>
-            <option>Secondary Level</option>
-            <option>Early Learning</option>
-          </select>
-
-          <select
-            value={teacherFilter}
-            onChange={(event) => setTeacherFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          >
-            <option>Semua Guru</option>
-            {teachers.map((teacher) => (
-              <option key={teacher.id}>{teacher.full_name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="mt-7 overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-        <div className="border-b border-[#E8D6C1] p-6">
-          <h2 className="text-lg font-bold">Daftar Siswa</h2>
-          <p className="mt-1 text-sm text-[#6B4A3A]">
-            Data siswa aktif Homeschooling Tunas Karya Bangsa.
-          </p>
+            <Plus className="h-4 w-4" />
+            Add Student
+          </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-left">
-            <thead className="bg-[#FFF8EF] text-xs uppercase text-[#6B4A3A]">
-              <tr>
-                <th className="px-6 py-4">Siswa</th>
-                <th className="px-6 py-4">NIS / NISN</th>
-                <th className="px-6 py-4">Level / Program</th>
-                <th className="px-6 py-4">Orang Tua</th>
-                <th className="px-6 py-4">Guru</th>
-                <th className="px-6 py-4">Progress</th>
-                <th className="px-6 py-4">Attendance</th>
-                <th className="px-6 py-4 text-right">Aksi</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-[#E8D6C1]">
-              {loading && (
-                <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-sm">
-                    Loading data siswa...
-                  </td>
-                </tr>
-              )}
-
-              {!loading && filteredStudents.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-sm">
-                    Belum ada data siswa.
-                  </td>
-                </tr>
-              )}
-
-              {!loading &&
-                filteredStudents.map((student) => {
-                  const progress = Number(student.progress || 0);
-                  const attendance = Number(student.attendance || 0);
-
-                  return (
-                    <tr key={student.id} className="hover:bg-[#FFF8EF]">
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-4">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                            {getInitials(student.full_name)}
-                          </div>
-
-                          <div>
-                            <p className="font-bold">{student.full_name}</p>
-                            <p className="text-sm text-[#6B4A3A]">
-                              Lahir: {formatBirthDate(student.birth_date)}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <p className="font-bold">{student.nis || "-"}</p>
-                        <p className="text-sm text-[#6B4A3A]">
-                          {student.nisn || "-"}
-                        </p>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <p className="font-bold">
-                          {student.level || "-"}
-                          {student.grade ? ` — ${student.grade}` : ""}
-                        </p>
-                        <p className="text-sm text-[#6B4A3A]">
-                          {student.level || "-"}
-                        </p>
-                      </td>
-
-                      <td className="px-6 py-5 text-sm text-[#6B4A3A]">
-                        {student.parents?.full_name || "-"}
-                      </td>
-
-                      <td className="px-6 py-5 text-sm text-[#6B4A3A]">
-                        {student.teachers?.full_name || "-"}
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="h-2 w-24 overflow-hidden rounded-full bg-[#E8D6C1]">
-                            <div
-                              className="h-full rounded-full bg-[#7A1F2B]"
-                              style={{ width: `${progress}%` }}
-                            />
-                          </div>
-
-                          <span className="text-sm font-bold">
-                            {progress}%
-                          </span>
-                        </div>
-                      </td>
-
-                      <td className="px-6 py-5">
-                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                          {attendance}%
-                        </span>
-                      </td>
-
-                      <td className="px-6 py-5 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[#E8D6C1] px-3 py-2 text-xs font-bold"
-                          >
-                            View
-                          </button>
-
-                          <button
-                            type="button"
-                            className="rounded-lg bg-[#7A1F2B] px-3 py-2 text-xs font-bold text-white"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white/60 p-4 shadow-[0_4px_14px_rgba(77,31,9,0.05)]">
+          <div className="relative max-w-[400px]">
+            <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Cari murid..."
+              className="h-[38px] w-full rounded-[14px] border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[15px] outline-none placeholder:text-[#9A7B6C]"
+            />
+          </div>
         </div>
-      </div>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Tambah Murid Baru</h2>
+        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-[0_4px_14px_rgba(77,31,9,0.05)]">
+          <div className="grid grid-cols-[2.2fr_2.4fr_1.8fr_1.3fr_0.9fr_1fr_0.6fr] gap-4 border-b border-[#EADACA] px-4 py-4 text-[13px] font-bold text-[#6F5549]">
+            <div>Murid</div>
+            <div>Level / Program</div>
+            <div>Orang Tua</div>
+            <div>Guru</div>
+            <div>Progress</div>
+            <div>Attendance</div>
+            <div className="text-right">Aksi</div>
+          </div>
+
+          {loading ? (
+            <div className="px-5 py-12 text-center text-[#7D5E50]">
+              Memuat data siswa...
+            </div>
+          ) : filteredStudents.length === 0 ? (
+            <div className="px-5 py-12 text-center text-[#7D5E50]">
+              Belum ada data siswa.
+            </div>
+          ) : (
+            filteredStudents.map((student) => (
+              <div
+                key={student.id}
+                className="grid grid-cols-[2.2fr_2.4fr_1.8fr_1.3fr_0.9fr_1fr_0.6fr] gap-4 border-b border-[#F1E5DA] px-4 py-4 last:border-b-0"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#F3E1D6] text-[16px] font-bold text-[#8E2333]">
+                    {getInitials(student.full_name)}
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="truncate text-[16px] font-bold text-[#2C1A17]">
+                      {student.full_name}
+                    </p>
+                    <p className="mt-0.5 text-[13px] text-[#7A5E52]">
+                      {formatBirthDate(student.birth_date)}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[16px] font-semibold text-[#2C1A17]">
+                    {levelLabel(student.level, student.grade)}
+                  </p>
+                  <p className="mt-1 text-[13px] text-[#7A5E52]">
+                    {student.level || "-"}
+                  </p>
+                </div>
+
+                <div className="flex items-center text-[16px] text-[#2C1A17]">
+                  {student.parent_name}
+                </div>
+
+                <div className="flex items-center text-[16px] text-[#2C1A17]">
+                  {student.teacher_name}
+                </div>
+
+                <div className="flex items-center">
+                  <span className="rounded-full bg-[#C7F0DA] px-3 py-1 text-[14px] font-bold text-[#158A58]">
+                    {student.progress}%
+                  </span>
+                </div>
+
+                <div className="flex items-center">
+                  <span className="rounded-full bg-[#D7ECFA] px-3 py-1 text-[14px] font-bold text-[#1779B8]">
+                    {student.attendance}%
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-end gap-4">
+                  <button
+                    onClick={() =>
+                      router.push(`/kepalaSekolah/students/${student.id}/edit`)
+                    }
+                    className="text-[#4A2E28] transition hover:text-[#9C0824]"
+                    title="Edit"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      handleDeleteStudent(student.id, student.full_name)
+                    }
+                    className="text-[#D11A2A] transition hover:opacity-80"
+                    title="Hapus"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {showAddModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-[760px] overflow-hidden rounded-[24px] bg-[#FFF8EF] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#E8D7C5] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-bold text-[#2C1A17]">
+                  Add Student
+                </h2>
+                <p className="mt-1 text-[14px] text-[#7D5E50]">
+                  Tambahkan data siswa baru ke sistem HSTKB.
+                </p>
+              </div>
 
               <button
-                type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+                onClick={closeAddModal}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[#7D5E50] transition hover:bg-[#F0E2D4] hover:text-[#9C0824]"
               >
-                ×
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
-              )}
+            <form onSubmit={handleSaveStudent} className="px-6 py-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <FormInput
+                  label="Nama Siswa"
+                  value={form.full_name}
+                  placeholder="Contoh: Jonathan Wijaya"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, full_name: value }))
+                  }
+                />
 
-              <form onSubmit={handleSubmitStudent} className="space-y-4">
                 <div>
-                  <label className="text-sm font-bold">Nama Lengkap</label>
+                  <label className="text-[13px] font-bold text-[#6F5549]">
+                    Tanggal Lahir
+                  </label>
                   <input
-                    value={form.full_name}
+                    type="date"
+                    value={form.birth_date}
                     onChange={(event) =>
-                      setForm({ ...form, full_name: event.target.value })
+                      setForm((prev) => ({
+                        ...prev,
+                        birth_date: event.target.value,
+                      }))
                     }
-                    placeholder="Nama murid"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Tanggal Lahir</label>
-                    <input
-                      type="date"
-                      value={form.birth_date}
-                      onChange={(event) =>
-                        setForm({ ...form, birth_date: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
+                <FormInput
+                  label="NIS"
+                  value={form.nis}
+                  placeholder="Contoh: HSTKB-001"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, nis: value }))
+                  }
+                />
 
-                  <div>
-                    <label className="text-sm font-bold">Level</label>
-                    <select
-                      value={form.level}
-                      onChange={(event) =>
-                        setForm({ ...form, level: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Primary Level</option>
-                      <option>Secondary Level</option>
-                      <option>Early Learning</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">NIS</label>
-                    <input
-                      value={form.nis}
-                      onChange={(event) =>
-                        setForm({ ...form, nis: event.target.value })
-                      }
-                      placeholder="HSTKB-002"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">NISN</label>
-                    <input
-                      value={form.nisn}
-                      onChange={(event) =>
-                        setForm({ ...form, nisn: event.target.value })
-                      }
-                      placeholder="005104212"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-                </div>
+                <FormInput
+                  label="NISN"
+                  value={form.nisn}
+                  placeholder="Opsional"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, nisn: value }))
+                  }
+                />
 
                 <div>
-                  <label className="text-sm font-bold">Grade / Kelas</label>
-                  <input
-                    value={form.grade}
-                    onChange={(event) =>
-                      setForm({ ...form, grade: event.target.value })
-                    }
-                    placeholder="Contoh: Grade 4"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Orang Tua</label>
-                  <input
-                    value={form.parent_name}
-                    onChange={(event) =>
-                      setForm({ ...form, parent_name: event.target.value })
-                    }
-                    placeholder="Nama orang tua"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Guru Pendamping</label>
+                  <label className="text-[13px] font-bold text-[#6F5549]">
+                    Level
+                  </label>
                   <select
-                    value={form.teacher_id}
+                    value={form.level}
                     onChange={(event) =>
-                      setForm({ ...form, teacher_id: event.target.value })
+                      setForm((prev) => ({
+                        ...prev,
+                        level: event.target.value,
+                      }))
                     }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
-                    <option value="">Pilih guru</option>
-                    {teachers.map((teacher) => (
-                      <option key={teacher.id} value={teacher.id}>
-                        {teacher.full_name}
+                    <option value="Early Learning">Early Learning</option>
+                    <option value="Primary Level">Primary Level</option>
+                    <option value="Secondary Level">Secondary Level</option>
+                    <option value="High School">High School</option>
+                  </select>
+                </div>
+
+                <FormInput
+                  label="Grade / Kelas"
+                  value={form.grade}
+                  placeholder="Contoh: Grade 4 / kelas 3"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, grade: value }))
+                  }
+                />
+
+                <FormInput
+                  label="Tahun Ajaran"
+                  value={form.academic_year}
+                  placeholder="2025/2026"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, academic_year: value }))
+                  }
+                />
+
+                <div>
+                  <label className="text-[13px] font-bold text-[#6F5549]">
+                    Orang Tua
+                  </label>
+                  <select
+                    value={form.parent_id}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        parent_id: event.target.value,
+                      }))
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                  >
+                    <option value="">Pilih orang tua</option>
+                    {parents.map((parent) => (
+                      <option key={parent.id} value={parent.id}>
+                        {parent.full_name || parent.email || "Tanpa Nama"}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                <div className="md:col-span-2">
+                  <label className="text-[13px] font-bold text-[#6F5549]">
+                    Guru Pendamping
+                  </label>
+                  <select
+                    value={form.homeroom_teacher_id}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        homeroom_teacher_id: event.target.value,
+                      }))
+                    }
+                    className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
-                    {saving ? "Menyimpan..." : "Simpan Murid"}
-                  </button>
+                    <option value="">Pilih guru</option>
+                    {teachers.map((teacher) => (
+                      <option key={teacher.id} value={teacher.id}>
+                        {teacher.full_name || teacher.email || "Tanpa Nama"}
+                        {teacher.teacher_code
+                          ? ` — ${teacher.teacher_code}`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              </form>
-            </div>
+              </div>
+
+              {formError ? (
+                <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+                  {formError}
+                </div>
+              ) : null}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeAddModal}
+                  disabled={saving}
+                  className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-bold text-[#6F5549] transition hover:bg-[#F7EDE2] disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="h-11 rounded-xl bg-[#9C0824] px-6 text-[14px] font-bold text-white transition hover:brightness-105 disabled:opacity-60"
+                >
+                  {saving ? "Menyimpan..." : "Save Student"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      )}
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function FormInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="text-[13px] font-bold text-[#6F5549]">{label}</label>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+      />
+    </div>
   );
 }

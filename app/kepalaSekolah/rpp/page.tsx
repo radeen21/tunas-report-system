@@ -1,809 +1,699 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { CheckCircle2, Eye, FileText, Search, Send, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
-type StudentOption = {
+type TeacherRow = {
   id: string;
-  full_name: string;
+  full_name: string | null;
+  email?: string | null;
+};
+
+type RppRow = {
+  id: string;
+
+  // kolom lama
+  title?: string | null;
+
+  teacher_id: string | null;
+  curriculum_program_id: string | null;
+  curriculum_chapter_id: string | null;
+  curriculum_sub_chapter_id: string | null;
+  subject_name: string | null;
   level: string | null;
   grade: string | null;
-  nis: string | null;
-};
-
-type TeacherOption = {
-  id: string;
-  full_name: string;
-  email: string | null;
-};
-
-type SubjectOption = {
-  id: string;
-  name: string;
-  level: string | null;
-  grade: string | null;
-};
-
-type RppQueryResult = {
-  id: string;
-  teacher_id: string | null;
-  subject_id: string | null;
-  student_id: string | null;
-  title: string;
-  class_level: string | null;
   semester: string | null;
-  chapter: string | null;
-  material_topic: string | null;
-  time_allocation: string | null;
-  learning_method: string | null;
-  assessment_method: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentOption | StudentOption[] | null;
-  teachers: TeacherOption | TeacherOption[] | null;
-  subjects: SubjectOption | SubjectOption[] | null;
+  academic_year: string | null;
+  meeting_date: string | null;
+  meeting_number: number | null;
+  rpp_title: string | null;
+  learning_objectives: string | null;
+  opening_activity: string | null;
+  core_activity: string | null;
+  closing_activity: string | null;
+  assessment: string | null;
+  learning_media: string | null;
+  learning_resources: string | null;
+  document_url: string | null;
+  notes: string | null;
+  status: "draft" | "submitted" | "approved" | "rejected" | string | null;
+  submitted_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  rejection_note: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
-type Rpp = {
-  id: string;
-  teacher_id: string | null;
-  subject_id: string | null;
-  student_id: string | null;
-  title: string;
-  class_level: string | null;
-  semester: string | null;
-  chapter: string | null;
-  material_topic: string | null;
-  time_allocation: string | null;
-  learning_method: string | null;
-  assessment_method: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentOption | null;
-  teachers: TeacherOption | null;
-  subjects: SubjectOption | null;
+type EnrichedRpp = RppRow & {
+  teacher_name: string;
 };
 
-type RppForm = {
-  student_id: string;
-  teacher_id: string;
-  subject_id: string;
-  title: string;
-  class_level: string;
-  semester: string;
-  chapter: string;
-  material_topic: string;
-  time_allocation: string;
-  learning_method: string;
-  assessment_method: string;
-  status: string;
-};
-
-const initialForm: RppForm = {
-  student_id: "",
-  teacher_id: "",
-  subject_id: "",
-  title: "",
-  class_level: "",
-  semester: "Genap",
-  chapter: "",
-  material_topic: "",
-  time_allocation: "",
-  learning_method: "",
-  assessment_method: "",
-  status: "draft",
-};
-
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
-function formatDate(date: string | null) {
-  if (!date) return "-";
+function formatDate(value?: string | null) {
+  if (!value) return "-";
 
-  const parsedDate = new Date(date);
-
-  return parsedDate.toLocaleDateString("id-ID", {
+  return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(new Date(value));
 }
 
-function getStatusBadge(status: string | null) {
-  if (status === "published") return "bg-emerald-100 text-emerald-700";
-  if (status === "approved") return "bg-blue-100 text-blue-700";
-  if (status === "pending_review") return "bg-yellow-100 text-yellow-700";
-  if (status === "revision") return "bg-red-100 text-red-700";
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
 
-  return "bg-slate-200 text-slate-700";
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
-function getStatusLabel(status: string | null) {
-  if (status === "published") return "Published";
+function getRppTitle(rpp: RppRow) {
+  return rpp.rpp_title || rpp.title || "-";
+}
+
+function getStatusLabel(status?: string | null) {
+  if (status === "submitted") return "Submitted";
   if (status === "approved") return "Approved";
-  if (status === "pending_review") return "Pending Review";
-  if (status === "revision") return "Revision";
-
+  if (status === "rejected") return "Rejected";
   return "Draft";
 }
 
+function getStatusClass(status?: string | null) {
+  if (status === "approved") return "bg-[#C7F0DA] text-[#158A58]";
+  if (status === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
+  if (status === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
 export default function KepalaSekolahRppPage() {
-  const [rppList, setRppList] = useState<Rpp[]>([]);
-  const [students, setStudents] = useState<StudentOption[]>([]);
-  const [teachers, setTeachers] = useState<TeacherOption[]>([]);
-  const [subjects, setSubjects] = useState<SubjectOption[]>([]);
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [rpps, setRpps] = useState<EnrichedRpp[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [selectedRpp, setSelectedRpp] = useState<EnrichedRpp | null>(null);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("Semua Status");
   const [teacherFilter, setTeacherFilter] = useState("Semua Guru");
+  const [statusFilter, setStatusFilter] = useState("Semua Status");
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form, setForm] = useState<RppForm>(initialForm);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [rejectingRpp, setRejectingRpp] = useState<EnrichedRpp | null>(null);
+  const [rejectionNote, setRejectionNote] = useState("");
 
-  async function fetchStudents() {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, full_name, level, grade, nis")
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setStudents(data || []);
-  }
-
-  async function fetchTeachers() {
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email")
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setTeachers(data || []);
-  }
-
-  async function fetchSubjects() {
-    const { data, error } = await supabase
-      .from("subjects")
-      .select("id, name, level, grade")
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setSubjects(data || []);
-  }
-
-  async function fetchRpp() {
+  async function fetchData() {
     setLoading(true);
-    setErrorMessage("");
 
-    const { data, error } = await supabase
-      .from("rpp")
-      .select(
-        `
-        id,
-        teacher_id,
-        subject_id,
-        student_id,
-        title,
-        class_level,
-        semester,
-        chapter,
-        material_topic,
-        time_allocation,
-        learning_method,
-        assessment_method,
-        status,
-        created_at,
-        students (
-          id,
-          full_name,
-          level,
-          grade,
-          nis
-        ),
-        teachers (
-          id,
-          full_name,
-          email
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .order("created_at", { ascending: false });
+    const [teachersRes, rppRes] = await Promise.all([
+      supabase.from("teachers").select("*").order("full_name"),
+      supabase.from("rpp").select("*").order("updated_at", { ascending: false }),
+    ]);
 
-    if (error) {
-      console.error(error.message);
-      setErrorMessage(error.message);
-      setLoading(false);
-      return;
-    }
+    const teachersData = (teachersRes.data || []) as TeacherRow[];
+    const rppData = (rppRes.data || []) as RppRow[];
 
-    const rows = (data || []) as RppQueryResult[];
+    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
 
-    const normalizedRpp: Rpp[] = rows.map((item) => ({
-      id: item.id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      student_id: item.student_id,
-      title: item.title,
-      class_level: item.class_level,
-      semester: item.semester,
-      chapter: item.chapter,
-      material_topic: item.material_topic,
-      time_allocation: item.time_allocation,
-      learning_method: item.learning_method,
-      assessment_method: item.assessment_method,
-      status: item.status,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      teachers: normalizeRelation(item.teachers),
-      subjects: normalizeRelation(item.subjects),
-    }));
+    const enriched: EnrichedRpp[] = rppData.map((rpp) => {
+      const teacher = rpp.teacher_id ? teacherMap.get(rpp.teacher_id) : null;
 
-    setRppList(normalizedRpp);
+      return {
+        ...rpp,
+        teacher_name: teacher?.full_name || "-",
+      };
+    });
+
+    setTeachers(teachersData);
+    setRpps(enriched);
     setLoading(false);
   }
 
-  async function fetchAllData() {
-    await Promise.all([
-      fetchStudents(),
-      fetchTeachers(),
-      fetchSubjects(),
-      fetchRpp(),
-    ]);
-  }
-
   useEffect(() => {
-    fetchAllData();
+    fetchData();
+
+    const channel = supabase
+      .channel("kepala-rpp-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rpp" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const filteredRpp = useMemo(() => {
-    const keyword = search.toLowerCase();
+  const filteredRpps = useMemo(() => {
+    const q = normalizeText(search);
 
-    return rppList.filter((rpp) => {
+    return rpps.filter((rpp) => {
       const matchSearch =
-        rpp.title.toLowerCase().includes(keyword) ||
-        rpp.students?.full_name?.toLowerCase().includes(keyword) ||
-        rpp.teachers?.full_name?.toLowerCase().includes(keyword) ||
-        rpp.subjects?.name?.toLowerCase().includes(keyword) ||
-        rpp.chapter?.toLowerCase().includes(keyword) ||
-        rpp.material_topic?.toLowerCase().includes(keyword);
-
-      const matchStatus =
-        statusFilter === "Semua Status" ||
-        getStatusLabel(rpp.status) === statusFilter;
+        !q ||
+        normalizeText(getRppTitle(rpp)).includes(q) ||
+        normalizeText(rpp.teacher_name).includes(q) ||
+        normalizeText(rpp.subject_name).includes(q) ||
+        normalizeText(rpp.learning_objectives).includes(q);
 
       const matchTeacher =
-        teacherFilter === "Semua Guru" ||
-        rpp.teachers?.full_name === teacherFilter;
+        teacherFilter === "Semua Guru" || rpp.teacher_id === teacherFilter;
 
-      return matchSearch && matchStatus && matchTeacher;
+      const matchStatus =
+        statusFilter === "Semua Status" || rpp.status === statusFilter;
+
+      return matchSearch && matchTeacher && matchStatus;
     });
-  }, [rppList, search, statusFilter, teacherFilter]);
+  }, [rpps, search, teacherFilter, statusFilter]);
 
-  const totalDraft = rppList.filter((rpp) => rpp.status === "draft").length;
-  const totalPublished = rppList.filter(
-    (rpp) => rpp.status === "published"
-  ).length;
-  const totalApproved = rppList.filter(
-    (rpp) => rpp.status === "approved"
-  ).length;
+  const summary = useMemo(() => {
+    return {
+      total: rpps.length,
+      submitted: rpps.filter((rpp) => rpp.status === "submitted").length,
+      approved: rpps.filter((rpp) => rpp.status === "approved").length,
+      rejected: rpps.filter((rpp) => rpp.status === "rejected").length,
+    };
+  }, [rpps]);
 
-  async function handleSubmitRpp(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setErrorMessage("");
+  async function handleApprove(rpp: EnrichedRpp) {
+    const confirmApprove = confirm(`Approve RPP "${getRppTitle(rpp)}"?`);
 
-    if (!form.student_id) {
-      setErrorMessage("Nama siswa wajib dipilih.");
+    if (!confirmApprove) return;
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("rpp")
+      .update({
+        status: "approved",
+        approved_at: now,
+        rejected_at: null,
+        rejection_note: null,
+        updated_at: now,
+      })
+      .eq("id", rpp.id);
+
+    if (error) {
+      alert(`Gagal approve RPP: ${error.message}`);
       return;
     }
 
-    if (!form.teacher_id) {
-      setErrorMessage("Guru wajib dipilih.");
-      return;
-    }
-
-    if (!form.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
-      return;
-    }
-
-    if (!form.title.trim()) {
-      setErrorMessage("Judul RPP wajib diisi.");
-      return;
-    }
-
-    if (!form.class_level.trim()) {
-      setErrorMessage("Kelas wajib diisi.");
-      return;
-    }
-
-    if (!form.material_topic.trim()) {
-      setErrorMessage("Materi wajib diisi.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const { error } = await supabase.from("rpp").insert({
-        student_id: form.student_id,
-        teacher_id: form.teacher_id,
-        subject_id: form.subject_id,
-        title: form.title.trim(),
-        class_level: form.class_level.trim(),
-        semester: form.semester,
-        chapter: form.chapter.trim() || null,
-        material_topic: form.material_topic.trim(),
-        time_allocation: form.time_allocation.trim() || null,
-        learning_method: form.learning_method.trim() || null,
-        assessment_method: form.assessment_method.trim() || null,
-        status: form.status,
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setForm(initialForm);
-      setIsModalOpen(false);
-      await fetchRpp();
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal menyimpan RPP.");
-      }
-    } finally {
-      setSaving(false);
-    }
+    await fetchData();
+    setSelectedRpp(null);
   }
 
-  function closeModal() {
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm(initialForm);
+  async function handleReject() {
+    if (!rejectingRpp) return;
+
+    if (!rejectionNote.trim()) {
+      alert("Isi catatan revisi terlebih dahulu.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("rpp")
+      .update({
+        status: "rejected",
+        rejected_at: now,
+        rejection_note: rejectionNote.trim(),
+        updated_at: now,
+      })
+      .eq("id", rejectingRpp.id);
+
+    if (error) {
+      alert(`Gagal reject RPP: ${error.message}`);
+      return;
+    }
+
+    await fetchData();
+
+    setRejectingRpp(null);
+    setSelectedRpp(null);
+    setRejectionNote("");
   }
 
   return (
-    <KepalaSekolahLayout
-      activeMenu="RPP"
-      searchPlaceholder="Cari RPP..."
-      buttonLabel="+ Buat RPP"
-    >
-      <div className="flex items-start justify-between">
+    <KepalaSekolahLayout activeMenu="RPP" searchPlaceholder="Cari RPP...">
+      <section className="space-y-7">
         <div>
-          <h1 className="text-[30px] font-bold tracking-tight">RPP</h1>
-          <p className="mt-1 text-sm text-[#6B4A3A]">
-            Kelola Rencana Pelaksanaan Pengajaran per siswa, guru, dan mata
-            pelajaran.
+          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+            Kepala Sekolah
+          </p>
+
+          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+            Monitoring RPP
+          </h1>
+
+          <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
+            Review RPP yang dibuat guru. RPP dengan status submitted bisa
+            di-approve atau dikembalikan dengan catatan revisi.
           </p>
         </div>
 
-        <div className="flex gap-3">
-          <button
-            type="button"
-            className="rounded-xl border border-[#E8D6C1] bg-white px-5 py-3 text-sm font-semibold text-[#2B1B18] shadow-sm transition hover:bg-[#FFF8EF]"
-          >
-            ⬇ Export
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setErrorMessage("");
-              setIsModalOpen(true);
-            }}
-            className="rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-          >
-            + Buat RPP
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-7 grid grid-cols-4 gap-4">
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Total RPP</p>
-          <p className="mt-4 text-3xl font-bold">{rppList.length}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Draft</p>
-          <p className="mt-4 text-3xl font-bold">{totalDraft}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Approved</p>
-          <p className="mt-4 text-3xl font-bold">{totalApproved}</p>
-        </div>
-
-        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-          <p className="text-sm text-[#6B4A3A]">Published</p>
-          <p className="mt-4 text-3xl font-bold">{totalPublished}</p>
-        </div>
-      </div>
-
-      <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-[1fr_210px_220px] gap-3">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Cari judul, siswa, guru, mapel, bab, atau materi..."
-            className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<FileText className="h-5 w-5" />}
+            label="Total RPP"
+            value={summary.total}
+            info="Data"
+            tone="pink"
           />
 
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          >
-            <option>Semua Status</option>
-            <option>Draft</option>
-            <option>Pending Review</option>
-            <option>Approved</option>
-            <option>Revision</option>
-            <option>Published</option>
-          </select>
+          <SummaryCard
+            icon={<Send className="h-5 w-5" />}
+            label="Submitted"
+            value={summary.submitted}
+            info="Review"
+            tone="blue"
+          />
 
-          <select
-            value={teacherFilter}
-            onChange={(event) => setTeacherFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          >
-            <option>Semua Guru</option>
-            {teachers.map((teacher) => (
-              <option key={teacher.id}>{teacher.full_name}</option>
-            ))}
-          </select>
+          <SummaryCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="Approved"
+            value={summary.approved}
+            info="Approved"
+            tone="green"
+          />
+
+          <SummaryCard
+            icon={<X className="h-5 w-5" />}
+            label="Rejected"
+            value={summary.rejected}
+            info="Revisi"
+            tone="orange"
+          />
         </div>
-      </div>
 
-      {errorMessage && !isModalOpen && (
-        <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-          {errorMessage}
-        </div>
-      )}
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr]">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
 
-      <div className="mt-7 grid grid-cols-2 gap-5">
-        {loading && (
-          <div className="col-span-2 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Loading RPP...
-          </div>
-        )}
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari judul, guru, mapel, atau tujuan..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
+            </div>
 
-        {!loading && filteredRpp.length === 0 && (
-          <div className="col-span-2 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Belum ada data RPP.
-          </div>
-        )}
-
-        {!loading &&
-          filteredRpp.map((rpp) => (
-            <div
-              key={rpp.id}
-              className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm"
+            <select
+              value={teacherFilter}
+              onChange={(event) => setTeacherFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-bold">{rpp.title}</h2>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    {rpp.students?.full_name || "-"} •{" "}
-                    {rpp.class_level || "-"} • {rpp.subjects?.name || "-"}
-                  </p>
-                </div>
+              <option value="Semua Guru">Semua Guru</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.full_name}
+                </option>
+              ))}
+            </select>
 
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
-                    rpp.status
-                  )}`}
-                >
-                  {getStatusLabel(rpp.status)}
-                </span>
-              </div>
-
-              <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-xl bg-[#FFF8EF] p-3">
-                  <p className="text-[#6B4A3A]">Guru</p>
-                  <p className="font-bold">{rpp.teachers?.full_name || "-"}</p>
-                </div>
-
-                <div className="rounded-xl bg-[#FFF8EF] p-3">
-                  <p className="text-[#6B4A3A]">Semester</p>
-                  <p className="font-bold">{rpp.semester || "-"}</p>
-                </div>
-
-                <div className="rounded-xl bg-[#FFF8EF] p-3">
-                  <p className="text-[#6B4A3A]">BAB</p>
-                  <p className="font-bold">{rpp.chapter || "-"}</p>
-                </div>
-
-                <div className="rounded-xl bg-[#FFF8EF] p-3">
-                  <p className="text-[#6B4A3A]">Alokasi Waktu</p>
-                  <p className="font-bold">{rpp.time_allocation || "-"}</p>
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-4 text-sm">
-                <div>
-                  <p className="font-bold">Materi Pembelajaran</p>
-                  <p className="mt-1 leading-6 text-[#6B4A3A]">
-                    {rpp.material_topic || "-"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="font-bold">Metode Belajar</p>
-                  <p className="mt-1 leading-6 text-[#6B4A3A]">
-                    {rpp.learning_method || "-"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="font-bold">Metode Penilaian</p>
-                  <p className="mt-1 leading-6 text-[#6B4A3A]">
-                    {rpp.assessment_method || "-"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 flex justify-between text-xs text-[#6B4A3A]">
-                <p>Dibuat: {formatDate(rpp.created_at)}</p>
-
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="rounded-lg border border-[#E8D6C1] px-4 py-2 text-xs font-bold text-[#2B1B18]"
-                  >
-                    View
-                  </button>
-
-                  <button
-                    type="button"
-                    className="rounded-lg bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white"
-                  >
-                    Review
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-      </div>
-
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Buat RPP</h2>
-
-              <button
-                type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
-              )}
-
-              <form onSubmit={handleSubmitRpp} className="space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Nama Siswa</label>
-                  <select
-                    value={form.student_id}
-                    onChange={(event) =>
-                      setForm({ ...form, student_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih siswa</option>
-                    {students.map((student) => (
-                      <option key={student.id} value={student.id}>
-                        {student.full_name}
-                        {student.grade ? ` — ${student.grade}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Guru</label>
-                  <select
-                    value={form.teacher_id}
-                    onChange={(event) =>
-                      setForm({ ...form, teacher_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih guru</option>
-                    {teachers.map((teacher) => (
-                      <option key={teacher.id} value={teacher.id}>
-                        {teacher.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <select
-                    value={form.subject_id}
-                    onChange={(event) =>
-                      setForm({ ...form, subject_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Judul RPP</label>
-                  <input
-                    value={form.title}
-                    onChange={(event) =>
-                      setForm({ ...form, title: event.target.value })
-                    }
-                    placeholder="Contoh: RPP Siklus Air"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Kelas</label>
-                    <input
-                      value={form.class_level}
-                      onChange={(event) =>
-                        setForm({ ...form, class_level: event.target.value })
-                      }
-                      placeholder="Grade 4"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Semester</label>
-                    <select
-                      value={form.semester}
-                      onChange={(event) =>
-                        setForm({ ...form, semester: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Ganjil</option>
-                      <option>Genap</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">BAB</label>
-                  <input
-                    value={form.chapter}
-                    onChange={(event) =>
-                      setForm({ ...form, chapter: event.target.value })
-                    }
-                    placeholder="Contoh: Bab 6"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Materi</label>
-                  <input
-                    value={form.material_topic}
-                    onChange={(event) =>
-                      setForm({ ...form, material_topic: event.target.value })
-                    }
-                    placeholder="Contoh: Siklus Air"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Alokasi Waktu</label>
-                  <input
-                    value={form.time_allocation}
-                    onChange={(event) =>
-                      setForm({ ...form, time_allocation: event.target.value })
-                    }
-                    placeholder="Contoh: 2 x 60 menit"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Metode Belajar</label>
-                  <textarea
-                    value={form.learning_method}
-                    onChange={(event) =>
-                      setForm({ ...form, learning_method: event.target.value })
-                    }
-                    placeholder="Contoh: Diskusi, observasi, latihan soal"
-                    rows={3}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Metode Penilaian</label>
-                  <textarea
-                    value={form.assessment_method}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        assessment_method: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: Tugas, observasi, kuis"
-                    rows={3}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Status</label>
-                  <select
-                    value={form.status}
-                    onChange={(event) =>
-                      setForm({ ...form, status: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="draft">Draft</option>
-                    <option value="pending_review">Pending Review</option>
-                    <option value="approved">Approved</option>
-                    <option value="published">Published</option>
-                  </select>
-                </div>
-
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {saving ? "Menyimpan..." : "Simpan RPP"}
-                  </button>
-                </div>
-              </form>
-            </div>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Status</option>
+              <option value="draft">draft</option>
+              <option value="submitted">submitted</option>
+              <option value="approved">approved</option>
+              <option value="rejected">rejected</option>
+            </select>
           </div>
         </div>
-      )}
+
+        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1100px] border-collapse">
+              <thead>
+                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th className="px-6 py-4">RPP</th>
+                  <th className="px-6 py-4">Guru</th>
+                  <th className="px-6 py-4">Mapel</th>
+                  <th className="px-6 py-4">Kelas</th>
+                  <th className="px-6 py-4">Pertemuan</th>
+                  <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4">Aksi</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Memuat data RPP...
+                    </td>
+                  </tr>
+                ) : filteredRpps.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Belum ada data RPP.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRpps.map((rpp) => (
+                    <tr
+                      key={rpp.id}
+                      className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18]"
+                    >
+                      <td className="px-6 py-4">
+                        <p className="font-extrabold">{getRppTitle(rpp)}</p>
+                        <p className="mt-1 text-[12px] text-[#6F5549]">
+                          Update: {formatDateTime(rpp.updated_at)}
+                        </p>
+                      </td>
+
+                      <td className="px-6 py-4">{rpp.teacher_name}</td>
+
+                      <td className="px-6 py-4">{rpp.subject_name || "-"}</td>
+
+                      <td className="px-6 py-4">
+                        {rpp.level} — {rpp.grade}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {formatDate(rpp.meeting_date)}
+                        <br />
+                        <span className="text-[12px] text-[#6F5549]">
+                          Pertemuan {rpp.meeting_number || "-"}
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <StatusBadge status={rpp.status} />
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRpp(rpp)}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                        >
+                          <Eye className="h-4 w-4" />
+                          Detail
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {selectedRpp ? (
+        <RppDetailModal
+          rpp={selectedRpp}
+          onClose={() => setSelectedRpp(null)}
+          onApprove={() => handleApprove(selectedRpp)}
+          onReject={() => {
+            setRejectingRpp(selectedRpp);
+            setRejectionNote("");
+          }}
+        />
+      ) : null}
+
+      {rejectingRpp ? (
+        <RejectModal
+          rpp={rejectingRpp}
+          note={rejectionNote}
+          onChange={setRejectionNote}
+          onClose={() => setRejectingRpp(null)}
+          onSubmit={handleReject}
+        />
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function RppDetailModal({
+  rpp,
+  onClose,
+  onApprove,
+  onReject,
+}: {
+  rpp: EnrichedRpp;
+  onClose: () => void;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  return (
+    <ModalShell title="Detail RPP" subtitle={getRppTitle(rpp)} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge status={rpp.status} />
+
+          <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+            {rpp.teacher_name}
+          </span>
+
+          <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+            {rpp.level} — {rpp.grade}
+          </span>
+        </div>
+
+        <InfoBlock label="Judul RPP" value={getRppTitle(rpp)} />
+
+        <InfoBlock label="Mapel" value={rpp.subject_name || "-"} />
+
+        <InfoBlock
+          label="Tanggal / Pertemuan"
+          value={`${formatDate(rpp.meeting_date)} • Pertemuan ${
+            rpp.meeting_number || "-"
+          }`}
+        />
+
+        <InfoBlock
+          label="Tujuan Pembelajaran"
+          value={rpp.learning_objectives || "-"}
+        />
+
+        <InfoBlock label="Kegiatan Pembukaan" value={rpp.opening_activity || "-"} />
+
+        <InfoBlock label="Kegiatan Inti" value={rpp.core_activity || "-"} />
+
+        <InfoBlock label="Kegiatan Penutup" value={rpp.closing_activity || "-"} />
+
+        <InfoBlock label="Assessment" value={rpp.assessment || "-"} />
+
+        <InfoBlock label="Media Pembelajaran" value={rpp.learning_media || "-"} />
+
+        <InfoBlock label="Sumber Belajar" value={rpp.learning_resources || "-"} />
+
+        <InfoBlock label="Catatan Guru" value={rpp.notes || "-"} />
+
+        {rpp.document_url ? (
+          <a
+            href={rpp.document_url}
+            target="_blank"
+            className="block rounded-xl bg-[#8C0F2D] px-4 py-3 text-center text-[14px] font-extrabold text-white"
+          >
+            Buka Dokumen RPP
+          </a>
+        ) : null}
+
+        {rpp.rejection_note ? (
+          <InfoBlock label="Catatan Revisi" value={rpp.rejection_note} />
+        ) : null}
+
+        {rpp.status === "submitted" ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            <button
+              type="button"
+              onClick={onReject}
+              className="h-11 rounded-xl border border-[#FECACA] text-[14px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
+            >
+              Reject / Revisi
+            </button>
+
+            <button
+              type="button"
+              onClick={onApprove}
+              className="h-11 rounded-xl bg-[#158A58] text-[14px] font-extrabold text-white transition hover:bg-[#116C46]"
+            >
+              Approve RPP
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </ModalShell>
+  );
+}
+
+function RejectModal({
+  rpp,
+  note,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  rpp: EnrichedRpp;
+  note: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Reject / Revisi RPP"
+      subtitle={getRppTitle(rpp)}
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <label className="block">
+          <p className="mb-2 text-[14px] font-extrabold text-[#2B1B18]">
+            Catatan Revisi
+          </p>
+
+          <textarea
+            value={note}
+            onChange={(event) => onChange(event.target.value)}
+            rows={5}
+            placeholder="Contoh: Mohon lengkapi kegiatan penutup dan assessment..."
+            className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="h-11 w-full rounded-xl bg-[#DC2626] text-[14px] font-extrabold text-white transition hover:bg-[#B91C1C]"
+        >
+          Kirim Revisi
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </div>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
+    </div>
+  );
+}
+
+function ModalShell({
+  title,
+  subtitle,
+  children,
+  onClose,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
+      <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
+          <div>
+            <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+              {title}
+            </h2>
+
+            <p className="mt-1 text-[14px] text-[#6F5549]">{subtitle}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="px-6 py-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function InfoBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+      <p className="text-[13px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+
+      <p className="mt-2 whitespace-pre-line text-[14px] leading-6 text-[#2B1B18]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status?: string | null }) {
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+        status
+      )}`}
+    >
+      {getStatusLabel(status)}
+    </span>
   );
 }

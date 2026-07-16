@@ -1,985 +1,837 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  BookOpen,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Layers3,
+  Search,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
-type Teacher = {
+type TeacherRow = {
   id: string;
-  full_name: string;
+  full_name: string | null;
   email: string | null;
-  phone: string | null;
-  teacher_code: string | null;
-  subjects: string[] | null;
+  subjects?: string[] | string | null;
 };
 
-type Subject = {
+type CurriculumProgram = {
   id: string;
-  name: string;
+  program_type: string | null;
   level: string | null;
   grade: string | null;
-};
-
-type SubjectRelation = {
-  id: string;
-  name: string;
-  level: string | null;
-  grade: string | null;
-};
-
-type SemesterProgramRow = {
-  id: string;
-  teacher_id: string | null;
-  subject_id: string | null;
-  class_level: string | null;
+  subject_name: string | null;
   semester: string | null;
   academic_year: string | null;
-  chapter: string | null;
-  main_material: string | null;
-  month_name: string | null;
-  week_name: string | null;
-  time_allocation: string | null;
-  status: string | null;
-  created_at: string | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
-};
-
-type SemesterProgram = {
-  id: string;
   teacher_id: string | null;
-  subject_id: string | null;
-  class_level: string | null;
-  semester: string | null;
-  academic_year: string | null;
-  chapter: string | null;
-  main_material: string | null;
-  month_name: string | null;
-  week_name: string | null;
-  time_allocation: string | null;
+  source_material: string | null;
   status: string | null;
-  created_at: string | null;
-  subjects: SubjectRelation | null;
+  notes: string | null;
 };
 
-type ProgramForm = {
-  subject_id: string;
-  class_level: string;
-  semester: string;
-  academic_year: string;
-  chapter: string;
-  main_material: string;
-  month_name: string;
-  week_name: string;
-  time_allocation: string;
-  status: string;
+type CurriculumChapter = {
+  id: string;
+  curriculum_program_id: string;
+  chapter_order: number;
+  chapter_title: string;
+  month_target: string | null;
 };
 
-const initialForm: ProgramForm = {
-  subject_id: "",
-  class_level: "",
-  semester: "Genap",
-  academic_year: "2025/2026",
-  chapter: "",
-  main_material: "",
-  month_name: "",
-  week_name: "",
-  time_allocation: "",
-  status: "planned",
+type CurriculumSubChapter = {
+  id: string;
+  curriculum_chapter_id: string;
+  sub_chapter_order: number;
+  sub_chapter_title: string;
+  target_month: string | null;
+  planned_week: string | null;
+  status: string | null;
 };
 
-const monthOptions = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
+type CurriculumProgress = {
+  id: string;
+  curriculum_program_id: string | null;
+  curriculum_chapter_id: string | null;
+  curriculum_sub_chapter_id: string | null;
+  teacher_id: string | null;
+  student_id: string | null;
+  subject_id: string | null;
+  teaching_date: string | null;
+  day_name: string | null;
+  status: string | null;
+  notes: string | null;
+};
 
-const weekOptions = [
-  "Minggu 1",
-  "Minggu 2",
-  "Minggu 3",
-  "Minggu 4",
-  "Minggu 5",
-];
+type ProgramView = CurriculumProgram & {
+  chapters: Array<
+    CurriculumChapter & {
+      sub_chapters: Array<
+        CurriculumSubChapter & {
+          progress_records: CurriculumProgress[];
+        }
+      >;
+    }
+  >;
+};
 
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
+const ALL = "Semua";
+const MONTHS = ["Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const WEEKS = ["W1", "W2", "W3", "W4"];
+
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+function formatSubjects(subjects: string[] | string | null | undefined) {
+  if (!subjects) return "Guru";
+
+  if (Array.isArray(subjects)) {
+    return `Guru — ${subjects.slice(0, 3).join(", ")}`;
+  }
+
+  return `Guru — ${subjects}`;
 }
 
-function getStatusLabel(status: string | null) {
-  if (status === "published") return "Published";
-  if (status === "approved") return "Approved";
-  if (status === "pending_review") return "Pending Review";
-  if (status === "revision") return "Revision";
-  if (status === "done") return "Done";
-  if (status === "planned") return "Planned";
+function statusLabel(status?: string | null) {
+  const safe = normalizeText(status);
+
+  if (safe === "approved") return "Approved";
+  if (safe === "pending_approval") return "Pending Approval";
+  if (safe === "pending") return "Pending";
+  if (safe === "published") return "Published";
 
   return "Draft";
 }
 
-function getStatusBadge(status: string | null) {
-  if (status === "published" || status === "approved" || status === "done") {
-    return "bg-emerald-100 text-emerald-700";
+function statusClass(status?: string | null) {
+  const safe = normalizeText(status);
+
+  if (safe === "approved" || safe === "published") {
+    return "bg-[#C7F0DA] text-[#158A58]";
   }
 
-  if (status === "pending_review" || status === "planned") {
-    return "bg-yellow-100 text-yellow-700";
+  if (safe.includes("pending")) {
+    return "bg-[#FFF2B8] text-[#B26A00]";
   }
 
-  if (status === "revision") {
-    return "bg-red-100 text-red-700";
+  return "bg-[#E8D6C1] text-[#6F5549]";
+}
+
+function getWeekNumber(week?: string | null) {
+  if (!week) return 1;
+  const match = week.match(/\d+/);
+  return match ? Number(match[0]) : 1;
+}
+
+function getMonthNameFromDate(dateString?: string | null) {
+  if (!dateString) return null;
+
+  const date = new Date(`${dateString}T00:00:00`);
+  return new Intl.DateTimeFormat("id-ID", { month: "long" }).format(date);
+}
+
+function getWeekOfMonth(dateString?: string | null) {
+  if (!dateString) return 1;
+
+  const date = new Date(`${dateString}T00:00:00`);
+  const day = date.getDate();
+
+  return Math.min(4, Math.ceil(day / 7));
+}
+
+function formatDate(dateString?: string | null) {
+  if (!dateString) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(`${dateString}T00:00:00`));
+}
+
+function getProgramProgress(program: ProgramView) {
+  const subChapters = program.chapters.flatMap((chapter) => chapter.sub_chapters);
+  const total = subChapters.length;
+  const completed = subChapters.filter((sub) => sub.progress_records.length > 0).length;
+  const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  return { total, completed, percentage };
+}
+
+function getSubChapterCellStatus(
+  subChapter: CurriculumSubChapter & {
+    progress_records: CurriculumProgress[];
+  },
+  month: string,
+  week: string
+) {
+  const completedRecord = subChapter.progress_records.find((progress) => {
+    const progressMonth = getMonthNameFromDate(progress.teaching_date);
+    const progressWeek = `W${getWeekOfMonth(progress.teaching_date)}`;
+
+    return progressMonth === month && progressWeek === week;
+  });
+
+  if (completedRecord) {
+    return {
+      type: "completed",
+      record: completedRecord,
+    };
   }
 
-  return "bg-slate-200 text-slate-700";
+  const targetWeek = `W${getWeekNumber(subChapter.planned_week)}`;
+
+  if (subChapter.target_month === month && targetWeek === week) {
+    return {
+      type: "planned",
+      record: null,
+    };
+  }
+
+  return {
+    type: "empty",
+    record: null,
+  };
 }
 
 export default function TeacherProgramSemesterPage() {
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [programs, setPrograms] = useState<SemesterProgram[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-
+  const [teacher, setTeacher] = useState<TeacherRow | null>(null);
+  const [programs, setPrograms] = useState<ProgramView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [expandedProgramId, setExpandedProgramId] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [semesterFilter, setSemesterFilter] = useState("Semua Semester");
-  const [statusFilter, setStatusFilter] = useState("Semua Status");
-  const [monthFilter, setMonthFilter] = useState("Semua Bulan");
+  const [programType, setProgramType] = useState(ALL);
+  const [level, setLevel] = useState(ALL);
+  const [grade, setGrade] = useState(ALL);
+  const [subject, setSubject] = useState(ALL);
+  const [semester, setSemester] = useState(ALL);
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form, setForm] = useState<ProgramForm>(initialForm);
+  async function getCurrentTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
 
-  async function fetchActiveTeacher() {
-    const { data, error } = await supabase
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (data) return data as TeacherRow;
+    }
+
+    const { data } = await supabase
       .from("teachers")
-      .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .select("*")
+      .order("teacher_code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-    if (error) throw new Error(error.message);
-
-    const teacherList = data || [];
-
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return data as TeacherRow | null;
   }
 
-  async function fetchSubjects() {
-    const { data, error } = await supabase
-      .from("subjects")
-      .select("id, name, level, grade")
-      .order("name", { ascending: true });
+  async function fetchCurriculumData() {
+    setLoading(true);
 
-    if (error) throw new Error(error.message);
+    const currentTeacher = await getCurrentTeacher();
+    setTeacher(currentTeacher);
 
-    setSubjects(data || []);
-  }
+    if (!currentTeacher?.id) {
+      setPrograms([]);
+      setLoading(false);
+      return;
+    }
 
-  async function fetchPrograms(teacherId: string) {
-    const { data, error } = await supabase
-      .from("semester_programs")
-      .select(
-        `
-        id,
-        teacher_id,
-        subject_id,
-        class_level,
-        semester,
-        academic_year,
-        chapter,
-        main_material,
-        month_name,
-        week_name,
-        time_allocation,
-        status,
-        created_at,
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("created_at", { ascending: false });
+    const [programsRes, chaptersRes, subChaptersRes, progressRes] =
+      await Promise.all([
+        supabase
+          .from("curriculum_programs")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .order("level", { ascending: true })
+          .order("grade", { ascending: true })
+          .order("subject_name", { ascending: true }),
 
-    if (error) throw new Error(error.message);
+        supabase
+          .from("curriculum_chapters")
+          .select("*")
+          .order("chapter_order", { ascending: true }),
 
-    const rows = (data || []) as SemesterProgramRow[];
+        supabase
+          .from("curriculum_sub_chapters")
+          .select("*")
+          .order("sub_chapter_order", { ascending: true }),
 
-    const normalizedPrograms: SemesterProgram[] = rows.map((item) => ({
-      id: item.id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      class_level: item.class_level,
-      semester: item.semester,
-      academic_year: item.academic_year,
-      chapter: item.chapter,
-      main_material: item.main_material,
-      month_name: item.month_name,
-      week_name: item.week_name,
-      time_allocation: item.time_allocation,
-      status: item.status,
-      created_at: item.created_at,
-      subjects: normalizeRelation(item.subjects),
+        supabase
+          .from("curriculum_progress")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .order("teaching_date", { ascending: false }),
+      ]);
+
+    const programsData = (programsRes.data || []) as CurriculumProgram[];
+    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
+    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
+    const progressData = (progressRes.data || []) as CurriculumProgress[];
+
+    const programIds = new Set(programsData.map((program) => program.id));
+
+    const relatedChapters = chaptersData.filter((chapter) =>
+      programIds.has(chapter.curriculum_program_id)
+    );
+
+    const chapterIds = new Set(relatedChapters.map((chapter) => chapter.id));
+
+    const relatedSubChapters = subChaptersData.filter((sub) =>
+      chapterIds.has(sub.curriculum_chapter_id)
+    );
+
+    const progressBySubChapter = new Map<string, CurriculumProgress[]>();
+    progressData.forEach((progress) => {
+      if (!progress.curriculum_sub_chapter_id) return;
+
+      const current = progressBySubChapter.get(progress.curriculum_sub_chapter_id) || [];
+      current.push(progress);
+      progressBySubChapter.set(progress.curriculum_sub_chapter_id, current);
+    });
+
+    const subByChapter = new Map<
+      string,
+      Array<CurriculumSubChapter & { progress_records: CurriculumProgress[] }>
+    >();
+
+    relatedSubChapters.forEach((sub) => {
+      const current = subByChapter.get(sub.curriculum_chapter_id) || [];
+
+      current.push({
+        ...sub,
+        progress_records: progressBySubChapter.get(sub.id) || [],
+      });
+
+      subByChapter.set(sub.curriculum_chapter_id, current);
+    });
+
+    const chaptersByProgram = new Map<
+      string,
+      Array<
+        CurriculumChapter & {
+          sub_chapters: Array<
+            CurriculumSubChapter & { progress_records: CurriculumProgress[] }
+          >;
+        }
+      >
+    >();
+
+    relatedChapters.forEach((chapter) => {
+      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
+
+      current.push({
+        ...chapter,
+        sub_chapters: subByChapter.get(chapter.id) || [],
+      });
+
+      chaptersByProgram.set(chapter.curriculum_program_id, current);
+    });
+
+    const mapped: ProgramView[] = programsData.map((program) => ({
+      ...program,
+      chapters: chaptersByProgram.get(program.id) || [],
     }));
 
-    setPrograms(normalizedPrograms);
-  }
+    setPrograms(mapped);
 
-  async function fetchPageData() {
-    setLoading(true);
-    setErrorMessage("");
-
-    try {
-      const activeTeacher = await fetchActiveTeacher();
-
-      if (!activeTeacher) {
-        setErrorMessage("Belum ada data guru di table teachers.");
-        setLoading(false);
-        return;
-      }
-
-      await Promise.all([fetchSubjects(), fetchPrograms(activeTeacher.id)]);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal mengambil data program semester.");
-      }
-    } finally {
-      setLoading(false);
+    if (!expandedProgramId && mapped.length > 0) {
+      setExpandedProgramId(mapped[0].id);
     }
+
+    setLoading(false);
   }
 
   useEffect(() => {
-    fetchPageData();
+    fetchCurriculumData();
+
+    const channel = supabase
+      .channel("teacher-program-semester-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_programs" },
+        fetchCurriculumData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_chapters" },
+        fetchCurriculumData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_sub_chapters" },
+        fetchCurriculumData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_progress" },
+        fetchCurriculumData
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
+  const optionData = useMemo(() => {
+    return {
+      programTypes: Array.from(
+        new Set(programs.map((item) => item.program_type).filter(Boolean))
+      ) as string[],
+      levels: Array.from(
+        new Set(programs.map((item) => item.level).filter(Boolean))
+      ) as string[],
+      grades: Array.from(
+        new Set(programs.map((item) => item.grade).filter(Boolean))
+      ) as string[],
+      subjects: Array.from(
+        new Set(programs.map((item) => item.subject_name).filter(Boolean))
+      ) as string[],
+      semesters: Array.from(
+        new Set(programs.map((item) => item.semester).filter(Boolean))
+      ) as string[],
+    };
+  }, [programs]);
+
   const filteredPrograms = useMemo(() => {
-    const keyword = search.toLowerCase();
+    const q = normalizeText(search);
 
     return programs.filter((program) => {
       const matchSearch =
-        program.subjects?.name?.toLowerCase().includes(keyword) ||
-        program.class_level?.toLowerCase().includes(keyword) ||
-        program.academic_year?.toLowerCase().includes(keyword) ||
-        program.chapter?.toLowerCase().includes(keyword) ||
-        program.main_material?.toLowerCase().includes(keyword) ||
-        program.month_name?.toLowerCase().includes(keyword) ||
-        program.week_name?.toLowerCase().includes(keyword) ||
-        program.time_allocation?.toLowerCase().includes(keyword);
+        !q ||
+        normalizeText(program.subject_name).includes(q) ||
+        normalizeText(program.level).includes(q) ||
+        normalizeText(program.grade).includes(q) ||
+        normalizeText(program.program_type).includes(q);
 
-      const matchSemester =
-        semesterFilter === "Semua Semester" ||
-        program.semester === semesterFilter;
+      const matchProgramType =
+        programType === ALL || program.program_type === programType;
+      const matchLevel = level === ALL || program.level === level;
+      const matchGrade = grade === ALL || program.grade === grade;
+      const matchSubject = subject === ALL || program.subject_name === subject;
+      const matchSemester = semester === ALL || program.semester === semester;
 
-      const matchStatus =
-        statusFilter === "Semua Status" || program.status === statusFilter;
-
-      const matchMonth =
-        monthFilter === "Semua Bulan" || program.month_name === monthFilter;
-
-      return matchSearch && matchSemester && matchStatus && matchMonth;
+      return (
+        matchSearch &&
+        matchProgramType &&
+        matchLevel &&
+        matchGrade &&
+        matchSubject &&
+        matchSemester
+      );
     });
-  }, [programs, search, semesterFilter, statusFilter, monthFilter]);
+  }, [programs, search, programType, level, grade, subject, semester]);
 
-  const plannedCount = programs.filter(
-    (program) => program.status === "planned"
-  ).length;
+  const summary = useMemo(() => {
+    const totalPrograms = programs.length;
 
-  const draftCount = programs.filter(
-    (program) => program.status === "draft"
-  ).length;
+    const allSubChapters = programs.flatMap((program) =>
+      program.chapters.flatMap((chapter) => chapter.sub_chapters)
+    );
 
-  const publishedCount = programs.filter(
-    (program) => program.status === "published"
-  ).length;
+    const completed = allSubChapters.filter(
+      (sub) => sub.progress_records.length > 0
+    ).length;
 
-  const totalSubjects = useMemo(() => {
-    const subjectIds = programs
-      .map((item) => item.subject_id)
-      .filter(Boolean) as string[];
+    const totalSubChapters = allSubChapters.length;
+    const percentage =
+      totalSubChapters > 0 ? Math.round((completed / totalSubChapters) * 100) : 0;
 
-    return new Set(subjectIds).size;
+    return {
+      totalPrograms,
+      totalSubChapters,
+      completed,
+      percentage,
+    };
   }, [programs]);
-
-  const monthSummary = useMemo(() => {
-    return monthOptions.map((month) => {
-      const total = programs.filter(
-        (program) => program.month_name?.toLowerCase() === month.toLowerCase()
-      ).length;
-
-      return {
-        month,
-        total,
-      };
-    });
-  }, [programs]);
-
-  function openModal() {
-    setErrorMessage("");
-    setForm(initialForm);
-    setIsModalOpen(true);
-  }
-
-  function closeModal() {
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm(initialForm);
-  }
-
-  async function handleSubmitProgram(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setErrorMessage("");
-
-    if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
-      return;
-    }
-
-    if (!form.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
-      return;
-    }
-
-    if (!form.class_level.trim()) {
-      setErrorMessage("Kelas wajib diisi.");
-      return;
-    }
-
-    if (!form.chapter.trim()) {
-      setErrorMessage("Bab / unit wajib diisi.");
-      return;
-    }
-
-    if (!form.main_material.trim()) {
-      setErrorMessage("Materi utama wajib diisi.");
-      return;
-    }
-
-    if (!form.month_name) {
-      setErrorMessage("Bulan wajib dipilih.");
-      return;
-    }
-
-    if (!form.week_name) {
-      setErrorMessage("Minggu wajib dipilih.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const { error } = await supabase.from("semester_programs").insert({
-        teacher_id: teacher.id,
-        subject_id: form.subject_id,
-        class_level: form.class_level.trim(),
-        semester: form.semester,
-        academic_year: form.academic_year.trim() || "2025/2026",
-        chapter: form.chapter.trim(),
-        main_material: form.main_material.trim(),
-        month_name: form.month_name,
-        week_name: form.week_name,
-        time_allocation: form.time_allocation.trim() || null,
-        status: form.status,
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setForm(initialForm);
-      setIsModalOpen(false);
-      await fetchPrograms(teacher.id);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal menyimpan program semester.");
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <TeacherLayout
       activeMenu="Program Semester"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={formatSubjects(teacher?.subjects)}
       searchPlaceholder="Cari program semester..."
-      buttonLabel="+ Tambah Program"
     >
-      <div className="w-full max-w-full overflow-hidden">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#6B4A3A]">
-              Teacher Portal
-            </p>
+      <section className="space-y-6">
+        <div>
+          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+            Teacher Portal
+          </p>
 
-            <h1 className="mt-1 text-[30px] font-bold tracking-tight">
-              Program Semester
-            </h1>
+          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+            Program Semester Saya
+          </h1>
 
-            <p className="mt-1 text-sm text-[#6B4A3A]">
-              Susun rencana materi semester oleh{" "}
-              <span className="font-bold text-[#2B1B18]">
-                {teacher?.full_name || "guru aktif"}
-              </span>
-              .
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={openModal}
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-          >
-            + Tambah Program
-          </button>
+          <p className="mt-2 max-w-[840px] text-[15px] leading-6 text-[#6F5549]">
+            Checklist progress otomatis dari Absensi KBM yang sudah disimpan.
+          </p>
         </div>
 
-        {errorMessage && !isModalOpen && (
-          <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errorMessage}
-          </div>
-        )}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<BookOpen className="h-5 w-5" />}
+            label="Program Saya"
+            value={summary.totalPrograms}
+            info="Aktif"
+            tone="pink"
+          />
+          <SummaryCard
+            icon={<Layers3 className="h-5 w-5" />}
+            label="Total Sub Bab"
+            value={summary.totalSubChapters}
+            info="Materi"
+            tone="orange"
+          />
+          <SummaryCard
+            icon={<Check className="h-5 w-5" />}
+            label="Sudah Diajarkan"
+            value={summary.completed}
+            info="Checklist"
+            tone="green"
+          />
+          <SummaryCard
+            icon={<CalendarDays className="h-5 w-5" />}
+            label="Progress"
+            value={`${summary.percentage}%`}
+            info="Overall"
+            tone="blue"
+          />
+        </div>
 
-        {loading && (
-          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Loading program semester...
-          </div>
-        )}
-
-        {!loading && (
-          <>
-            <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Total Program</p>
-                <p className="mt-4 text-3xl font-bold">{programs.length}</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Planned</p>
-                <p className="mt-4 text-3xl font-bold">{plannedCount}</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Draft</p>
-                <p className="mt-4 text-3xl font-bold">{draftCount}</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Mapel</p>
-                <p className="mt-4 text-3xl font-bold">{totalSubjects}</p>
-              </div>
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.7fr_1fr_1fr_1fr_1fr_1fr]">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari program semester..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
             </div>
 
-            <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_210px_210px_210px]">
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari mapel, kelas, bab, materi, bulan..."
-                  className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                />
+            <FilterSelect value={programType} onChange={setProgramType} options={optionData.programTypes} />
+            <FilterSelect value={level} onChange={setLevel} options={optionData.levels} />
+            <FilterSelect value={grade} onChange={setGrade} options={optionData.grades} />
+            <FilterSelect value={subject} onChange={setSubject} options={optionData.subjects} />
+            <FilterSelect value={semester} onChange={setSemester} options={optionData.semesters} />
+          </div>
+        </div>
 
-                <select
-                  value={semesterFilter}
-                  onChange={(event) => setSemesterFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+        <div className="grid gap-5">
+          {loading ? (
+            <EmptyState text="Memuat data program semester..." />
+          ) : filteredPrograms.length === 0 ? (
+            <EmptyState text="Belum ada program semester untuk guru ini." />
+          ) : (
+            filteredPrograms.map((program) => {
+              const isOpen = expandedProgramId === program.id;
+              const progress = getProgramProgress(program);
+
+              return (
+                <div
+                  key={program.id}
+                  className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm"
                 >
-                  <option>Semua Semester</option>
-                  <option>Ganjil</option>
-                  <option>Genap</option>
-                </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedProgramId(isOpen ? null : program.id)
+                    }
+                    className="flex w-full items-start justify-between gap-5 px-6 py-5 text-left transition hover:bg-[#FFF8EF]"
+                  >
+                    <div className="flex gap-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#F8DFD0] text-[#8C0F2D]">
+                        <FileText className="h-5 w-5" />
+                      </div>
 
-                <select
-                  value={monthFilter}
-                  onChange={(event) => setMonthFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                >
-                  <option>Semua Bulan</option>
-                  {monthOptions.map((month) => (
-                    <option key={month}>{month}</option>
-                  ))}
-                </select>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-[19px] font-extrabold text-[#2B1B18]">
+                            {program.subject_name}
+                          </h2>
 
-                <select
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                >
-                  <option>Semua Status</option>
-                  <option value="planned">planned</option>
-                  <option value="draft">draft</option>
-                  <option value="pending_review">pending_review</option>
-                  <option value="published">published</option>
-                  <option value="done">done</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
-              <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-                <div className="border-b border-[#E8D6C1] px-6 py-5">
-                  <h2 className="text-lg font-bold">Daftar Program Semester</h2>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Data tersimpan di table semester_programs.
-                  </p>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1120px] text-left">
-                    <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
-                      <tr>
-                        <th className="px-4 py-4">Mapel</th>
-                        <th className="px-4 py-4">Kelas</th>
-                        <th className="px-4 py-4">Semester</th>
-                        <th className="px-4 py-4">Tahun Ajaran</th>
-                        <th className="px-4 py-4">Bab</th>
-                        <th className="px-4 py-4">Materi Utama</th>
-                        <th className="px-4 py-4">Bulan</th>
-                        <th className="px-4 py-4">Minggu</th>
-                        <th className="px-4 py-4">Alokasi</th>
-                        <th className="px-4 py-4">Status</th>
-                      </tr>
-                    </thead>
-
-                    <tbody className="divide-y divide-[#E8D6C1]">
-                      {filteredPrograms.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={10}
-                            className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
+                          <span
+                            className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${statusClass(
+                              program.status
+                            )}`}
                           >
-                            Belum ada program semester untuk guru ini.
-                          </td>
-                        </tr>
-                      )}
-
-                      {filteredPrograms.map((program) => (
-                        <tr key={program.id} className="hover:bg-[#FFF8EF]">
-                          <td className="px-4 py-4 font-semibold">
-                            {program.subjects?.name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.class_level || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.semester || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.academic_year || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.chapter || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.main_material || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.month_name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.week_name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {program.time_allocation || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
-                                program.status
-                              )}`}
-                            >
-                              {getStatusLabel(program.status)}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="space-y-5">
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Guru Aktif</h2>
-
-                  <div className="mt-5 flex items-center gap-4 rounded-2xl bg-[#FFF8EF] p-5">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#7A1F2B] text-sm font-bold text-white">
-                      {getInitials(teacher?.full_name || "Guru")}
-                    </div>
-
-                    <div>
-                      <p className="font-bold">{teacher?.full_name || "-"}</p>
-                      <p className="mt-1 text-sm text-[#6B4A3A]">
-                        {teacher?.teacher_code || "-"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 space-y-2 text-sm text-[#6B4A3A]">
-                    <p>
-                      <span className="font-semibold text-[#2B1B18]">
-                        Email:
-                      </span>{" "}
-                      {teacher?.email || "-"}
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#2B1B18]">
-                        Mapel:
-                      </span>{" "}
-                      {teacher?.subjects?.join(", ") || "-"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Ringkasan Bulan</h2>
-
-                  <div className="mt-5 space-y-4">
-                    {monthSummary
-                      .filter((item) => item.total > 0)
-                      .slice(0, 6)
-                      .map((item) => (
-                        <div key={item.month}>
-                          <div className="mb-2 flex justify-between text-sm">
-                            <span>{item.month}</span>
-                            <span className="font-bold">
-                              {item.total} program
-                            </span>
-                          </div>
-
-                          <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                            <div
-                              className="h-full rounded-full bg-[#7A1F2B]"
-                              style={{
-                                width:
-                                  programs.length > 0
-                                    ? `${(item.total / programs.length) * 100}%`
-                                    : "0%",
-                              }}
-                            />
-                          </div>
+                            {statusLabel(program.status)}
+                          </span>
                         </div>
-                      ))}
 
-                    {monthSummary.filter((item) => item.total > 0).length ===
-                      0 && (
-                      <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
-                        Belum ada program per bulan.
-                      </div>
-                    )}
-                  </div>
-                </div>
+                        <p className="mt-2 text-[14px] text-[#6F5549]">
+                          {program.program_type} • {program.level} •{" "}
+                          {program.grade} • Semester {program.semester} •{" "}
+                          {program.academic_year}
+                        </p>
 
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Status Program</h2>
-
-                  <div className="mt-5 space-y-4">
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Planned</span>
-                        <span className="font-bold">{plannedCount}</span>
-                      </div>
-
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-yellow-500"
-                          style={{
-                            width:
-                              programs.length > 0
-                                ? `${(plannedCount / programs.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
+                        <p className="mt-1 text-[13px] text-[#8A5A48]">
+                          Sumber Materi: {program.source_material || "-"}
+                        </p>
                       </div>
                     </div>
 
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Draft</span>
-                        <span className="font-bold">{draftCount}</span>
+                    <div className="flex shrink-0 items-center gap-4">
+                      <div className="hidden min-w-[140px] md:block">
+                        <div className="mb-2 flex justify-between text-[12px] font-bold text-[#6F5549]">
+                          <span>Progress</span>
+                          <span>{progress.percentage}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-[#F0E1D4]">
+                          <div
+                            className="h-full rounded-full bg-[#8C0F2D]"
+                            style={{ width: `${progress.percentage}%` }}
+                          />
+                        </div>
+                        <p className="mt-2 text-[12px] text-[#6F5549]">
+                          {progress.completed}/{progress.total} sub bab
+                        </p>
                       </div>
 
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-slate-500"
-                          style={{
-                            width:
-                              programs.length > 0
-                                ? `${(draftCount / programs.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
+                      {isOpen ? (
+                        <ChevronDown className="mt-1 h-5 w-5 text-[#8A2332]" />
+                      ) : (
+                        <ChevronRight className="mt-1 h-5 w-5 text-[#8A2332]" />
+                      )}
                     </div>
+                  </button>
 
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Published</span>
-                        <span className="font-bold">{publishedCount}</span>
-                      </div>
-
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-emerald-600"
-                          style={{
-                            width:
-                              programs.length > 0
-                                ? `${(publishedCount / programs.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
+                  {isOpen ? <ProgramMatrix program={program} /> : null}
                 </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+    </TeacherLayout>
+  );
+}
 
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Catatan</h2>
-                  <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Tombol{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      + Tambah Program
-                    </span>{" "}
-                    akan menyimpan data baru ke table{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      semester_programs
-                    </span>
-                    .
-                  </p>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
+function ProgramMatrix({ program }: { program: ProgramView }) {
+  return (
+    <div className="border-t border-[#EADACA] bg-[#FFF8EF] p-5">
+      <div className="mb-4 rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+        <div className="grid gap-3 text-[13px] text-[#2B1B18] md:grid-cols-2 xl:grid-cols-4">
+          <InfoItem
+            label="Program / Kelas"
+            value={`${program.program_type || "-"} / ${program.grade || "-"}`}
+          />
+          <InfoItem label="Mapel" value={program.subject_name || "-"} />
+          <InfoItem label="Semester" value={program.semester || "-"} />
+          <InfoItem label="Tahun Ajaran" value={program.academic_year || "-"} />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3 text-[12px]">
+          <span className="rounded-full bg-[#C7F0DA] px-3 py-1 font-bold text-[#158A58]">
+            ✓ Sudah diajarkan dari Absensi KBM
+          </span>
+          <span className="rounded-full bg-[#F4E5DA] px-3 py-1 font-bold text-[#8A2332]">
+            • Target rencana
+          </span>
+        </div>
       </div>
 
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[470px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Tambah Program Semester</h2>
-
-              <button
-                type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+      <div className="overflow-x-auto rounded-2xl border border-[#E1CFBE] bg-white">
+        <table className="w-full min-w-[1280px] border-collapse">
+          <thead>
+            <tr className="border-b border-[#DCC8B6] bg-[#FFF8EF]">
+              <th
+                rowSpan={2}
+                className="w-[390px] border-r border-[#DCC8B6] px-4 py-3 text-left text-[14px] font-extrabold text-[#2B1B18]"
               >
-                ×
-              </button>
-            </div>
+                Materi Pokok
+              </th>
 
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
+              {MONTHS.map((month) => (
+                <th
+                  key={month}
+                  colSpan={4}
+                  className="border-r border-[#DCC8B6] px-3 py-3 text-center text-[14px] font-extrabold text-[#2B1B18]"
+                >
+                  {month}
+                </th>
+              ))}
+            </tr>
+
+            <tr className="border-b border-[#DCC8B6] bg-[#FFF8EF]">
+              {MONTHS.flatMap((month) =>
+                WEEKS.map((week) => (
+                  <th
+                    key={`${month}-${week}`}
+                    className="border-r border-[#EADACA] px-2 py-2 text-center text-[12px] font-bold text-[#6F5549]"
+                  >
+                    {week}
+                  </th>
+                ))
               )}
+            </tr>
+          </thead>
 
-              <form onSubmit={handleSubmitProgram} className="space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <select
-                    value={form.subject_id}
-                    onChange={(event) =>
-                      setForm({ ...form, subject_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+          <tbody>
+            {program.chapters.map((chapter) => (
+              <Fragment key={chapter.id}>
+                <tr className="bg-[#FFFCF8]">
+                  <td
+                    colSpan={1 + MONTHS.length * WEEKS.length}
+                    className="border-b border-[#EADACA] px-4 py-3 text-[14px] font-extrabold text-[#2B1B18]"
                   >
-                    <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    {chapter.chapter_title}
+                    <span className="ml-2 text-[12px] font-semibold text-[#8A5A48]">
+                      Target: {chapter.month_target || "-"}
+                    </span>
+                  </td>
+                </tr>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Kelas</label>
-                    <input
-                      value={form.class_level}
-                      onChange={(event) =>
-                        setForm({ ...form, class_level: event.target.value })
-                      }
-                      placeholder="Grade 4"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Tahun Ajaran</label>
-                    <input
-                      value={form.academic_year}
-                      onChange={(event) =>
-                        setForm({ ...form, academic_year: event.target.value })
-                      }
-                      placeholder="2025/2026"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Semester</label>
-                  <select
-                    value={form.semester}
-                    onChange={(event) =>
-                      setForm({ ...form, semester: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                {chapter.sub_chapters.map((sub) => (
+                  <tr
+                    key={sub.id}
+                    className="border-b border-[#F0E1D4] text-[13px]"
                   >
-                    <option>Ganjil</option>
-                    <option>Genap</option>
-                  </select>
-                </div>
+                    <td className="border-r border-[#DCC8B6] px-4 py-3 font-semibold text-[#2B1B18]">
+                      {sub.sub_chapter_title}
+                    </td>
 
-                <div>
-                  <label className="text-sm font-bold">Bab / Unit</label>
-                  <input
-                    value={form.chapter}
-                    onChange={(event) =>
-                      setForm({ ...form, chapter: event.target.value })
-                    }
-                    placeholder="Contoh: Bab 5"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
+                    {MONTHS.flatMap((month) =>
+                      WEEKS.map((week) => {
+                        const cell = getSubChapterCellStatus(sub, month, week);
 
-                <div>
-                  <label className="text-sm font-bold">Materi Utama</label>
-                  <input
-                    value={form.main_material}
-                    onChange={(event) =>
-                      setForm({ ...form, main_material: event.target.value })
-                    }
-                    placeholder="Contoh: Pecahan Senilai"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Bulan</label>
-                    <select
-                      value={form.month_name}
-                      onChange={(event) =>
-                        setForm({ ...form, month_name: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option value="">Pilih bulan</option>
-                      {monthOptions.map((month) => (
-                        <option key={month}>{month}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Minggu</label>
-                    <select
-                      value={form.week_name}
-                      onChange={(event) =>
-                        setForm({ ...form, week_name: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option value="">Pilih minggu</option>
-                      {weekOptions.map((week) => (
-                        <option key={week}>{week}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Alokasi Waktu</label>
-                  <input
-                    value={form.time_allocation}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        time_allocation: event.target.value,
+                        return (
+                          <td
+                            key={`${sub.id}-${month}-${week}`}
+                            title={
+                              cell.record
+                                ? `Diajarkan: ${formatDate(
+                                    cell.record.teaching_date
+                                  )}`
+                                : ""
+                            }
+                            className="h-10 border-r border-[#EADACA] px-2 text-center"
+                          >
+                            {cell.type === "completed" ? (
+                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#C7F0DA] text-[#158A58]">
+                                <Check className="h-4 w-4" />
+                              </span>
+                            ) : cell.type === "planned" ? (
+                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#F4E5DA] text-[18px] leading-none text-[#8A2332]">
+                                •
+                              </span>
+                            ) : null}
+                          </td>
+                        );
                       })
-                    }
-                    placeholder="Contoh: 2 x 45 menit"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
+                    )}
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
-                <div>
-                  <label className="text-sm font-bold">Status</label>
-                  <select
-                    value={form.status}
-                    onChange={(event) =>
-                      setForm({ ...form, status: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="planned">planned</option>
-                    <option value="draft">draft</option>
-                    <option value="pending_review">pending_review</option>
-                    <option value="published">published</option>
-                    <option value="done">done</option>
-                  </select>
-                </div>
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
 
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {saving ? "Menyimpan..." : "Simpan Program Semester"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
         </div>
-      )}
-    </TeacherLayout>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
+    </div>
+  );
+}
+
+function FilterSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+    >
+      <option value={ALL}>{ALL}</option>
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+      <p className="mt-1 font-extrabold text-[#2B1B18]">{value}</p>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
+      {text}
+    </div>
   );
 }

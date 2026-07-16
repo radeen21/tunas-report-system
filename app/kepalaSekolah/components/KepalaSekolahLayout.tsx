@@ -2,9 +2,27 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Bell,
+  BookOpen,
+  CalendarDays,
+  CalendarRange,
+  ClipboardCheck,
+  Clock,
+  FileText,
+  GalleryVerticalEnd,
+  GraduationCap,
+  LayoutDashboard,
+  ListChecks,
+  LogOut,
+  PenLine,
+  PlusCircle,
+  Search,
+  Settings,
+  UsersRound,
+  type LucideIcon,
+} from "lucide-react";
 
 type ActiveMenu =
   | "Dashboard"
@@ -24,41 +42,46 @@ type ActiveMenu =
 type KepalaSekolahLayoutProps = {
   activeMenu: ActiveMenu;
   searchPlaceholder?: string;
-  buttonLabel?: string;
   children: React.ReactNode;
 };
 
-const menus = [
-  { name: "Dashboard", icon: "▦", href: "/kepalaSekolah" },
-  { name: "Siswa", icon: "👥", href: "/kepalaSekolah/students" },
-  { name: "Guru", icon: "🎓", href: "/kepalaSekolah/teachers" },
-  { name: "Jadwal Guru", icon: "📅", href: "/kepalaSekolah/jadwal" },
-  { name: "Absensi KBM", icon: "☑️", href: "/kepalaSekolah/absensi" },
-  { name: "Laporan KBM", icon: "📋", href: "/kepalaSekolah/laporan-kbm" },
+type MenuItem = {
+  name: ActiveMenu;
+  icon: LucideIcon;
+  href: string;
+};
+
+const menus: MenuItem[] = [
+  { name: "Dashboard", icon: LayoutDashboard, href: "/kepalaSekolah" },
+  { name: "Siswa", icon: UsersRound, href: "/kepalaSekolah/students" },
+  { name: "Guru", icon: GraduationCap, href: "/kepalaSekolah/teachers" },
+  { name: "Jadwal Guru", icon: CalendarDays, href: "/kepalaSekolah/jadwal" },
+  { name: "Absensi KBM", icon: ClipboardCheck, href: "/kepalaSekolah/absensi" },
+  { name: "Laporan KBM", icon: FileText, href: "/kepalaSekolah/laporan-kbm" },
   {
     name: "Laporan Akademik",
-    icon: "📖",
+    icon: BookOpen,
     href: "/kepalaSekolah/laporan-akademik",
   },
-  { name: "RPP", icon: "📝", href: "/kepalaSekolah/rpp" },
+  { name: "RPP", icon: PenLine, href: "/kepalaSekolah/rpp" },
   {
     name: "Program Semester",
-    icon: "🗓️",
+    icon: CalendarRange,
     href: "/kepalaSekolah/program-semester",
   },
   {
     name: "Kerangka Materi",
-    icon: "☷",
+    icon: ListChecks,
     href: "/kepalaSekolah/kerangka-materi",
   },
   {
     name: "Alokasi Waktu",
-    icon: "⏱️",
+    icon: Clock,
     href: "/kepalaSekolah/alokasi-waktu",
   },
-  { name: "Gallery", icon: "🖼️", href: "/kepalaSekolah/gallery" },
-  { name: "Settings", icon: "⚙️", href: "/kepalaSekolah/settings" },
-] as const;
+  { name: "Gallery", icon: GalleryVerticalEnd, href: "/kepalaSekolah/gallery" },
+  { name: "Settings", icon: Settings, href: "/kepalaSekolah/settings" },
+];
 
 function getInitials(name: string) {
   return name
@@ -73,66 +96,25 @@ function getInitials(name: string) {
 export default function KepalaSekolahLayout({
   activeMenu,
   searchPlaceholder = "Cari murid, guru, atau report...",
-  buttonLabel = "Create New Report",
   children,
 }: KepalaSekolahLayoutProps) {
-  const router = useRouter();
-
-  const [profileName, setProfileName] = useState("Bapak Mulyadi");
-  const [profileEmail, setProfileEmail] = useState("mulyadi@hstkb.id");
-  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [principalName, setPrincipalName] = useState("Kepala Sekolah");
 
   useEffect(() => {
-    async function getProfile() {
-      try {
-        const email = localStorage.getItem("hstkb_demo_email");
+    const storedName = localStorage.getItem("hstkb_full_name");
 
-        if (!email) {
-          setIsLoadingProfile(false);
-          return;
-        }
-
-        setProfileEmail(email);
-
-        const { data, error } = await supabase
-          .from("users_profile")
-          .select("full_name, email, role")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (error) {
-          console.log("Gagal ambil profile kepala sekolah:", error.message);
-          setIsLoadingProfile(false);
-          return;
-        }
-
-        if (data?.full_name) {
-          setProfileName(data.full_name);
-        }
-      } catch (error) {
-        console.log("Error profile kepala sekolah:", error);
-      } finally {
-        setIsLoadingProfile(false);
-      }
+    if (storedName && storedName.trim()) {
+      setPrincipalName(storedName);
     }
-
-    getProfile();
   }, []);
 
-  function handleLogout() {
-    localStorage.removeItem("hstkb_role");
-    localStorage.removeItem("hstkb_role_name");
-    localStorage.removeItem("hstkb_demo_email");
-    localStorage.removeItem("hstkb_remember_me");
-
-    router.push("/");
-  }
+  const initials = useMemo(() => getInitials(principalName), [principalName]);
 
   return (
     <div className="min-h-screen bg-[#FAF3EA] text-[#2B1B18]">
-      <aside className="fixed left-0 top-0 z-40 flex h-screen w-[255px] flex-col bg-[#7A1F2B] text-white">
-        <div className="flex items-center gap-3 border-b border-white/10 px-6 py-7">
-          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[250px] flex-col bg-[#7A0016] text-white lg:flex">
+        <div className="flex h-[96px] items-center gap-3 border-b border-white/10 px-5">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm">
             <Image
               src="/icon_hstkb_logo.png"
               alt="HSTKB Logo"
@@ -143,108 +125,123 @@ export default function KepalaSekolahLayout({
             />
           </div>
 
-          <div>
-            <p className="text-lg font-extrabold leading-tight">HSTKB</p>
-            <p className="text-sm text-white/70">Kepala Sekolah</p>
+          <div className="min-w-0">
+            <p className="text-[17px] font-extrabold leading-tight">HSTKB</p>
+            <p className="mt-0.5 text-[13px] leading-tight text-white/75">
+              Kepala Sekolah
+            </p>
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-5">
-          <div className="space-y-2">
-            {menus.map((menu) => {
-              const isActive = activeMenu === menu.name;
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+          {menus.map((menu) => {
+            const Icon = menu.icon;
+            const isActive = activeMenu === menu.name;
 
-              return (
-                <Link
-                  key={menu.name}
-                  href={menu.href}
-                  className={`flex items-center justify-between rounded-2xl px-4 py-3 text-sm font-bold transition ${
-                    isActive
-                      ? "bg-white/10 text-white"
-                      : "text-white/70 hover:bg-white/10 hover:text-white"
+            return (
+              <Link
+                key={menu.name}
+                href={menu.href}
+                className={`group flex items-center gap-3 rounded-2xl px-4 py-3 text-[14px] font-semibold transition ${isActive
+                  ? "bg-white/12 text-white"
+                  : "text-white/75 hover:bg-white/8 hover:text-white"
                   }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="w-5 text-center text-sm">
-                      {menu.icon}
-                    </span>
-                    <span>{menu.name}</span>
-                  </div>
+              >
+                <Icon
+                  size={17}
+                  strokeWidth={2.2}
+                  className={`shrink-0 ${isActive ? "text-[#E7792B]" : "text-white/70"
+                    }`}
+                />
 
-                  {isActive && (
-                    <span className="h-2 w-2 rounded-full bg-[#D96B2B]" />
-                  )}
-                </Link>
-              );
-            })}
-          </div>
+                <span className="truncate">{menu.name}</span>
+
+                {isActive ? (
+                  <span className="ml-auto h-2 w-2 rounded-full bg-[#E7792B]" />
+                ) : null}
+              </Link>
+            );
+          })}
         </nav>
 
-        <div className="border-t border-white/10 p-4">
-          <button
-            type="button"
-            className="mb-4 flex w-full items-center justify-center gap-3 rounded-2xl bg-[#D96B2B] px-5 py-3 text-sm font-extrabold text-white transition hover:bg-[#B85C38]"
+        <div className="border-t border-white/10 px-3 py-3">
+          <Link
+            href="/kepalaSekolah/laporan-kbm"
+            className="flex h-10 items-center justify-center gap-2 rounded-xl bg-[#E36F2C] px-3 text-[13px] font-extrabold text-white shadow-sm transition hover:bg-[#D85F20]"
           >
-            <span className="text-lg">⊕</span>
-            {buttonLabel}
-          </button>
+            <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/80">
+              <PlusCircle size={11} strokeWidth={2.7} />
+            </span>
+            Create New Report
+          </Link>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="flex w-full items-center gap-3 rounded-2xl bg-[#8C0F2D] p-4 text-left transition hover:bg-[#A3263A]"
-          >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
-              {getInitials(profileName)}
+          <div className="mt-3 flex items-center gap-3 rounded-2xl bg-white/8 px-3 py-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-extrabold">
+              {initials}
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="truncate text-base font-bold text-white">
-                {isLoadingProfile ? "Loading..." : profileName}
+              <p className="truncate text-[13px] font-extrabold">
+                {principalName}
               </p>
-              <p className="truncate text-sm text-white/70">Kepala Sekolah</p>
+              <p className="truncate text-[11px] text-white/65">
+                Kepala Sekolah
+              </p>
             </div>
 
-            <span className="text-2xl text-white/80">↪</span>
-          </button>
+            <Link href="/" className="text-white/70 hover:text-white">
+              <LogOut size={15} strokeWidth={2.2} />
+            </Link>
+          </div>
         </div>
       </aside>
 
-      <div className="min-h-screen pl-[255px]">
+      <div className="lg:pl-[250px]">
         <header className="sticky top-0 z-30 border-b border-[#E8D6C1] bg-[#FFF8EF]/95 backdrop-blur">
-          <div className="flex h-[76px] items-center justify-between gap-5 px-8">
-            <input
-              placeholder={searchPlaceholder}
-              className="h-11 w-full max-w-[445px] rounded-2xl border border-[#E8D6C1] bg-white px-5 text-sm outline-none transition focus:border-[#7A1F2B]"
-            />
+          <div className="flex h-[78px] items-center justify-between gap-5 px-6 lg:px-8">
+            <div className="relative hidden w-full max-w-[430px] sm:block">
+              <Search
+                size={17}
+                strokeWidth={2.2}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A6A5A]"
+              />
+
+              <input
+                placeholder={searchPlaceholder}
+                className="h-11 w-full rounded-2xl border border-[#E8D6C1] bg-white px-11 text-[14px] text-[#2B1B18] outline-none transition placeholder:text-[#9B7A69] focus:border-[#7A1F2B]"
+              />
+            </div>
 
             <div className="flex items-center gap-4">
               <button
                 type="button"
-                className="relative flex h-10 w-10 items-center justify-center rounded-full text-[#7A1F2B] hover:bg-[#F1DFD5]"
+                className="relative flex h-10 w-10 items-center justify-center rounded-full text-[#7A1F2B] transition hover:bg-[#F1DFD5]"
               >
-                🔔
+                <Bell size={18} strokeWidth={2.2} />
+                <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-[#E7792B]" />
               </button>
 
-              <div className="h-8 w-px bg-[#E8D6C1]" />
+              <div className="h-9 w-px bg-[#E8D6C1]" />
 
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-sm font-bold text-[#7A1F2B]">
-                  {getInitials(profileName)}
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[13px] font-extrabold text-[#7A1F2B] shadow-sm">
+                  {initials}
                 </div>
 
-                <div>
-                  <p className="text-sm font-bold">
-                    {isLoadingProfile ? "Loading..." : profileName}
+                <div className="hidden leading-tight md:block">
+                  <p className="text-[15px] font-extrabold text-[#2B1B18]">
+                    {principalName}
                   </p>
-                  <p className="text-xs text-[#6B4A3A]">Kepala Sekolah</p>
+                  <p className="mt-0.5 text-[12px] text-[#6B4A3A]">
+                    Kepala Sekolah
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         </header>
 
-        <main className="px-8 py-8">{children}</main>
+        <main className="px-6 py-7 lg:px-8">{children}</main>
       </div>
     </div>
   );

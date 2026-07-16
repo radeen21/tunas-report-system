@@ -1,1302 +1,867 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  BookOpen,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardCheck,
+  FileText,
+  Layers3,
+  NotebookText,
+  Users,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "./components/TeacherLayout";
 
-type Teacher = {
+type TeacherRow = {
   id: string;
-  full_name: string;
-  email: string | null;
-  phone: string | null;
-  teacher_code: string | null;
-  subjects: string[] | null;
+  full_name: string | null;
+  email?: string | null;
+  subjects?: string[] | string | null;
 };
 
-type Student = {
+type StudentRow = {
   id: string;
-  full_name: string;
-  nis: string | null;
-  nisn: string | null;
+  full_name: string | null;
   level: string | null;
   grade: string | null;
-  academic_year: string | null;
-  status: string | null;
-  homeroom_teacher_id: string | null;
 };
 
-type SubjectRelation = {
+type SubjectRow = {
   id: string;
-  name: string;
-};
-
-type StudentRelation = {
-  id: string;
-  full_name: string;
-  grade: string | null;
-  level: string | null;
-  nis: string | null;
-  nisn: string | null;
+  name: string | null;
 };
 
 type ScheduleRow = {
   id: string;
-  student_id: string | null;
   teacher_id: string | null;
+  student_id: string | null;
   subject_id: string | null;
-  day_name: string | null;
   schedule_date: string | null;
   start_time: string | null;
   end_time: string | null;
   session_name: string | null;
   material_topic: string | null;
-  academic_year: string | null;
-  semester: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
-};
-
-type Schedule = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  day_name: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  session_name: string | null;
-  material_topic: string | null;
-  academic_year: string | null;
-  semester: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+  semester?: string | null;
 };
 
 type AttendanceRow = {
   id: string;
-  student_id: string | null;
   teacher_id: string | null;
+  student_id: string | null;
   subject_id: string | null;
   attendance_date: string | null;
-  day_name: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  attendance_status: string | null;
-  understanding_status: string | null;
-  material_topic: string | null;
-  notes: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  attendance_status?: string | null;
 };
 
-type Attendance = {
+type RppRow = {
   id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  attendance_date: string | null;
-  day_name: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  attendance_status: string | null;
-  understanding_status: string | null;
-  material_topic: string | null;
-  notes: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+  title?: string | null;
+  rpp_title?: string | null;
+  subject_name?: string | null;
+  level?: string | null;
+  grade?: string | null;
+  status?: string | null;
+  updated_at?: string | null;
 };
 
-type KbmReportRow = {
+type MaterialFrameworkRow = {
   id: string;
-  student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
-  report_date: string | null;
-  class_level: string | null;
+  level: string | null;
+  grade: string | null;
   semester: string | null;
-  chapter: string | null;
-  material_topic: string | null;
-  learning_issue: string | null;
-  solution: string | null;
-  teacher_note: string | null;
+  academic_year: string | null;
+  framework_title: string | null;
   status: string | null;
-  created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+  updated_at?: string | null;
 };
 
-type KbmReport = {
+type TimeAllocationRow = {
   id: string;
-  student_id: string | null;
+  material_framework_id: string | null;
+  total_meetings: number | null;
+  total_minutes: number | null;
+};
+
+type CurriculumProgram = {
+  id: string;
   teacher_id: string | null;
-  subject_id: string | null;
-  report_date: string | null;
-  class_level: string | null;
+  subject_name: string | null;
+  level: string | null;
+  grade: string | null;
   semester: string | null;
-  chapter: string | null;
-  material_topic: string | null;
-  learning_issue: string | null;
-  solution: string | null;
-  teacher_note: string | null;
+  academic_year: string | null;
   status: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
 };
 
-type AcademicReportRow = {
+type CurriculumChapter = {
   id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  report_period: string | null;
-  report_type: string | null;
-  uh_score: number | null;
-  task_score: number | null;
-  uts_score: number | null;
-  uas_score: number | null;
-  process_score: number | null;
-  final_score: number | null;
-  description: string | null;
-  teacher_comment: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+  curriculum_program_id: string | null;
 };
 
-type AcademicReport = {
+type CurriculumSubChapter = {
   id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  report_period: string | null;
-  report_type: string | null;
-  uh_score: number | null;
-  task_score: number | null;
-  uts_score: number | null;
-  uas_score: number | null;
-  process_score: number | null;
-  final_score: number | null;
-  description: string | null;
-  teacher_comment: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+  curriculum_chapter_id: string | null;
 };
 
-type AssignmentRow = {
+type CurriculumProgress = {
   id: string;
-  student_id: string | null;
+  curriculum_program_id: string | null;
+  curriculum_sub_chapter_id: string | null;
   teacher_id: string | null;
-  subject_id: string | null;
-  title: string;
-  description: string | null;
-  deadline: string | null;
-  status: string | null;
-  score: number | null;
-  file_url: string | null;
-  created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+  teaching_date: string | null;
 };
 
-type Assignment = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  title: string;
-  description: string | null;
-  deadline: string | null;
-  status: string | null;
-  score: number | null;
-  file_url: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+type RombelToday = {
+  key: string;
+  subject_name: string;
+  schedule_date: string;
+  start_time: string;
+  end_time: string;
+  session_name: string;
+  material_topic: string;
+  students: StudentRow[];
+  alreadyAttendance: boolean;
 };
 
-type GalleryRow = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  title: string;
-  caption: string | null;
-  image_url: string | null;
-  activity_date: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
+type ProgramProgress = CurriculumProgram & {
+  total_sub_chapters: number;
+  completed_sub_chapters: number;
+  progress_percent: number;
 };
 
-type GalleryItem = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  title: string;
-  caption: string | null;
-  image_url: string | null;
-  activity_date: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+type FrameworkSummary = MaterialFrameworkRow & {
+  subject_name: string;
+  allocation: TimeAllocationRow | null;
 };
 
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
+function todayYMD() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
-function formatDate(date: string | null) {
-  if (!date) return "-";
+function formatDate(value?: string | null) {
+  if (!value) return "-";
 
-  const parsedDate = new Date(date);
-
-  return parsedDate.toLocaleDateString("id-ID", {
+  return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(new Date(value));
 }
 
-function formatTime(time: string | null) {
-  if (!time) return "-";
-
-  return time.slice(0, 5);
+function formatTime(value?: string | null) {
+  if (!value) return "-";
+  return value.slice(0, 5);
 }
 
-function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
+function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
+  if (!subjects) return "Guru";
+  if (Array.isArray(subjects)) return `Guru — ${subjects.slice(0, 4).join(", ")}`;
+  return `Guru — ${subjects}`;
 }
 
-function getStatusLabel(status: string | null) {
-  if (status === "published") return "Published";
+function getRppTitle(rpp: RppRow) {
+  return rpp.rpp_title || rpp.title || "-";
+}
+
+function createRombelKey(schedule: ScheduleRow) {
+  return [
+    schedule.teacher_id || "",
+    schedule.subject_id || "",
+    schedule.schedule_date || "",
+    schedule.start_time || "",
+    schedule.end_time || "",
+    schedule.session_name || "",
+    schedule.material_topic || "",
+    schedule.semester || "",
+  ].join("|");
+}
+
+function getStatusClass(status?: string | null) {
+  if (status === "approved" || status === "published") {
+    return "bg-[#C7F0DA] text-[#158A58]";
+  }
+
+  if (status === "submitted" || status === "pending") {
+    return "bg-[#FFF2B8] text-[#B26A00]";
+  }
+
+  if (status === "rejected") {
+    return "bg-[#FFE4E6] text-[#BE123C]";
+  }
+
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
+function getStatusLabel(status?: string | null) {
+  if (status === "submitted") return "Submitted";
   if (status === "approved") return "Approved";
-  if (status === "pending_review") return "Pending Review";
-  if (status === "revision") return "Revision";
-  if (status === "selesai") return "Selesai";
-  if (status === "dikerjakan") return "Dikerjakan";
-  if (status === "belum") return "Belum";
-
+  if (status === "published") return "Published";
+  if (status === "pending") return "Pending";
+  if (status === "rejected") return "Rejected";
   return "Draft";
 }
 
-function getStatusBadge(status: string | null) {
-  if (status === "published" || status === "approved" || status === "selesai") {
-    return "bg-emerald-100 text-emerald-700";
-  }
-
-  if (status === "pending_review" || status === "dikerjakan") {
-    return "bg-yellow-100 text-yellow-700";
-  }
-
-  if (status === "revision") {
-    return "bg-red-100 text-red-700";
-  }
-
-  return "bg-slate-200 text-slate-700";
-}
-
-function getAttendanceBadge(status: string | null) {
-  if (status === "Hadir") return "bg-emerald-100 text-emerald-700";
-  if (status === "Sakit") return "bg-yellow-100 text-yellow-700";
-  if (status === "Izin") return "bg-blue-100 text-blue-700";
-
-  return "bg-red-100 text-red-700";
-}
-
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 export default function TeacherDashboardPage() {
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
-  const [kbmReports, setKbmReports] = useState<KbmReport[]>([]);
-  const [academicReports, setAcademicReports] = useState<AcademicReport[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [teacher, setTeacher] = useState<TeacherRow | null>(null);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
+  const [rpps, setRpps] = useState<RppRow[]>([]);
+  const [frameworks, setFrameworks] = useState<FrameworkSummary[]>([]);
+  const [programProgress, setProgramProgress] = useState<ProgramProgress[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
 
-  async function fetchActiveTeacher() {
-    const { data, error } = await supabase
+  async function getCurrentTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
+
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (data) return data as TeacherRow;
+    }
+
+    const { data } = await supabase
       .from("teachers")
-      .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .select("*")
+      .order("full_name")
+      .limit(1)
+      .maybeSingle();
 
-    if (error) throw new Error(error.message);
-
-    const teacherList = data || [];
-
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return data as TeacherRow | null;
   }
 
-  async function fetchTeacherStudents(teacherId: string) {
-    const { data, error } = await supabase
-      .from("students")
-      .select(
-        `
-        id,
-        full_name,
-        nis,
-        nisn,
-        level,
-        grade,
-        academic_year,
-        status,
-        homeroom_teacher_id
-      `
-      )
-      .eq("homeroom_teacher_id", teacherId)
-      .order("full_name", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    setStudents(data || []);
-  }
-
-  async function fetchTeacherSchedules(teacherId: string) {
-    const { data, error } = await supabase
-      .from("schedules")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        day_name,
-        schedule_date,
-        start_time,
-        end_time,
-        session_name,
-        material_topic,
-        academic_year,
-        semester,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("schedule_date", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as ScheduleRow[];
-
-    const normalized: Schedule[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      day_name: item.day_name,
-      schedule_date: item.schedule_date,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      session_name: item.session_name,
-      material_topic: item.material_topic,
-      academic_year: item.academic_year,
-      semester: item.semester,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setSchedules(normalized);
-  }
-
-  async function fetchTeacherAttendance(teacherId: string) {
-    const { data, error } = await supabase
-      .from("attendance")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        attendance_date,
-        day_name,
-        start_time,
-        end_time,
-        attendance_status,
-        understanding_status,
-        material_topic,
-        notes,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("attendance_date", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as AttendanceRow[];
-
-    const normalized: Attendance[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      attendance_date: item.attendance_date,
-      day_name: item.day_name,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      attendance_status: item.attendance_status,
-      understanding_status: item.understanding_status,
-      material_topic: item.material_topic,
-      notes: item.notes,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setAttendanceList(normalized);
-  }
-
-  async function fetchTeacherKbmReports(teacherId: string) {
-    const { data, error } = await supabase
-      .from("kbm_reports")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        report_date,
-        class_level,
-        semester,
-        chapter,
-        material_topic,
-        learning_issue,
-        solution,
-        teacher_note,
-        status,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("created_at", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as KbmReportRow[];
-
-    const normalized: KbmReport[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      report_date: item.report_date,
-      class_level: item.class_level,
-      semester: item.semester,
-      chapter: item.chapter,
-      material_topic: item.material_topic,
-      learning_issue: item.learning_issue,
-      solution: item.solution,
-      teacher_note: item.teacher_note,
-      status: item.status,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setKbmReports(normalized);
-  }
-
-  async function fetchTeacherAcademicReports(teacherId: string) {
-    const { data, error } = await supabase
-      .from("academic_reports")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        report_period,
-        report_type,
-        uh_score,
-        task_score,
-        uts_score,
-        uas_score,
-        process_score,
-        final_score,
-        description,
-        teacher_comment,
-        status,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("created_at", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as AcademicReportRow[];
-
-    const normalized: AcademicReport[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      report_period: item.report_period,
-      report_type: item.report_type,
-      uh_score: item.uh_score,
-      task_score: item.task_score,
-      uts_score: item.uts_score,
-      uas_score: item.uas_score,
-      process_score: item.process_score,
-      final_score: item.final_score,
-      description: item.description,
-      teacher_comment: item.teacher_comment,
-      status: item.status,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setAcademicReports(normalized);
-  }
-
-  async function fetchTeacherAssignments(teacherId: string) {
-    const { data, error } = await supabase
-      .from("assignments")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        title,
-        description,
-        deadline,
-        status,
-        score,
-        file_url,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("created_at", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as AssignmentRow[];
-
-    const normalized: Assignment[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      title: item.title,
-      description: item.description,
-      deadline: item.deadline,
-      status: item.status,
-      score: item.score,
-      file_url: item.file_url,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setAssignments(normalized);
-  }
-
-  async function fetchTeacherGallery(teacherId: string) {
-    const { data, error } = await supabase
-      .from("gallery")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        title,
-        caption,
-        image_url,
-        activity_date,
-        status,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("activity_date", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as GalleryRow[];
-
-    const normalized: GalleryItem[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      title: item.title,
-      caption: item.caption,
-      image_url: item.image_url,
-      activity_date: item.activity_date,
-      status: item.status,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setGallery(normalized);
-  }
-
-  async function fetchDashboardData() {
+  async function fetchData() {
     setLoading(true);
-    setErrorMessage("");
 
-    try {
-      const activeTeacher = await fetchActiveTeacher();
+    const currentTeacher = await getCurrentTeacher();
+    setTeacher(currentTeacher);
 
-      if (!activeTeacher) {
-        setLoading(false);
-        setErrorMessage("Belum ada data guru di table teachers.");
+    if (!currentTeacher?.id) {
+      setStudents([]);
+      setSubjects([]);
+      setSchedules([]);
+      setAttendance([]);
+      setRpps([]);
+      setFrameworks([]);
+      setProgramProgress([]);
+      setLoading(false);
+      return;
+    }
+
+    const [
+      studentsRes,
+      subjectsRes,
+      schedulesRes,
+      attendanceRes,
+      rppRes,
+      frameworksRes,
+      allocationsRes,
+      programsRes,
+      chaptersRes,
+      subChaptersRes,
+      progressRes,
+    ] = await Promise.all([
+      supabase.from("students").select("*").order("full_name"),
+      supabase.from("subjects").select("*").order("name"),
+      supabase
+        .from("schedules")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+      supabase
+        .from("attendance")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+      supabase
+        .from("rpp")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id)
+        .order("updated_at", { ascending: false }),
+      supabase
+        .from("material_frameworks")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id)
+        .order("updated_at", { ascending: false }),
+      supabase
+        .from("time_allocations")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+      supabase
+        .from("curriculum_programs")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+      supabase.from("curriculum_chapters").select("*"),
+      supabase.from("curriculum_sub_chapters").select("*"),
+      supabase
+        .from("curriculum_progress")
+        .select("*")
+        .eq("teacher_id", currentTeacher.id),
+    ]);
+
+    const studentsData = (studentsRes.data || []) as StudentRow[];
+    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+    const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
+    const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
+    const rppData = (rppRes.data || []) as RppRow[];
+    const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
+    const allocationsData = (allocationsRes.data || []) as TimeAllocationRow[];
+    const programsData = (programsRes.data || []) as CurriculumProgram[];
+    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
+    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
+    const progressData = (progressRes.data || []) as CurriculumProgress[];
+
+    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
+    const allocationMap = new Map(
+      allocationsData
+        .filter((allocation) => allocation.material_framework_id)
+        .map((allocation) => [allocation.material_framework_id as string, allocation])
+    );
+
+    const enrichedFrameworks = frameworksData.map((framework) => {
+      const subject = framework.subject_id
+        ? subjectMap.get(framework.subject_id)
+        : null;
+
+      return {
+        ...framework,
+        subject_name: subject?.name || "-",
+        allocation: allocationMap.get(framework.id) || null,
+      };
+    });
+
+    const chaptersByProgram = new Map<string, CurriculumChapter[]>();
+    chaptersData.forEach((chapter) => {
+      if (!chapter.curriculum_program_id) return;
+
+      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
+      current.push(chapter);
+      chaptersByProgram.set(chapter.curriculum_program_id, current);
+    });
+
+    const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
+    subChaptersData.forEach((subChapter) => {
+      if (!subChapter.curriculum_chapter_id) return;
+
+      const current = subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
+      current.push(subChapter);
+      subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
+    });
+
+    const progressByProgram = new Map<string, Set<string>>();
+    progressData.forEach((progress) => {
+      if (!progress.curriculum_program_id || !progress.curriculum_sub_chapter_id) {
         return;
       }
 
-      await Promise.all([
-        fetchTeacherStudents(activeTeacher.id),
-        fetchTeacherSchedules(activeTeacher.id),
-        fetchTeacherAttendance(activeTeacher.id),
-        fetchTeacherKbmReports(activeTeacher.id),
-        fetchTeacherAcademicReports(activeTeacher.id),
-        fetchTeacherAssignments(activeTeacher.id),
-        fetchTeacherGallery(activeTeacher.id),
-      ]);
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal mengambil data dashboard guru.");
-      }
-    } finally {
-      setLoading(false);
-    }
+      const current =
+        progressByProgram.get(progress.curriculum_program_id) || new Set<string>();
+
+      current.add(progress.curriculum_sub_chapter_id);
+      progressByProgram.set(progress.curriculum_program_id, current);
+    });
+
+    const progressPrograms = programsData.map((program) => {
+      const chapters = chaptersByProgram.get(program.id) || [];
+      const totalSubChapters = chapters.reduce((sum, chapter) => {
+        return sum + (subChaptersByChapter.get(chapter.id) || []).length;
+      }, 0);
+
+      const completed = progressByProgram.get(program.id)?.size || 0;
+
+      return {
+        ...program,
+        total_sub_chapters: totalSubChapters,
+        completed_sub_chapters: completed,
+        progress_percent:
+          totalSubChapters > 0 ? Math.round((completed / totalSubChapters) * 100) : 0,
+      };
+    });
+
+    setStudents(studentsData);
+    setSubjects(subjectsData);
+    setSchedules(schedulesData);
+    setAttendance(attendanceData);
+    setRpps(rppData);
+    setFrameworks(enrichedFrameworks);
+    setProgramProgress(progressPrograms);
+    setLoading(false);
   }
 
   useEffect(() => {
-    fetchDashboardData();
+    fetchData();
+
+    const channel = supabase
+      .channel("teacher-dashboard-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "schedules" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "rpp" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "material_frameworks" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "time_allocations" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "curriculum_programs" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "curriculum_chapters" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "curriculum_sub_chapters" }, () => fetchData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "curriculum_progress" }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const todaySchedules = useMemo(() => {
-    const today = getTodayDate();
+  const studentMap = useMemo(() => {
+    return new Map(students.map((student) => [student.id, student]));
+  }, [students]);
 
-    return schedules.filter((schedule) => {
-      if (!schedule.schedule_date) return false;
-      return schedule.schedule_date === today;
-    });
-  }, [schedules]);
+  const subjectMap = useMemo(() => {
+    return new Map(subjects.map((subject) => [subject.id, subject]));
+  }, [subjects]);
 
-  const todayAttendance = useMemo(() => {
-    const today = getTodayDate();
+  const todayRombels = useMemo(() => {
+    const today = todayYMD();
+    const grouped = new Map<string, RombelToday>();
 
-    return attendanceList.filter((attendance) => {
-      if (!attendance.attendance_date) return false;
-      return attendance.attendance_date === today;
-    });
-  }, [attendanceList]);
+    schedules
+      .filter((schedule) => schedule.schedule_date === today)
+      .forEach((schedule) => {
+        const key = createRombelKey(schedule);
+        const subject = schedule.subject_id
+          ? subjectMap.get(schedule.subject_id)
+          : null;
+        const student = schedule.student_id
+          ? studentMap.get(schedule.student_id)
+          : null;
 
-  const attendancePercentage = useMemo(() => {
-    if (attendanceList.length === 0) return 0;
+        const hasAttendance = attendance.some((item) => {
+          return (
+            item.teacher_id === schedule.teacher_id &&
+            item.subject_id === schedule.subject_id &&
+            item.attendance_date === schedule.schedule_date &&
+            item.start_time === schedule.start_time &&
+            item.end_time === schedule.end_time &&
+            item.student_id === schedule.student_id
+          );
+        });
 
-    const present = attendanceList.filter(
-      (attendance) => attendance.attendance_status === "Hadir"
-    ).length;
+        const current = grouped.get(key);
 
-    return Math.round((present / attendanceList.length) * 100);
-  }, [attendanceList]);
+        if (!current) {
+          grouped.set(key, {
+            key,
+            subject_name: subject?.name || "-",
+            schedule_date: schedule.schedule_date || today,
+            start_time: schedule.start_time || "",
+            end_time: schedule.end_time || "",
+            session_name: schedule.session_name || "-",
+            material_topic: schedule.material_topic || "-",
+            students: student ? [student] : [],
+            alreadyAttendance: hasAttendance,
+          });
 
-  const averageScore = useMemo(() => {
-    const scores = academicReports
-      .map((report) => Number(report.final_score || 0))
-      .filter((score) => score > 0);
+          return;
+        }
 
-    if (scores.length === 0) return 0;
+        if (student && !current.students.some((item) => item.id === student.id)) {
+          current.students.push(student);
+        }
 
-    const total = scores.reduce((sum, score) => sum + score, 0);
+        current.alreadyAttendance = current.alreadyAttendance || hasAttendance;
+      });
 
-    return Math.round(total / scores.length);
-  }, [academicReports]);
-
-  const pendingReports = useMemo(() => {
-    const pendingKbm = kbmReports.filter(
-      (report) => report.status === "pending_review" || report.status === "draft"
+    return Array.from(grouped.values()).sort((a, b) =>
+      `${a.schedule_date} ${a.start_time}`.localeCompare(
+        `${b.schedule_date} ${b.start_time}`
+      )
     );
+  }, [schedules, attendance, subjectMap, studentMap]);
 
-    const pendingAcademic = academicReports.filter(
-      (report) => report.status === "pending_review" || report.status === "draft"
-    );
+  const summary = useMemo(() => {
+    const totalFrameworkMeetings = frameworks.reduce((sum, item) => {
+      return sum + Number(item.allocation?.total_meetings || 0);
+    }, 0);
 
-    return pendingKbm.length + pendingAcademic.length;
-  }, [kbmReports, academicReports]);
+    const totalFrameworkMinutes = frameworks.reduce((sum, item) => {
+      return sum + Number(item.allocation?.total_minutes || 0);
+    }, 0);
 
-  const latestReports = useMemo(() => {
-    const kbm = kbmReports.map((report) => ({
-      id: report.id,
-      type: "KBM",
-      title: report.material_topic || report.chapter || "Laporan KBM",
-      studentName: report.students?.full_name || "-",
-      subjectName: report.subjects?.name || "-",
-      dateText: formatDate(report.report_date || report.created_at),
-      status: report.status,
-    }));
+    return {
+      todayRombel: todayRombels.length,
+      todayDone: todayRombels.filter((item) => item.alreadyAttendance).length,
+      todayPending: todayRombels.filter((item) => !item.alreadyAttendance).length,
+      totalRpp: rpps.length,
+      rppDraft: rpps.filter((item) => item.status === "draft").length,
+      rppSubmitted: rpps.filter((item) => item.status === "submitted").length,
+      rppApproved: rpps.filter((item) => item.status === "approved").length,
+      totalFramework: frameworks.length,
+      totalFrameworkMeetings,
+      totalFrameworkMinutes,
+      totalProgram: programProgress.length,
+    };
+  }, [todayRombels, rpps, frameworks, programProgress]);
 
-    const academic = academicReports.map((report) => ({
-      id: report.id,
-      type: "Akademik",
-      title: report.report_period || "Laporan Akademik",
-      studentName: report.students?.full_name || "-",
-      subjectName: report.subjects?.name || "-",
-      dateText: formatDate(report.created_at),
-      status: report.status,
-    }));
-
-    return [...kbm, ...academic].slice(0, 5);
-  }, [kbmReports, academicReports]);
-
-  const subjectPerformance = useMemo(() => {
-    const subjectMap = new Map<string, number[]>();
-
-    academicReports.forEach((report) => {
-      const subjectName = report.subjects?.name || "Lainnya";
-      const score = Number(report.final_score || 0);
-
-      if (score <= 0) return;
-
-      if (!subjectMap.has(subjectName)) {
-        subjectMap.set(subjectName, []);
-      }
-
-      subjectMap.get(subjectName)?.push(score);
-    });
-
-    return Array.from(subjectMap.entries())
-      .map(([name, scores]) => {
-        const total = scores.reduce((sum, score) => sum + score, 0);
-        const average = Math.round(total / scores.length);
-
-        return {
-          name,
-          value: average,
-        };
-      })
-      .slice(0, 5);
-  }, [academicReports]);
+  const latestRpps = rpps.slice(0, 4);
+  const latestFrameworks = frameworks.slice(0, 3);
+  const latestPrograms = programProgress.slice(0, 4);
 
   return (
     <TeacherLayout
       activeMenu="Dashboard"
-      searchPlaceholder="Cari murid, jadwal, atau laporan..."
-      buttonLabel="+ Buat Laporan"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={formatTeacherSubject(teacher?.subjects)}
+      searchPlaceholder="Cari data dashboard..."
     >
-      <div className="w-full max-w-full overflow-hidden">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#6B4A3A]">
-              Dashboard Guru
-            </p>
+      <section className="space-y-7">
+        <div>
+          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+            Teacher Dashboard
+          </p>
 
-            <h1 className="mt-1 text-[30px] font-bold tracking-tight">
-              Selamat datang, {teacher?.full_name || "Guru"} 👋
-            </h1>
+          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+            Selamat Datang, {teacher?.full_name || "Guru"}
+          </h1>
 
-            <p className="mt-1 text-sm text-[#6B4A3A]">
-              Ringkasan jadwal, murid, absensi, dan laporan pembelajaran.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-          >
-            + Buat Laporan
-          </button>
+          <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
+            Pantau jadwal hari ini, absensi KBM, RPP, kerangka materi, dan
+            progress Program Semester dalam satu dashboard.
+          </p>
         </div>
 
-        {errorMessage && (
-          <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errorMessage}
-          </div>
-        )}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<CalendarDays className="h-5 w-5" />}
+            label="Rombel Hari Ini"
+            value={summary.todayRombel}
+            info={formatDate(todayYMD())}
+            tone="pink"
+          />
 
-        {loading && (
-          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Loading dashboard guru...
-          </div>
-        )}
+          <SummaryCard
+            icon={<ClipboardCheck className="h-5 w-5" />}
+            label="Belum Diabsen"
+            value={summary.todayPending}
+            info={`${summary.todayDone} selesai`}
+            tone="orange"
+          />
 
-        {!loading && (
-          <>
-            <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#FDE7D7] text-xl">
-                    👥
-                  </div>
+          <SummaryCard
+            icon={<FileText className="h-5 w-5" />}
+            label="Total RPP"
+            value={summary.totalRpp}
+            info={`${summary.rppSubmitted} review`}
+            tone="blue"
+          />
 
-                  <span className="text-sm font-bold text-emerald-600">
-                    Aktif
-                  </span>
-                </div>
+          <SummaryCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="RPP Approved"
+            value={summary.rppApproved}
+            info={`${summary.rppDraft} draft`}
+            tone="green"
+          />
+        </div>
 
-                <p className="mt-7 text-3xl font-bold">{students.length}</p>
-                <p className="mt-1 text-sm text-[#6B4A3A]">Murid Saya</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#F1DFD5] text-xl">
-                    📅
-                  </div>
-
-                  <span className="text-sm font-bold text-[#D96B2B]">
-                    Hari ini
-                  </span>
-                </div>
-
-                <p className="mt-7 text-3xl font-bold">
-                  {todaySchedules.length}
-                </p>
-                <p className="mt-1 text-sm text-[#6B4A3A]">Jadwal Hari Ini</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl">
-                    ☑️
-                  </div>
-
-                  <span className="text-sm font-bold text-emerald-600">
-                    {attendancePercentage}%
-                  </span>
-                </div>
-
-                <p className="mt-7 text-3xl font-bold">
-                  {todayAttendance.length}
-                </p>
-                <p className="mt-1 text-sm text-[#6B4A3A]">Absensi Hari Ini</p>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-yellow-100 text-xl">
-                    📋
-                  </div>
-
-                  <span className="text-sm font-bold text-[#D96B2B]">
-                    Draft/Review
-                  </span>
-                </div>
-
-                <p className="mt-7 text-3xl font-bold">{pendingReports}</p>
-                <p className="mt-1 text-sm text-[#6B4A3A]">Laporan Pending</p>
-              </div>
-            </div>
-
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1.4fr_1fr]">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-bold">Jadwal Mengajar</h2>
-                    <p className="mt-1 text-sm text-[#6B4A3A]">
-                      Jadwal pembelajaran yang terhubung dengan guru aktif.
-                    </p>
-                  </div>
-
-                  <button className="text-sm font-bold text-[#7A1F2B]">
-                    Lihat semua →
-                  </button>
-                </div>
-
-                <div className="mt-6 overflow-hidden rounded-2xl border border-[#E8D6C1]">
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[760px] text-left">
-                      <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
-                        <tr>
-                          <th className="px-4 py-4">Hari</th>
-                          <th className="px-4 py-4">Jam</th>
-                          <th className="px-4 py-4">Siswa</th>
-                          <th className="px-4 py-4">Kelas</th>
-                          <th className="px-4 py-4">Mapel</th>
-                          <th className="px-4 py-4">Materi</th>
-                        </tr>
-                      </thead>
-
-                      <tbody className="divide-y divide-[#E8D6C1]">
-                        {schedules.length === 0 && (
-                          <tr>
-                            <td
-                              colSpan={6}
-                              className="px-4 py-8 text-center text-sm text-[#6B4A3A]"
-                            >
-                              Belum ada jadwal mengajar.
-                            </td>
-                          </tr>
-                        )}
-
-                        {schedules.slice(0, 5).map((schedule) => (
-                          <tr key={schedule.id} className="hover:bg-[#FFF8EF]">
-                            <td className="px-4 py-4 font-semibold">
-                              {schedule.day_name || "-"}
-                            </td>
-                            <td className="px-4 py-4">
-                              {formatTime(schedule.start_time)}-
-                              {formatTime(schedule.end_time)}
-                            </td>
-                            <td className="px-4 py-4">
-                              {schedule.students?.full_name || "-"}
-                            </td>
-                            <td className="px-4 py-4">
-                              {schedule.students?.grade || "-"}
-                            </td>
-                            <td className="px-4 py-4">
-                              {schedule.subjects?.name || "-"}
-                            </td>
-                            <td className="px-4 py-4">
-                              {schedule.material_topic || "-"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-bold">Performa Nilai</h2>
-                <p className="mt-1 text-sm text-[#6B4A3A]">
-                  Rata-rata nilai akademik siswa.
-                </p>
-
-                <div className="mt-6 rounded-2xl bg-[#FFF8EF] p-5">
-                  <p className="text-sm text-[#6B4A3A]">Rata-rata Nilai</p>
-                  <p className="mt-3 text-4xl font-bold text-[#7A1F2B]">
-                    {averageScore}
-                  </p>
-                </div>
-
-                <div className="mt-5 space-y-4">
-                  {subjectPerformance.length === 0 && (
-                    <div className="rounded-xl border border-[#E8D6C1] p-4 text-sm text-[#6B4A3A]">
-                      Belum ada data nilai per mata pelajaran.
-                    </div>
-                  )}
-
-                  {subjectPerformance.map((subject) => (
-                    <div key={subject.name}>
-                      <div className="mb-2 flex items-center justify-between text-sm">
-                        <span className="font-semibold">{subject.name}</span>
-                        <span className="font-bold text-[#7A1F2B]">
-                          {subject.value}
-                        </span>
-                      </div>
-
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-[#7A1F2B]"
-                          style={{
-                            width: `${Math.min(100, subject.value)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_1fr]">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold">Murid Saya</h2>
-
-                  <button className="text-sm font-bold text-[#7A1F2B]">
-                    Lihat semua →
-                  </button>
-                </div>
-
-                <div className="mt-6 space-y-4">
-                  {students.length === 0 && (
-                    <div className="rounded-xl border border-[#E8D6C1] p-5 text-sm text-[#6B4A3A]">
-                      Belum ada murid yang terhubung ke guru ini.
-                    </div>
-                  )}
-
-                  {students.slice(0, 5).map((student) => (
-                    <div
-                      key={student.id}
-                      className="flex items-center justify-between rounded-2xl border border-[#E8D6C1] p-4"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                          {getInitials(student.full_name)}
-                        </div>
-
-                        <div>
-                          <p className="font-bold">{student.full_name}</p>
-                          <p className="mt-1 text-sm text-[#6B4A3A]">
-                            {student.level || "-"} • {student.grade || "-"} •{" "}
-                            {student.nis || "-"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                        {student.status || "active"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold">Absensi Terbaru</h2>
-
-                  <button className="text-sm font-bold text-[#7A1F2B]">
-                    Lihat semua →
-                  </button>
-                </div>
-
-                <div className="mt-6 space-y-4">
-                  {attendanceList.length === 0 && (
-                    <div className="rounded-xl border border-[#E8D6C1] p-5 text-sm text-[#6B4A3A]">
-                      Belum ada data absensi.
-                    </div>
-                  )}
-
-                  {attendanceList.slice(0, 5).map((attendance) => (
-                    <div
-                      key={attendance.id}
-                      className="flex items-center justify-between rounded-2xl border border-[#E8D6C1] p-4"
-                    >
+        <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+          <DashboardPanel
+            title="Jadwal / Rombel Hari Ini"
+            subtitle="Jadwal yang perlu diabsen hari ini."
+          >
+            {loading ? (
+              <EmptyText text="Memuat jadwal..." />
+            ) : todayRombels.length === 0 ? (
+              <EmptyText text="Tidak ada jadwal hari ini." />
+            ) : (
+              <div className="space-y-3">
+                {todayRombels.map((rombel) => (
+                  <div
+                    key={rombel.key}
+                    className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-4"
+                  >
+                    <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
                       <div>
-                        <p className="font-bold">
-                          {attendance.students?.full_name || "-"}
+                        <p className="font-extrabold text-[#2B1B18]">
+                          {rombel.subject_name}
                         </p>
-                        <p className="mt-1 text-sm text-[#6B4A3A]">
-                          {formatDate(attendance.attendance_date)} •{" "}
-                          {attendance.subjects?.name || "-"} •{" "}
-                          {attendance.material_topic || "-"}
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          {formatTime(rombel.start_time)} -{" "}
+                          {formatTime(rombel.end_time)} • {rombel.session_name}
+                        </p>
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          Materi: {rombel.material_topic}
+                        </p>
+                        <p className="mt-2 text-[12px] font-bold text-[#8A5A48]">
+                          {rombel.students.length} murid
                         </p>
                       </div>
 
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${getAttendanceBadge(
-                          attendance.attendance_status
-                        )}`}
-                      >
-                        {attendance.attendance_status || "-"}
-                      </span>
+                      <StatusBadge
+                        status={rombel.alreadyAttendance ? "approved" : "pending"}
+                        label={rombel.alreadyAttendance ? "Sudah Absen" : "Belum Absen"}
+                      />
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
+            )}
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Ringkasan Kerangka Materi"
+            subtitle="Alokasi waktu dari kerangka materi guru."
+          >
+            <div className="grid gap-3">
+              <SmallMetric
+                label="Total Kerangka"
+                value={summary.totalFramework}
+                icon={<Layers3 className="h-4 w-4" />}
+              />
+              <SmallMetric
+                label="Total Pertemuan"
+                value={summary.totalFrameworkMeetings}
+                icon={<BookOpen className="h-4 w-4" />}
+              />
+              <SmallMetric
+                label="Total Menit"
+                value={summary.totalFrameworkMinutes}
+                icon={<CalendarDays className="h-4 w-4" />}
+              />
             </div>
+          </DashboardPanel>
+        </div>
 
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1.2fr_1fr]">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold">Laporan Terbaru</h2>
+        <div className="grid gap-5 xl:grid-cols-3">
+          <DashboardPanel title="RPP Terbaru" subtitle="RPP terakhir dibuat atau diperbarui.">
+            {latestRpps.length === 0 ? (
+              <EmptyText text="Belum ada RPP." />
+            ) : (
+              <div className="space-y-3">
+                {latestRpps.map((rpp) => (
+                  <MiniCard
+                    key={rpp.id}
+                    title={getRppTitle(rpp)}
+                    subtitle={`${rpp.subject_name || "-"} • ${rpp.level || "-"} ${rpp.grade || ""}`}
+                    status={rpp.status || "draft"}
+                  />
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
 
-                  <button className="text-sm font-bold text-[#7A1F2B]">
-                    Lihat semua →
-                  </button>
-                </div>
+          <DashboardPanel title="Kerangka Materi" subtitle="Kerangka materi terbaru.">
+            {latestFrameworks.length === 0 ? (
+              <EmptyText text="Belum ada kerangka materi." />
+            ) : (
+              <div className="space-y-3">
+                {latestFrameworks.map((framework) => (
+                  <MiniCard
+                    key={framework.id}
+                    title={framework.framework_title || "-"}
+                    subtitle={`${framework.subject_name} • ${framework.level} ${framework.grade}`}
+                    status={framework.status || "draft"}
+                  />
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
 
-                <div className="mt-6 divide-y divide-[#E8D6C1]">
-                  {latestReports.length === 0 && (
-                    <div className="py-6 text-center text-sm text-[#6B4A3A]">
-                      Belum ada laporan terbaru.
-                    </div>
-                  )}
-
-                  {latestReports.map((report) => (
-                    <div
-                      key={`${report.type}-${report.id}`}
-                      className="flex items-center justify-between gap-4 py-4"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                          {report.type === "KBM" ? "KB" : "AK"}
-                        </div>
-
-                        <div>
-                          <p className="font-bold">
-                            {report.studentName} — {report.type}
-                          </p>
-                          <p className="mt-1 text-sm text-[#6B4A3A]">
-                            {report.subjectName} • {report.title} •{" "}
-                            {report.dateText}
-                          </p>
-                        </div>
+          <DashboardPanel title="Progress Program Semester" subtitle="Realisasi sub bab dari absensi.">
+            {latestPrograms.length === 0 ? (
+              <EmptyText text="Belum ada Program Semester." />
+            ) : (
+              <div className="space-y-4">
+                {latestPrograms.map((program) => (
+                  <div key={program.id}>
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[14px] font-extrabold text-[#2B1B18]">
+                          {program.subject_name}
+                        </p>
+                        <p className="text-[12px] text-[#6F5549]">
+                          {program.level} {program.grade} • Semester{" "}
+                          {program.semester}
+                        </p>
                       </div>
 
-                      <span
-                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
-                          report.status
-                        )}`}
-                      >
-                        {getStatusLabel(report.status)}
-                      </span>
+                      <p className="text-[13px] font-extrabold text-[#158A58]">
+                        {program.progress_percent}%
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-bold">Tugas & Gallery</h2>
-                <p className="mt-1 text-sm text-[#6B4A3A]">
-                  Ringkasan assignment dan dokumentasi kegiatan.
-                </p>
+                    <div className="h-2 overflow-hidden rounded-full bg-[#EADACA]">
+                      <div
+                        className="h-full rounded-full bg-[#158A58]"
+                        style={{ width: `${program.progress_percent}%` }}
+                      />
+                    </div>
 
-                <div className="mt-6 grid grid-cols-2 gap-4">
-                  <div className="rounded-2xl bg-[#FFF8EF] p-5">
-                    <p className="text-sm text-[#6B4A3A]">Total Tugas</p>
-                    <p className="mt-3 text-3xl font-bold">
-                      {assignments.length}
+                    <p className="mt-1 text-[11px] text-[#6F5549]">
+                      {program.completed_sub_chapters}/{program.total_sub_chapters}{" "}
+                      sub bab selesai
                     </p>
                   </div>
-
-                  <div className="rounded-2xl bg-[#FFF8EF] p-5">
-                    <p className="text-sm text-[#6B4A3A]">Gallery</p>
-                    <p className="mt-3 text-3xl font-bold">{gallery.length}</p>
-                  </div>
-                </div>
-
-                <div className="mt-5 space-y-4">
-                  {assignments.slice(0, 3).map((assignment) => (
-                    <div
-                      key={assignment.id}
-                      className="rounded-2xl border border-[#E8D6C1] p-4"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-bold">{assignment.title}</p>
-                          <p className="mt-1 text-sm text-[#6B4A3A]">
-                            {assignment.students?.full_name || "-"} •{" "}
-                            {assignment.subjects?.name || "-"} • Deadline{" "}
-                            {formatDate(assignment.deadline)}
-                          </p>
-                        </div>
-
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
-                            assignment.status
-                          )}`}
-                        >
-                          {getStatusLabel(assignment.status)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-
-                  {assignments.length === 0 && (
-                    <div className="rounded-xl border border-[#E8D6C1] p-5 text-sm text-[#6B4A3A]">
-                      Belum ada tugas yang dibuat.
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
-            </div>
-          </>
-        )}
-      </div>
+            )}
+          </DashboardPanel>
+        </div>
+      </section>
     </TeacherLayout>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </div>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
+    </div>
+  );
+}
+
+function DashboardPanel({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+      <div className="mb-5">
+        <h2 className="text-[18px] font-extrabold text-[#2B1B18]">{title}</h2>
+        <p className="mt-1 text-[13px] text-[#6F5549]">{subtitle}</p>
+      </div>
+
+      {children}
+    </div>
+  );
+}
+
+function StatusBadge({
+  status,
+  label,
+}: {
+  status?: string | null;
+  label?: string;
+}) {
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+        status
+      )}`}
+    >
+      {label || getStatusLabel(status)}
+    </span>
+  );
+}
+
+function EmptyText({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-8 text-center text-[14px] text-[#6F5549]">
+      {text}
+    </div>
+  );
+}
+
+function SmallMetric({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number | string;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F8DFD0] text-[#8C0F2D]">
+          {icon}
+        </div>
+
+        <p className="text-[13px] font-bold text-[#6F5549]">{label}</p>
+      </div>
+
+      <p className="text-[20px] font-extrabold text-[#2B1B18]">{value}</p>
+    </div>
+  );
+}
+
+function MiniCard({
+  title,
+  subtitle,
+  status,
+}: {
+  title: string;
+  subtitle: string;
+  status?: string | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[14px] font-extrabold text-[#2B1B18]">{title}</p>
+          <p className="mt-1 text-[12px] text-[#6F5549]">{subtitle}</p>
+        </div>
+
+        <StatusBadge status={status} />
+      </div>
+    </div>
   );
 }

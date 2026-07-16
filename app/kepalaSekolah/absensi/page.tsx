@@ -1,37 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import * as XLSX from "xlsx";
+import {
+  CalendarCheck,
+  Eye,
+  Search,
+  UserCheck,
+  UserX,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
-type StudentOption = {
+type TeacherRow = {
   id: string;
-  full_name: string;
-  level: string | null;
-  grade: string | null;
-  nis: string | null;
-};
-
-type TeacherOption = {
-  id: string;
-  full_name: string;
+  full_name: string | null;
   email: string | null;
+  teacher_code?: string | null;
 };
 
-type SubjectOption = {
+type StudentRow = {
   id: string;
-  name: string;
-  level: string | null;
+  full_name: string | null;
   grade: string | null;
+  level: string | null;
+  nis?: string | null;
+  nisn?: string | null;
 };
 
-type AttendanceQueryResult = {
+type SubjectRow = {
+  id: string;
+  name: string | null;
+  level?: string | null;
+  grade?: string | null;
+};
+
+type AttendanceRow = {
   id: string;
   student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
-  schedule_id: string | null;
-  attendance_date: string;
+  attendance_date: string | null;
   day_name: string | null;
   start_time: string | null;
   end_time: string | null;
@@ -39,770 +50,922 @@ type AttendanceQueryResult = {
   understanding_status: string | null;
   material_topic: string | null;
   notes: string | null;
-  students: StudentOption | StudentOption[] | null;
-  teachers: TeacherOption | TeacherOption[] | null;
-  subjects: SubjectOption | SubjectOption[] | null;
 };
 
-type Attendance = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  schedule_id: string | null;
-  attendance_date: string;
+type EnrichedAttendance = AttendanceRow & {
+  student_name: string;
+  student_grade: string;
+  student_level: string;
+  teacher_name: string;
+  subject_name: string;
+};
+
+type RombelGroup = {
+  key: string;
+  attendance_date: string | null;
   day_name: string | null;
   start_time: string | null;
   end_time: string | null;
-  attendance_status: string | null;
-  understanding_status: string | null;
+  teacher_id: string | null;
+  teacher_name: string;
+  subject_id: string | null;
+  subject_name: string;
   material_topic: string | null;
-  notes: string | null;
-  students: StudentOption | null;
-  teachers: TeacherOption | null;
-  subjects: SubjectOption | null;
+  students: EnrichedAttendance[];
+  total: number;
+  hadir: number;
+  tidakHadir: number;
+  izin: number;
+  sakit: number;
+  paham: number;
+  cukupPaham: number;
+  belumPaham: number;
 };
 
-type AttendanceForm = {
-  student_id: string;
-  teacher_id: string;
-  subject_id: string;
-  attendance_date: string;
-  day_name: string;
-  start_time: string;
-  end_time: string;
-  attendance_status: string;
-  understanding_status: string;
-  material_topic: string;
-  notes: string;
-};
+const statusOptions = ["Semua Status", "Hadir", "Tidak Hadir", "Izin", "Sakit"];
 
-const initialForm: AttendanceForm = {
-  student_id: "",
-  teacher_id: "",
-  subject_id: "",
-  attendance_date: "",
-  day_name: "Senin",
-  start_time: "",
-  end_time: "",
-  attendance_status: "Hadir",
-  understanding_status: "P",
-  material_topic: "",
-  notes: "",
-};
+const monthOptions = [
+  "Semua Bulan",
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
 
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
-function formatDate(date: string | null) {
-  if (!date) return "-";
+function formatDate(value?: string | null) {
+  if (!value) return "-";
 
-  const parsedDate = new Date(date);
-
-  return parsedDate.toLocaleDateString("id-ID", {
+  return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return "-";
+  return value.slice(0, 5);
+}
+
+function getInitials(name?: string | null) {
+  if (!name) return "-";
+
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function getMonthName(dateString?: string | null) {
+  if (!dateString) return "";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    month: "long",
+  }).format(new Date(`${dateString}T00:00:00`));
+}
+
+function getRombelKey(item: EnrichedAttendance) {
+  return [
+    item.teacher_id || "",
+    item.subject_id || "",
+    item.attendance_date || "",
+    item.start_time || "",
+    item.end_time || "",
+    normalizeText(item.material_topic),
+  ].join("__");
+}
+
+function groupAttendanceByRombel(attendance: EnrichedAttendance[]) {
+  const map = new Map<string, EnrichedAttendance[]>();
+
+  attendance.forEach((item) => {
+    const key = getRombelKey(item);
+    const current = map.get(key) || [];
+
+    current.push(item);
+    map.set(key, current);
+  });
+
+  const groups: RombelGroup[] = Array.from(map.entries()).map(([key, rows]) => {
+    const first = rows[0];
+
+    const hadir = rows.filter((item) => item.attendance_status === "Hadir").length;
+
+    const tidakHadir = rows.filter(
+      (item) => item.attendance_status === "Tidak Hadir"
+    ).length;
+
+    const izin = rows.filter((item) => item.attendance_status === "Izin").length;
+
+    const sakit = rows.filter((item) => item.attendance_status === "Sakit").length;
+
+    const paham = rows.filter(
+      (item) => item.understanding_status === "Paham"
+    ).length;
+
+    const cukupPaham = rows.filter(
+      (item) => item.understanding_status === "Cukup Paham"
+    ).length;
+
+    const belumPaham = rows.filter(
+      (item) => item.understanding_status === "Belum Paham"
+    ).length;
+
+    return {
+      key,
+      attendance_date: first.attendance_date,
+      day_name: first.day_name,
+      start_time: first.start_time,
+      end_time: first.end_time,
+      teacher_id: first.teacher_id,
+      teacher_name: first.teacher_name,
+      subject_id: first.subject_id,
+      subject_name: first.subject_name,
+      material_topic: first.material_topic,
+      students: rows.sort((a, b) => a.student_name.localeCompare(b.student_name)),
+      total: rows.length,
+      hadir,
+      tidakHadir,
+      izin,
+      sakit,
+      paham,
+      cukupPaham,
+      belumPaham,
+    };
+  });
+
+  return groups.sort((a, b) => {
+    const dateA = a.attendance_date || "";
+    const dateB = b.attendance_date || "";
+
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+
+    return (a.start_time || "").localeCompare(b.start_time || "");
   });
 }
 
-function formatTime(time: string | null) {
-  if (!time) return "-";
+function toYMD(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
 
-  return time.slice(0, 5);
+  return `${year}-${month}-${day}`;
 }
 
-function getAttendanceBadge(status: string | null) {
-  if (status === "Hadir") {
-    return "bg-emerald-100 text-emerald-700";
-  }
+function getCutoffRange(month: number, year: number) {
+  const startDate = new Date(year, month - 2, 21);
+  const endDate = new Date(year, month - 1, 20);
 
-  if (status === "Sakit") {
-    return "bg-yellow-100 text-yellow-700";
-  }
-
-  if (status === "Izin") {
-    return "bg-blue-100 text-blue-700";
-  }
-
-  return "bg-red-100 text-red-700";
+  return {
+    start: toYMD(startDate),
+    end: toYMD(endDate),
+  };
 }
 
-function getUnderstandingLabel(code: string | null) {
-  if (code === "T") return "Tahu";
-  if (code === "B") return "Bisa";
-  if (code === "P") return "Paham";
-  if (code === "M") return "Mengerti";
-  if (code === "TM") return "Tidak Mengerti";
-
-  return "-";
+function isDateInRange(dateValue: string | null, start: string, end: string) {
+  if (!dateValue) return false;
+  return dateValue >= start && dateValue <= end;
 }
 
 export default function KepalaSekolahAbsensiPage() {
-  const [attendanceList, setAttendanceList] = useState<Attendance[]>([]);
-  const [students, setStudents] = useState<StudentOption[]>([]);
-  const [teachers, setTeachers] = useState<TeacherOption[]>([]);
-  const [subjects, setSubjects] = useState<SubjectOption[]>([]);
-
+  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [attendance, setAttendance] = useState<EnrichedAttendance[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
-  const [dayFilter, setDayFilter] = useState("Semua Hari");
+  const [monthFilter, setMonthFilter] = useState("Semua Bulan");
+  const [teacherFilter, setTeacherFilter] = useState("Semua Guru");
+  const [dateFilter, setDateFilter] = useState("");
 
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form, setForm] = useState<AttendanceForm>(initialForm);
-  const [errorMessage, setErrorMessage] = useState("");
+  const currentDate = new Date();
 
-  async function fetchStudents() {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, full_name, level, grade, nis")
-      .order("full_name", { ascending: true });
+  const [exportMonth, setExportMonth] = useState(
+    String(currentDate.getMonth() + 1)
+  );
 
-    if (error) {
-      console.error(error.message);
-      return;
-    }
+  const [exportYear, setExportYear] = useState(
+    String(currentDate.getFullYear())
+  );
 
-    setStudents(data || []);
-  }
+  const [selectedRombel, setSelectedRombel] = useState<RombelGroup | null>(null);
 
-  async function fetchTeachers() {
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email")
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setTeachers(data || []);
-  }
-
-  async function fetchSubjects() {
-    const { data, error } = await supabase
-      .from("subjects")
-      .select("id, name, level, grade")
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error(error.message);
-      return;
-    }
-
-    setSubjects(data || []);
-  }
-
-  async function fetchAttendance() {
+  async function fetchData() {
     setLoading(true);
-    setErrorMessage("");
 
-    const { data, error } = await supabase
-      .from("attendance")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        schedule_id,
-        attendance_date,
-        day_name,
-        start_time,
-        end_time,
-        attendance_status,
-        understanding_status,
-        material_topic,
-        notes,
-        students (
-          id,
-          full_name,
-          level,
-          grade,
-          nis
-        ),
-        teachers (
-          id,
-          full_name,
-          email
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .order("attendance_date", { ascending: false })
-      .order("start_time", { ascending: true });
+    const [teachersRes, studentsRes, subjectsRes, attendanceRes] =
+      await Promise.all([
+        supabase.from("teachers").select("*").order("full_name"),
+        supabase.from("students").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("attendance")
+          .select("*")
+          .order("attendance_date", { ascending: false })
+          .order("start_time", { ascending: true }),
+      ]);
 
-    if (error) {
-      console.error(error.message);
-      setErrorMessage(error.message);
-      setLoading(false);
-      return;
-    }
+    const teachersData = (teachersRes.data || []) as TeacherRow[];
+    const studentsData = (studentsRes.data || []) as StudentRow[];
+    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+    const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
 
-    const rows = (data || []) as AttendanceQueryResult[];
+    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
+    const studentMap = new Map(studentsData.map((student) => [student.id, student]));
+    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
 
-    const normalizedAttendance: Attendance[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      schedule_id: item.schedule_id,
-      attendance_date: item.attendance_date,
-      day_name: item.day_name,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      attendance_status: item.attendance_status,
-      understanding_status: item.understanding_status,
-      material_topic: item.material_topic,
-      notes: item.notes,
-      students: normalizeRelation(item.students),
-      teachers: normalizeRelation(item.teachers),
-      subjects: normalizeRelation(item.subjects),
-    }));
+    const enriched: EnrichedAttendance[] = attendanceData.map((item) => {
+      const teacher = item.teacher_id ? teacherMap.get(item.teacher_id) : null;
+      const student = item.student_id ? studentMap.get(item.student_id) : null;
+      const subject = item.subject_id ? subjectMap.get(item.subject_id) : null;
 
-    setAttendanceList(normalizedAttendance);
+      return {
+        ...item,
+        teacher_name: teacher?.full_name || "-",
+        student_name: student?.full_name || "-",
+        student_grade: student?.grade || "-",
+        student_level: student?.level || "-",
+        subject_name: subject?.name || "-",
+      };
+    });
+
+    setTeachers(teachersData);
+    setStudents(studentsData);
+    setSubjects(subjectsData);
+    setAttendance(enriched);
     setLoading(false);
   }
 
-  async function fetchAllData() {
-    await Promise.all([
-      fetchStudents(),
-      fetchTeachers(),
-      fetchSubjects(),
-      fetchAttendance(),
-    ]);
-  }
-
   useEffect(() => {
-    fetchAllData();
+    fetchData();
+
+    const channel = supabase
+      .channel("kepala-absensi-rombel-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        fetchData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        fetchData
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  const filteredAttendance = useMemo(() => {
-    const keyword = search.toLowerCase();
+  const rombelGroups = useMemo(() => {
+    const q = normalizeText(search);
+    const grouped = groupAttendanceByRombel(attendance);
 
-    return attendanceList.filter((attendance) => {
+    return grouped.filter((group) => {
       const matchSearch =
-        attendance.students?.full_name?.toLowerCase().includes(keyword) ||
-        attendance.teachers?.full_name?.toLowerCase().includes(keyword) ||
-        attendance.subjects?.name?.toLowerCase().includes(keyword) ||
-        attendance.material_topic?.toLowerCase().includes(keyword) ||
-        attendance.notes?.toLowerCase().includes(keyword);
+        !q ||
+        normalizeText(group.teacher_name).includes(q) ||
+        normalizeText(group.subject_name).includes(q) ||
+        normalizeText(group.material_topic).includes(q) ||
+        group.students.some((student) =>
+          normalizeText(student.student_name).includes(q)
+        );
 
       const matchStatus =
         statusFilter === "Semua Status" ||
-        attendance.attendance_status === statusFilter;
+        group.students.some((student) => student.attendance_status === statusFilter);
 
-      const matchDay =
-        dayFilter === "Semua Hari" || attendance.day_name === dayFilter;
+      const matchMonth =
+        monthFilter === "Semua Bulan" ||
+        getMonthName(group.attendance_date) === monthFilter;
 
-      return matchSearch && matchStatus && matchDay;
+      const matchTeacher =
+        teacherFilter === "Semua Guru" || group.teacher_id === teacherFilter;
+
+      const matchDate = !dateFilter || group.attendance_date === dateFilter;
+
+      return matchSearch && matchStatus && matchMonth && matchTeacher && matchDate;
     });
-  }, [attendanceList, search, statusFilter, dayFilter]);
+  }, [attendance, search, statusFilter, monthFilter, teacherFilter, dateFilter]);
 
-  async function handleSubmitAttendance(
-    event: React.FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
-    setErrorMessage("");
+  const summary = useMemo(() => {
+    const totalRombel = rombelGroups.length;
+    const totalAttendanceRows = attendance.length;
 
-    if (!form.student_id) {
-      setErrorMessage("Nama siswa wajib dipilih.");
+    const totalHadir = attendance.filter(
+      (item) => item.attendance_status === "Hadir"
+    ).length;
+
+    const totalTidakHadir = attendance.filter(
+      (item) => item.attendance_status !== "Hadir"
+    ).length;
+
+    const activeTeachers = new Set(attendance.map((item) => item.teacher_id)).size;
+
+    const percentage =
+      totalAttendanceRows > 0
+        ? Math.round((totalHadir / totalAttendanceRows) * 100)
+        : 0;
+
+    return {
+      totalRombel,
+      totalAttendanceRows,
+      totalHadir,
+      totalTidakHadir,
+      activeTeachers,
+      percentage,
+    };
+  }, [rombelGroups, attendance]);
+
+  function handleExportExcel() {
+    const monthNumber = Number(exportMonth);
+    const yearNumber = Number(exportYear);
+
+    if (!monthNumber || !yearNumber) {
+      alert("Pilih bulan dan tahun export terlebih dahulu.");
       return;
     }
 
-    if (!form.teacher_id) {
-      setErrorMessage("Guru wajib dipilih.");
+    const { start, end } = getCutoffRange(monthNumber, yearNumber);
+
+    const selectedMonthName = monthOptions[monthNumber] || `Bulan ${monthNumber}`;
+
+    const rows = attendance
+      .filter((item) => isDateInRange(item.attendance_date, start, end))
+      .sort((a, b) => {
+        const dateCompare = (a.attendance_date || "").localeCompare(
+          b.attendance_date || ""
+        );
+
+        if (dateCompare !== 0) return dateCompare;
+
+        return (a.start_time || "").localeCompare(b.start_time || "");
+      })
+      .map((item, index) => ({
+        No: index + 1,
+        Tanggal: formatDate(item.attendance_date),
+        Hari: item.day_name || "-",
+        Jam: `${formatTime(item.start_time)}-${formatTime(item.end_time)}`,
+        Guru: item.teacher_name || "-",
+        Siswa: item.student_name || "-",
+        Level: item.student_level || "-",
+        Kelas: item.student_grade || "-",
+        "Mata Pelajaran": item.subject_name || "-",
+        Materi: item.material_topic || "-",
+        "Status Kehadiran": item.attendance_status || "-",
+        Pemahaman: item.understanding_status || "-",
+        Keterangan: item.notes || "-",
+      }));
+
+    if (rows.length === 0) {
+      alert(
+        `Tidak ada data absensi untuk periode ${formatDate(start)} sampai ${formatDate(
+          end
+        )}.`
+      );
       return;
     }
 
-    if (!form.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
-      return;
-    }
+    const worksheet = XLSX.utils.json_to_sheet(rows);
 
-    if (!form.attendance_date) {
-      setErrorMessage("Tanggal absensi wajib diisi.");
-      return;
-    }
+    worksheet["!cols"] = [
+      { wch: 6 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 20 },
+      { wch: 32 },
+      { wch: 18 },
+      { wch: 18 },
+      { wch: 36 },
+    ];
 
-    if (!form.start_time) {
-      setErrorMessage("Jam mulai wajib diisi.");
-      return;
-    }
+    const workbook = XLSX.utils.book_new();
 
-    if (!form.end_time) {
-      setErrorMessage("Jam selesai wajib diisi.");
-      return;
-    }
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      `Absensi ${selectedMonthName}`
+    );
 
-    if (!form.material_topic.trim()) {
-      setErrorMessage("Materi wajib diisi.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const { error } = await supabase.from("attendance").insert({
-        student_id: form.student_id,
-        teacher_id: form.teacher_id,
-        subject_id: form.subject_id,
-        attendance_date: form.attendance_date,
-        day_name: form.day_name,
-        start_time: form.start_time,
-        end_time: form.end_time,
-        attendance_status: form.attendance_status,
-        understanding_status: form.understanding_status,
-        material_topic: form.material_topic.trim(),
-        notes: form.notes.trim() || null,
-      });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      setForm(initialForm);
-      setIsModalOpen(false);
-      await fetchAttendance();
-    } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage("Gagal menyimpan absensi.");
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function closeModal() {
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm(initialForm);
+    XLSX.writeFile(
+      workbook,
+      `Absensi_KBM_${selectedMonthName}_${yearNumber}_Cutoff_${start}_sd_${end}.xlsx`
+    );
   }
 
   return (
     <KepalaSekolahLayout
       activeMenu="Absensi KBM"
-      searchPlaceholder="Cari absensi siswa..."
-      buttonLabel="+ Input Absensi"
+      searchPlaceholder="Cari absensi, guru, siswa, atau materi..."
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-[30px] font-bold tracking-tight">Absensi KBM</h1>
-          <p className="mt-1 text-sm text-[#6B4A3A]">
-            Rekap kehadiran siswa per sesi pembelajaran.
-          </p>
+      <section className="space-y-7">
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+          <div>
+            <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+              Monitoring KBM
+            </p>
+
+            <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+              Absensi KBM Rombel
+            </h1>
+
+            <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
+              Pantau absensi yang diinput guru berdasarkan jadwal/rombel. Kepala
+              sekolah bisa melihat jumlah hadir, tidak hadir, dan alasan siswa.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={exportMonth}
+              onChange={(event) => setExportMonth(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] font-bold text-[#2B1B18] outline-none focus:border-[#9C0824]"
+            >
+              {monthOptions.slice(1).map((month, index) => (
+                <option key={month} value={String(index + 1)}>
+                  {month}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              value={exportYear}
+              onChange={(event) => setExportYear(event.target.value)}
+              className="h-11 w-[105px] rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] font-bold text-[#2B1B18] outline-none focus:border-[#9C0824]"
+            />
+
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="flex h-11 w-fit items-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] shadow-sm transition hover:bg-[#FFF8EF]"
+            >
+              Export Excel
+            </button>
+          </div>
         </div>
 
-        <div className="flex gap-3">
-          <button
-            type="button"
-            className="rounded-xl border border-[#E8D6C1] bg-white px-5 py-3 text-sm font-semibold text-[#2B1B18] shadow-sm transition hover:bg-[#FFF8EF]"
-          >
-            ⬇ Export
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setErrorMessage("");
-              setIsModalOpen(true);
-            }}
-            className="rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
-          >
-            + Input Absensi
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-[1fr_200px_180px] gap-3">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Cari siswa, guru, mapel, materi, atau catatan..."
-            className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<UsersRound className="h-5 w-5" />}
+            label="Total Rombel Diabsen"
+            value={summary.totalRombel}
+            info="Rombel"
+            tone="pink"
           />
-
-          <select
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          >
-            <option>Semua Status</option>
-            <option>Hadir</option>
-            <option>Sakit</option>
-            <option>Izin</option>
-            <option>Alpha</option>
-          </select>
-
-          <select
-            value={dayFilter}
-            onChange={(event) => setDayFilter(event.target.value)}
-            className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-          >
-            <option>Semua Hari</option>
-            <option>Senin</option>
-            <option>Selasa</option>
-            <option>Rabu</option>
-            <option>Kamis</option>
-            <option>Jumat</option>
-            <option>Sabtu</option>
-          </select>
+          <SummaryCard
+            icon={<CalendarCheck className="h-5 w-5" />}
+            label="Total Data Absensi"
+            value={summary.totalAttendanceRows}
+            info="Rows"
+            tone="orange"
+          />
+          <SummaryCard
+            icon={<UserCheck className="h-5 w-5" />}
+            label="Total Hadir"
+            value={summary.totalHadir}
+            info={`${summary.percentage}%`}
+            tone="green"
+          />
+          <SummaryCard
+            icon={<UserX className="h-5 w-5" />}
+            label="Tidak Hadir/Izin/Sakit"
+            value={summary.totalTidakHadir}
+            info={`${summary.activeTeachers} Guru`}
+            tone="blue"
+          />
         </div>
-      </div>
 
-      {errorMessage && !isModalOpen && (
-        <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-          {errorMessage}
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr]">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari guru, siswa, mapel, atau materi..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
+            </div>
+
+            <select
+              value={teacherFilter}
+              onChange={(event) => setTeacherFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option value="Semua Guru">Semua Guru</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.full_name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              {statusOptions.map((status) => (
+                <option key={status}>{status}</option>
+              ))}
+            </select>
+
+            <select
+              value={monthFilter}
+              onChange={(event) => setMonthFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              {monthOptions.map((month) => (
+                <option key={month}>{month}</option>
+              ))}
+            </select>
+
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </div>
         </div>
-      )}
 
-      <div className="mt-7 overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1150px] text-left">
-            <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
-              <tr>
-                <th className="px-4 py-4">Hari</th>
-                <th className="px-4 py-4">Tanggal</th>
-                <th className="px-4 py-4">Jam Mulai</th>
-                <th className="px-4 py-4">Jam Selesai</th>
-                <th className="px-4 py-4">Kehadiran</th>
-                <th className="px-4 py-4">Nama Siswa</th>
-                <th className="px-4 py-4">Kelas</th>
-                <th className="px-4 py-4">Guru</th>
-                <th className="px-4 py-4">Mapel</th>
-                <th className="px-4 py-4">Materi</th>
-                <th className="px-4 py-4">Ket.</th>
-              </tr>
-            </thead>
+        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="border-b border-[#EADACA] px-6 py-5">
+            <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
+              Rekap Absensi Per Rombel
+            </h2>
 
-            <tbody className="divide-y divide-[#E8D6C1]">
-              {loading && (
-                <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-sm">
-                    Loading absensi...
-                  </td>
+            <p className="mt-1 text-[14px] text-[#6F5549]">
+              Data dikelompokkan berdasarkan guru, mata pelajaran, tanggal, jam,
+              dan materi yang sama.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1180px] border-collapse">
+              <thead>
+                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th className="px-6 py-4">Tanggal</th>
+                  <th className="px-6 py-4">Jam</th>
+                  <th className="px-6 py-4">Guru</th>
+                  <th className="px-6 py-4">Mapel</th>
+                  <th className="px-6 py-4">Materi</th>
+                  <th className="px-6 py-4">Rombel</th>
+                  <th className="px-6 py-4">Hadir</th>
+                  <th className="px-6 py-4">Tidak Hadir</th>
+                  <th className="px-6 py-4">Aksi</th>
                 </tr>
-              )}
+              </thead>
 
-              {!loading && filteredAttendance.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-sm">
-                    Belum ada data absensi.
-                  </td>
-                </tr>
-              )}
-
-              {!loading &&
-                filteredAttendance.map((attendance) => (
-                  <tr key={attendance.id} className="hover:bg-[#FFF8EF]">
-                    <td className="px-4 py-4">
-                      {attendance.day_name || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {formatDate(attendance.attendance_date)}
-                    </td>
-                    <td className="px-4 py-4">
-                      {formatTime(attendance.start_time)}
-                    </td>
-                    <td className="px-4 py-4">
-                      {formatTime(attendance.end_time)}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${getAttendanceBadge(
-                          attendance.attendance_status
-                        )}`}
-                      >
-                        {attendance.attendance_status || "-"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 font-semibold">
-                      {attendance.students?.full_name || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {attendance.students?.grade || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {attendance.teachers?.full_name || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {attendance.subjects?.name || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {attendance.material_topic || "-"}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="rounded-full border border-[#D96B2B] px-3 py-1 text-xs font-bold text-[#D96B2B]">
-                        {attendance.understanding_status || "-"}
-                      </span>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Memuat data absensi...
                     </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
+                ) : rombelGroups.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Belum ada data absensi rombel.
+                    </td>
+                  </tr>
+                ) : (
+                  rombelGroups.map((group) => (
+                    <tr
+                      key={group.key}
+                      className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18]"
+                    >
+                      <td className="px-6 py-4">
+                        <p className="font-extrabold">{group.day_name || "-"}</p>
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          {formatDate(group.attendance_date)}
+                        </p>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {formatTime(group.start_time)}-
+                        {formatTime(group.end_time)}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <p className="font-extrabold">{group.teacher_name}</p>
+                      </td>
+
+                      <td className="px-6 py-4">{group.subject_name}</td>
+
+                      <td className="max-w-[240px] px-6 py-4">
+                        <p className="line-clamp-2">{group.material_topic || "-"}</p>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+                          {group.total} siswa
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span className="rounded-full bg-[#C7F0DA] px-3 py-1 text-[12px] font-extrabold text-[#158A58]">
+                          {group.hadir} hadir
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span
+                          className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${
+                            group.tidakHadir + group.izin + group.sakit > 0
+                              ? "bg-[#FFE4E6] text-[#BE123C]"
+                              : "bg-[#F1F5F9] text-[#64748B]"
+                          }`}
+                        >
+                          {group.tidakHadir + group.izin + group.sakit} siswa
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRombel(group)}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                        >
+                          <Eye className="h-4 w-4" />
+                          Detail
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-bold">Legenda Keterangan</h2>
+      {selectedRombel ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
+          <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  Detail Absensi Rombel
+                </h2>
 
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          {[
-            ["T", "Tahu — Siswa sekadar tahu materi"],
-            ["B", "Bisa — Siswa sudah bisa dengan materi"],
-            ["P", "Paham — Siswa sudah paham materi"],
-            ["M", "Mengerti — Siswa mengerti materi"],
-            ["TM", "Tidak Mengerti — perlu pengulangan"],
-          ].map(([code, label]) => (
-            <div
-              key={code}
-              className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-sm text-[#6B4A3A]"
-            >
-              <span className="mr-2 rounded-full bg-[#D96B2B] px-3 py-1 text-xs font-bold text-white">
-                {code}
-              </span>
-              {label}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Input Absensi KBM</h2>
+                <p className="mt-1 text-[14px] text-[#6F5549]">
+                  {selectedRombel.teacher_name} • {selectedRombel.subject_name} •{" "}
+                  {formatDate(selectedRombel.attendance_date)}
+                </p>
+              </div>
 
               <button
                 type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+                onClick={() => setSelectedRombel(null)}
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
               >
-                ×
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
-              )}
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 md:grid-cols-4">
+                <DetailSummaryCard label="Total Siswa" value={selectedRombel.total} />
+                <DetailSummaryCard label="Hadir" value={selectedRombel.hadir} />
+                <DetailSummaryCard
+                  label="Tidak Hadir"
+                  value={selectedRombel.tidakHadir}
+                />
+                <DetailSummaryCard
+                  label="Izin / Sakit"
+                  value={selectedRombel.izin + selectedRombel.sakit}
+                />
+              </div>
 
-              <form onSubmit={handleSubmitAttendance} className="space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Nama Siswa</label>
-                  <select
-                    value={form.student_id}
-                    onChange={(event) =>
-                      setForm({ ...form, student_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih siswa</option>
-                    {students.map((student) => (
-                      <option key={student.id} value={student.id}>
-                        {student.full_name}
-                        {student.grade ? ` — ${student.grade}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Guru</label>
-                  <select
-                    value={form.teacher_id}
-                    onChange={(event) =>
-                      setForm({ ...form, teacher_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih guru</option>
-                    {teachers.map((teacher) => (
-                      <option key={teacher.id} value={teacher.id}>
-                        {teacher.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <select
-                    value={form.subject_id}
-                    onChange={(event) =>
-                      setForm({ ...form, subject_id: event.target.value })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Tanggal</label>
-                    <input
-                      type="date"
-                      value={form.attendance_date}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          attendance_date: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Hari</label>
-                    <select
-                      value={form.day_name}
-                      onChange={(event) =>
-                        setForm({ ...form, day_name: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Senin</option>
-                      <option>Selasa</option>
-                      <option>Rabu</option>
-                      <option>Kamis</option>
-                      <option>Jumat</option>
-                      <option>Sabtu</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Jam Mulai</label>
-                    <input
-                      type="time"
-                      value={form.start_time}
-                      onChange={(event) =>
-                        setForm({ ...form, start_time: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Jam Selesai</label>
-                    <input
-                      type="time"
-                      value={form.end_time}
-                      onChange={(event) =>
-                        setForm({ ...form, end_time: event.target.value })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Kehadiran</label>
-                    <select
-                      value={form.attendance_status}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          attendance_status: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Hadir</option>
-                      <option>Sakit</option>
-                      <option>Izin</option>
-                      <option>Alpha</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Ket. Pemahaman</label>
-                    <select
-                      value={form.understanding_status}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          understanding_status: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option value="T">T - Tahu</option>
-                      <option value="B">B - Bisa</option>
-                      <option value="P">P - Paham</option>
-                      <option value="M">M - Mengerti</option>
-                      <option value="TM">TM - Tidak Mengerti</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Materi</label>
-                  <input
-                    value={form.material_topic}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        material_topic: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: Pecahan Senilai"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+              <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+                <div className="grid gap-3 text-[13px] md:grid-cols-4">
+                  <InfoItem
+                    label="Tanggal"
+                    value={formatDate(selectedRombel.attendance_date)}
+                  />
+                  <InfoItem
+                    label="Jam"
+                    value={`${formatTime(selectedRombel.start_time)}-${formatTime(
+                      selectedRombel.end_time
+                    )}`}
+                  />
+                  <InfoItem label="Mapel" value={selectedRombel.subject_name} />
+                  <InfoItem
+                    label="Materi"
+                    value={selectedRombel.material_topic || "-"}
                   />
                 </div>
+              </div>
 
-                <div>
-                  <label className="text-sm font-bold">Catatan</label>
-                  <textarea
-                    value={form.notes}
-                    onChange={(event) =>
-                      setForm({ ...form, notes: event.target.value })
-                    }
-                    placeholder="Catatan pembelajaran atau kondisi siswa"
-                    rows={3}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
+              <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[880px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                        <th className="px-5 py-4">Siswa</th>
+                        <th className="px-5 py-4">Kelas</th>
+                        <th className="px-5 py-4">Kehadiran</th>
+                        <th className="px-5 py-4">Pemahaman</th>
+                        <th className="px-5 py-4">Keterangan</th>
+                      </tr>
+                    </thead>
 
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {saving ? "Menyimpan..." : "Simpan Absensi"}
-                  </button>
+                    <tbody>
+                      {selectedRombel.students.map((student) => (
+                        <tr
+                          key={student.id}
+                          className="border-b border-[#F0E1D4] text-[14px]"
+                        >
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F8DFD0] text-[13px] font-extrabold text-[#8C0F2D]">
+                                {getInitials(student.student_name)}
+                              </div>
+
+                              <p className="font-extrabold text-[#2B1B18]">
+                                {student.student_name}
+                              </p>
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4 text-[#6F5549]">
+                            {student.student_level} — {student.student_grade}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <AttendanceBadge status={student.attendance_status} />
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <UnderstandingBadge
+                              status={student.understanding_status}
+                            />
+                          </td>
+
+                          <td className="px-5 py-4 text-[#6F5549]">
+                            {student.notes || "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </form>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedRombel(null)}
+                className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+              >
+                Tutup Detail
+              </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </div>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
+    </div>
+  );
+}
+
+function DetailSummaryCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | string;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+      <p className="text-[13px] text-[#6F5549]">{label}</p>
+      <p className="mt-2 text-[24px] font-extrabold text-[#2B1B18]">{value}</p>
+    </div>
+  );
+}
+
+function AttendanceBadge({ status }: { status?: string | null }) {
+  const safe = status || "-";
+
+  const className =
+    safe === "Hadir"
+      ? "bg-[#C7F0DA] text-[#158A58]"
+      : safe === "Tidak Hadir"
+      ? "bg-[#FFE4E6] text-[#BE123C]"
+      : "bg-[#FFF2B8] text-[#B26A00]";
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+    >
+      {safe}
+    </span>
+  );
+}
+
+function UnderstandingBadge({ status }: { status?: string | null }) {
+  const safe = status || "-";
+
+  const className =
+    safe === "Paham"
+      ? "bg-[#C7F0DA] text-[#158A58]"
+      : safe === "Cukup Paham"
+      ? "bg-[#FFF2B8] text-[#B26A00]"
+      : "bg-[#FFE4E6] text-[#BE123C]";
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+    >
+      {safe}
+    </span>
+  );
+}
+
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+      <p className="mt-1 font-extrabold text-[#2B1B18]">{value}</p>
+    </div>
   );
 }
