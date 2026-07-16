@@ -37,11 +37,14 @@ type ActiveMenu =
   | "Gallery Upload";
 
 type TeacherLayoutProps = {
+  children: React.ReactNode;
   activeMenu: ActiveMenu;
-  searchPlaceholder?: string;
   teacherName?: string;
   teacherSubject?: string;
-  children: React.ReactNode;
+  searchPlaceholder?: string;
+
+  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
+  buttonLabel?: string;
 };
 
 type MenuItem = {
@@ -219,15 +222,14 @@ export default function TeacherLayout({
                   menu.href === "/teacher"
                     ? pathname === "/teacher"
                     : pathname === menu.href ||
-                      pathname.startsWith(`${menu.href}/`);
+                    pathname.startsWith(`${menu.href}/`);
 
                 return (
                   <Link
                     key={menu.name}
                     href={menu.href}
-                    className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${
-                      isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
-                    }`}
+                    className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
+                      }`}
                   >
                     <span className="flex items-center gap-3">
                       <Icon className="h-[18px] w-[18px]" />

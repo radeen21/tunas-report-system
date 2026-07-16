@@ -40,9 +40,12 @@ type ActiveMenu =
   | "Settings";
 
 type KepalaSekolahLayoutProps = {
+  children: React.ReactNode;
   activeMenu: ActiveMenu;
   searchPlaceholder?: string;
-  children: React.ReactNode;
+
+  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
+  buttonLabel?: string;
 };
 
 type MenuItem = {
