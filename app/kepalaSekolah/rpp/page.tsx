@@ -26,13 +26,18 @@ type RppRow = {
   grade: string | null;
   semester: string | null;
   academic_year: string | null;
+
+  // kolom lama tetap ada untuk compatibility, tapi tidak ditampilkan lagi
   meeting_date: string | null;
   meeting_number: number | null;
-  rpp_title: string | null;
-  learning_objectives: string | null;
   opening_activity: string | null;
   core_activity: string | null;
   closing_activity: string | null;
+
+  rpp_title: string | null;
+  indicator: string | null;
+  subject_material: string | null;
+  learning_objectives: string | null;
   assessment: string | null;
   learning_media: string | null;
   learning_resources: string | null;
@@ -54,16 +59,6 @@ type EnrichedRpp = RppRow & {
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-
-  return new Intl.DateTimeFormat("id-ID", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(value));
 }
 
 function formatDateTime(value?: string | null) {
@@ -96,6 +91,12 @@ function getStatusClass(status?: string | null) {
   return "bg-[#F1F5F9] text-[#64748B]";
 }
 
+function isPdfUrl(url?: string | null) {
+  if (!url) return false;
+
+  return url.toLowerCase().split("?")[0].endsWith(".pdf");
+}
+
 export default function KepalaSekolahRppPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [rpps, setRpps] = useState<EnrichedRpp[]>([]);
@@ -121,7 +122,9 @@ export default function KepalaSekolahRppPage() {
     const teachersData = (teachersRes.data || []) as TeacherRow[];
     const rppData = (rppRes.data || []) as RppRow[];
 
-    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
+    const teacherMap = new Map(
+      teachersData.map((teacher) => [teacher.id, teacher])
+    );
 
     const enriched: EnrichedRpp[] = rppData.map((rpp) => {
       const teacher = rpp.teacher_id ? teacherMap.get(rpp.teacher_id) : null;
@@ -168,7 +171,10 @@ export default function KepalaSekolahRppPage() {
         normalizeText(getRppTitle(rpp)).includes(q) ||
         normalizeText(rpp.teacher_name).includes(q) ||
         normalizeText(rpp.subject_name).includes(q) ||
-        normalizeText(rpp.learning_objectives).includes(q);
+        normalizeText(rpp.indicator).includes(q) ||
+        normalizeText(rpp.subject_material).includes(q) ||
+        normalizeText(rpp.learning_objectives).includes(q) ||
+        normalizeText(rpp.notes).includes(q);
 
       const matchTeacher =
         teacherFilter === "Semua Guru" || rpp.teacher_id === teacherFilter;
@@ -261,8 +267,8 @@ export default function KepalaSekolahRppPage() {
           </h1>
 
           <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-            Review RPP yang dibuat guru. RPP dengan status submitted bisa
-            di-approve atau dikembalikan dengan catatan revisi.
+            Review RPP yang dibuat guru. Format terbaru menampilkan Indikator,
+            Materi Pelajaran, Tujuan Pembelajaran, dan dokumen RPP.
           </p>
         </div>
 
@@ -308,7 +314,7 @@ export default function KepalaSekolahRppPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, guru, mapel, atau tujuan..."
+                placeholder="Cari judul, guru, mapel, indikator, materi, atau tujuan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -342,14 +348,15 @@ export default function KepalaSekolahRppPage() {
 
         <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] border-collapse">
+            <table className="w-full min-w-[1220px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="px-6 py-4">RPP</th>
                   <th className="px-6 py-4">Guru</th>
                   <th className="px-6 py-4">Mapel</th>
                   <th className="px-6 py-4">Kelas</th>
-                  <th className="px-6 py-4">Pertemuan</th>
+                  <th className="px-6 py-4">Indikator</th>
+                  <th className="px-6 py-4">Materi Pelajaran</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Aksi</th>
                 </tr>
@@ -359,7 +366,7 @@ export default function KepalaSekolahRppPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat data RPP...
@@ -368,7 +375,7 @@ export default function KepalaSekolahRppPage() {
                 ) : filteredRpps.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada data RPP.
@@ -392,15 +399,20 @@ export default function KepalaSekolahRppPage() {
                       <td className="px-6 py-4">{rpp.subject_name || "-"}</td>
 
                       <td className="px-6 py-4">
-                        {rpp.level} — {rpp.grade}
+                        {[rpp.level, rpp.grade].filter(Boolean).join(" — ") ||
+                          "-"}
                       </td>
 
                       <td className="px-6 py-4">
-                        {formatDate(rpp.meeting_date)}
-                        <br />
-                        <span className="text-[12px] text-[#6F5549]">
-                          Pertemuan {rpp.meeting_number || "-"}
-                        </span>
+                        <p className="line-clamp-2 max-w-[240px]">
+                          {rpp.indicator || "-"}
+                        </p>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <p className="line-clamp-2 max-w-[240px]">
+                          {rpp.subject_material || "-"}
+                        </p>
                       </td>
 
                       <td className="px-6 py-4">
@@ -408,14 +420,34 @@ export default function KepalaSekolahRppPage() {
                       </td>
 
                       <td className="px-6 py-4">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedRpp(rpp)}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                        >
-                          <Eye className="h-4 w-4" />
-                          Detail
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRpp(rpp)}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                          >
+                            <Eye className="h-4 w-4" />
+                            Detail
+                          </button>
+
+                          {rpp.document_url ? (
+                            <a
+                              href={rpp.document_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#8C0F2D] px-3 text-[13px] font-extrabold text-white transition hover:bg-[#54131D]"
+                            >
+                              <FileText className="h-4 w-4" />
+                              {isPdfUrl(rpp.document_url)
+                                ? "Preview PDF"
+                                : "Buka Dokumen"}
+                            </a>
+                          ) : (
+                            <span className="inline-flex h-9 items-center rounded-xl border border-[#E8D6C1] px-3 text-[12px] font-bold text-[#9A7B6C]">
+                              Tidak ada file
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -473,31 +505,31 @@ function RppDetailModal({
           </span>
 
           <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
-            {rpp.level} — {rpp.grade}
+            {[rpp.level, rpp.grade].filter(Boolean).join(" — ") || "-"}
+          </span>
+
+          <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+            {rpp.academic_year || "-"}
           </span>
         </div>
 
         <InfoBlock label="Judul RPP" value={getRppTitle(rpp)} />
 
+        <InfoBlock label="Guru" value={rpp.teacher_name || "-"} />
+
         <InfoBlock label="Mapel" value={rpp.subject_name || "-"} />
 
+        <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
+
         <InfoBlock
-          label="Tanggal / Pertemuan"
-          value={`${formatDate(rpp.meeting_date)} • Pertemuan ${
-            rpp.meeting_number || "-"
-          }`}
+          label="Materi Pelajaran"
+          value={rpp.subject_material || "-"}
         />
 
         <InfoBlock
           label="Tujuan Pembelajaran"
           value={rpp.learning_objectives || "-"}
         />
-
-        <InfoBlock label="Kegiatan Pembukaan" value={rpp.opening_activity || "-"} />
-
-        <InfoBlock label="Kegiatan Inti" value={rpp.core_activity || "-"} />
-
-        <InfoBlock label="Kegiatan Penutup" value={rpp.closing_activity || "-"} />
 
         <InfoBlock label="Assessment" value={rpp.assessment || "-"} />
 
@@ -508,17 +540,46 @@ function RppDetailModal({
         <InfoBlock label="Catatan Guru" value={rpp.notes || "-"} />
 
         {rpp.document_url ? (
-          <a
-            href={rpp.document_url}
-            target="_blank"
-            className="block rounded-xl bg-[#8C0F2D] px-4 py-3 text-center text-[14px] font-extrabold text-white"
-          >
-            Buka Dokumen RPP
-          </a>
+          <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+            <p className="text-[13px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+              Preview Dokumen RPP
+            </p>
+
+            <div className="mt-4 overflow-hidden rounded-xl border border-[#E1CFBE] bg-[#F8F2EA]">
+              {isPdfUrl(rpp.document_url) ? (
+                <iframe
+                  src={rpp.document_url}
+                  title="Preview PDF RPP"
+                  className="h-[520px] w-full"
+                />
+              ) : (
+                <div className="px-5 py-8 text-center">
+                  <FileText className="mx-auto h-10 w-10 text-[#8C0F2D]" />
+                  <p className="mt-3 text-[14px] text-[#6F5549]">
+                    Preview langsung hanya tersedia untuk file PDF. Untuk DOC
+                    atau DOCX, buka dokumen melalui tombol di bawah.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <a
+              href={rpp.document_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 block rounded-xl bg-[#8C0F2D] px-4 py-3 text-center text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+            >
+              {isPdfUrl(rpp.document_url) ? "Buka PDF" : "Buka Dokumen"}
+            </a>
+          </div>
         ) : null}
 
         {rpp.rejection_note ? (
           <InfoBlock label="Catatan Revisi" value={rpp.rejection_note} />
+        ) : null}
+
+        {rpp.approved_at ? (
+          <InfoBlock label="Approved At" value={formatDateTime(rpp.approved_at)} />
         ) : null}
 
         {rpp.status === "submitted" ? (
@@ -574,7 +635,7 @@ function RejectModal({
             value={note}
             onChange={(event) => onChange(event.target.value)}
             rows={5}
-            placeholder="Contoh: Mohon lengkapi kegiatan penutup dan assessment..."
+            placeholder="Contoh: Mohon lengkapi indikator, materi pelajaran, atau dokumen pendukung."
             className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
           />
         </label>

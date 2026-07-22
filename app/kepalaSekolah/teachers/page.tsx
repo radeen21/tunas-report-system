@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
@@ -31,9 +31,67 @@ type Student = {
   teachers: StudentTeacher | null;
 };
 
+type KbmReportQueryResult = {
+  id: string;
+  teacher_id: string | null;
+  student_id: string | null;
+  subject_id: string | null;
+  report_date: string | null;
+  class_level: string | null;
+  semester: string | null;
+  chapter: string | null;
+  material_topic: string | null;
+  learning_issue: string | null;
+  solution: string | null;
+  teacher_note: string | null;
+  status: string | null;
+  students:
+    | {
+        id: string;
+        full_name: string;
+        level: string | null;
+        grade: string | null;
+        nis: string | null;
+      }
+    | {
+        id: string;
+        full_name: string;
+        level: string | null;
+        grade: string | null;
+        nis: string | null;
+      }[]
+    | null;
+  subjects:
+    | {
+        id: string;
+        name: string;
+      }
+    | {
+        id: string;
+        name: string;
+      }[]
+    | null;
+};
+
 type KbmReport = {
   id: string;
   teacher_id: string | null;
+  student_id: string | null;
+  subject_id: string | null;
+  report_date: string | null;
+  class_level: string | null;
+  semester: string | null;
+  chapter: string | null;
+  material_topic: string | null;
+  learning_issue: string | null;
+  solution: string | null;
+  teacher_note: string | null;
+  status: string | null;
+  student_name: string;
+  student_level: string;
+  student_grade: string;
+  student_nis: string;
+  subject_name: string;
 };
 
 type TeacherForm = {
@@ -70,6 +128,50 @@ function normalizeSubjects(subjects: string[] | null) {
   return subjects;
 }
 
+function normalizeRelation<T>(value: T | T[] | null): T | null {
+  if (Array.isArray(value)) return value[0] || null;
+  return value || null;
+}
+
+function formatDate(date: string | null) {
+  if (!date) return "-";
+
+  const parsedDate = new Date(date);
+
+  return parsedDate.toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getStatusLabel(status: string | null) {
+  if (status === "published") return "Published";
+  if (status === "approved") return "Approved";
+  if (status === "pending_review") return "Pending Review";
+  if (status === "revision") return "Revision";
+  return "Draft";
+}
+
+function getStatusBadge(status: string | null) {
+  if (status === "published") return "bg-emerald-100 text-emerald-700";
+  if (status === "approved") return "bg-blue-100 text-blue-700";
+  if (status === "pending_review") return "bg-yellow-100 text-yellow-700";
+  if (status === "revision") return "bg-red-100 text-red-700";
+
+  return "bg-slate-200 text-slate-700";
+}
+
+function getTeacherStatusBadge(status: string | null) {
+  if (status === "inactive") return "bg-red-100 text-red-700";
+  return "bg-emerald-100 text-emerald-700";
+}
+
+function getTeacherStatusLabel(status: string | null) {
+  if (status === "inactive") return "Inactive";
+  return "Active";
+}
+
 export default function KepalaSekolahTeachersPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -77,11 +179,19 @@ export default function KepalaSekolahTeachersPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
   const [search, setSearch] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [form, setForm] = useState<TeacherForm>(initialForm);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const [viewReportsTeacher, setViewReportsTeacher] = useState<Teacher | null>(
+    null
+  );
+  const [assignTeacher, setAssignTeacher] = useState<Teacher | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
 
   async function fetchTeachers() {
     const { data, error } = await supabase
@@ -145,14 +255,70 @@ export default function KepalaSekolahTeachersPage() {
   async function fetchKbmReports() {
     const { data, error } = await supabase
       .from("kbm_reports")
-      .select("id, teacher_id");
+      .select(
+        `
+        id,
+        teacher_id,
+        student_id,
+        subject_id,
+        report_date,
+        class_level,
+        semester,
+        chapter,
+        material_topic,
+        learning_issue,
+        solution,
+        teacher_note,
+        status,
+        students (
+          id,
+          full_name,
+          level,
+          grade,
+          nis
+        ),
+        subjects (
+          id,
+          name
+        )
+      `
+      )
+      .order("report_date", { ascending: false });
 
     if (error) {
       console.error(error.message);
       return;
     }
 
-    setKbmReports(data || []);
+    const rows = (data || []) as KbmReportQueryResult[];
+
+    const normalizedReports: KbmReport[] = rows.map((item) => {
+      const student = normalizeRelation(item.students);
+      const subject = normalizeRelation(item.subjects);
+
+      return {
+        id: item.id,
+        teacher_id: item.teacher_id,
+        student_id: item.student_id,
+        subject_id: item.subject_id,
+        report_date: item.report_date,
+        class_level: item.class_level,
+        semester: item.semester,
+        chapter: item.chapter,
+        material_topic: item.material_topic,
+        learning_issue: item.learning_issue,
+        solution: item.solution,
+        teacher_note: item.teacher_note,
+        status: item.status,
+        student_name: student?.full_name || "-",
+        student_level: student?.level || "-",
+        student_grade: student?.grade || "-",
+        student_nis: student?.nis || "-",
+        subject_name: subject?.name || "-",
+      };
+    });
+
+    setKbmReports(normalizedReports);
   }
 
   async function fetchAllData() {
@@ -166,6 +332,29 @@ export default function KepalaSekolahTeachersPage() {
 
   useEffect(() => {
     fetchAllData();
+
+    const channel = supabase
+      .channel("kepala-teachers-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "kbm_reports" },
+        () => fetchAllData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredTeachers = useMemo(() => {
@@ -196,6 +385,107 @@ export default function KepalaSekolahTeachersPage() {
       .length;
   }
 
+  function getReportsByTeacher(teacherId: string) {
+    return kbmReports.filter((report) => report.teacher_id === teacherId);
+  }
+
+  function openCreateTeacherModal() {
+    setEditingTeacher(null);
+    setForm(initialForm);
+    setErrorMessage("");
+    setIsModalOpen(true);
+  }
+
+  function openEditTeacherModal(teacher: Teacher) {
+    setEditingTeacher(teacher);
+    setForm({
+      full_name: teacher.full_name || "",
+      email: teacher.email || "",
+      phone: teacher.phone || "",
+      teacher_code: teacher.teacher_code || "",
+      subjects: normalizeSubjects(teacher.subjects).join(", "),
+      status: teacher.status || "active",
+    });
+    setErrorMessage("");
+    setIsModalOpen(true);
+  }
+
+  function openAssignModal(teacher: Teacher) {
+    const assignedStudentIds = students
+      .filter((student) => student.homeroom_teacher_id === teacher.id)
+      .map((student) => student.id);
+
+    setAssignTeacher(teacher);
+    setSelectedStudentIds(assignedStudentIds);
+  }
+
+  function toggleStudentSelection(studentId: string) {
+    setSelectedStudentIds((prev) =>
+      prev.includes(studentId)
+        ? prev.filter((id) => id !== studentId)
+        : [...prev, studentId]
+    );
+  }
+
+  async function handleSaveAssign() {
+    if (!assignTeacher) return;
+
+    setAssigning(true);
+
+    try {
+      const currentlyAssignedStudentIds = students
+        .filter((student) => student.homeroom_teacher_id === assignTeacher.id)
+        .map((student) => student.id);
+
+      const toAssign = selectedStudentIds.filter(
+        (studentId) => !currentlyAssignedStudentIds.includes(studentId)
+      );
+
+      const toUnassign = currentlyAssignedStudentIds.filter(
+        (studentId) => !selectedStudentIds.includes(studentId)
+      );
+
+      if (toAssign.length > 0) {
+        const { error } = await supabase
+          .from("students")
+          .update({
+            homeroom_teacher_id: assignTeacher.id,
+          })
+          .in("id", toAssign);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+      }
+
+      if (toUnassign.length > 0) {
+        const { error } = await supabase
+          .from("students")
+          .update({
+            homeroom_teacher_id: null,
+          })
+          .in("id", toUnassign);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+      }
+
+      await fetchAllData();
+
+      setAssignTeacher(null);
+      setSelectedStudentIds([]);
+    } catch (error) {
+      if (error instanceof Error) {
+        alert(`Gagal assign murid: ${error.message}`);
+      } else {
+        alert("Gagal assign murid.");
+      }
+    } finally {
+      setAssigning(false);
+    }
+  }
+
   async function findOrCreateTeacherUser() {
     const email = form.email.trim().toLowerCase();
 
@@ -220,7 +510,7 @@ export default function KepalaSekolahTeachersPage() {
         email,
         role: "guru",
         phone: form.phone.trim() || null,
-        is_active: true,
+        is_active: form.status === "active",
       })
       .select("id")
       .single();
@@ -230,6 +520,24 @@ export default function KepalaSekolahTeachersPage() {
     }
 
     return newUser.id;
+  }
+
+  async function updateTeacherUserProfile(teacher: Teacher) {
+    if (!teacher.user_id) return;
+
+    const { error } = await supabase
+      .from("users_profile")
+      .update({
+        full_name: form.full_name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim() || null,
+        is_active: form.status === "active",
+      })
+      .eq("id", teacher.user_id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
   }
 
   async function handleSubmitTeacher(event: React.FormEvent<HTMLFormElement>) {
@@ -259,28 +567,49 @@ export default function KepalaSekolahTeachersPage() {
     setSaving(true);
 
     try {
-      const userId = await findOrCreateTeacherUser();
-
       const subjectList = form.subjects
         .split(",")
         .map((subject) => subject.trim())
         .filter(Boolean);
 
-      const { error } = await supabase.from("teachers").insert({
-        user_id: userId,
-        teacher_code: form.teacher_code.trim(),
-        full_name: form.full_name.trim(),
-        email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim() || null,
-        subjects: subjectList,
-        status: form.status,
-      });
+      if (editingTeacher) {
+        await updateTeacherUserProfile(editingTeacher);
 
-      if (error) {
-        throw new Error(error.message);
+        const { error } = await supabase
+          .from("teachers")
+          .update({
+            teacher_code: form.teacher_code.trim(),
+            full_name: form.full_name.trim(),
+            email: form.email.trim().toLowerCase(),
+            phone: form.phone.trim() || null,
+            subjects: subjectList,
+            status: form.status,
+          })
+          .eq("id", editingTeacher.id);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+      } else {
+        const userId = await findOrCreateTeacherUser();
+
+        const { error } = await supabase.from("teachers").insert({
+          user_id: userId,
+          teacher_code: form.teacher_code.trim(),
+          full_name: form.full_name.trim(),
+          email: form.email.trim().toLowerCase(),
+          phone: form.phone.trim() || null,
+          subjects: subjectList,
+          status: form.status,
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
       }
 
       setForm(initialForm);
+      setEditingTeacher(null);
       setIsModalOpen(false);
       await fetchAllData();
     } catch (error) {
@@ -297,6 +626,7 @@ export default function KepalaSekolahTeachersPage() {
   function closeModal() {
     setIsModalOpen(false);
     setErrorMessage("");
+    setEditingTeacher(null);
     setForm(initialForm);
   }
 
@@ -318,10 +648,7 @@ export default function KepalaSekolahTeachersPage() {
 
         <button
           type="button"
-          onClick={() => {
-            setErrorMessage("");
-            setIsModalOpen(true);
-          }}
+          onClick={openCreateTeacherModal}
           className="rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
         >
           + Add Teacher
@@ -386,8 +713,12 @@ export default function KepalaSekolahTeachersPage() {
                       </p>
                     </div>
 
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                      Active
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-bold ${getTeacherStatusBadge(
+                        teacher.status
+                      )}`}
+                    >
+                      {getTeacherStatusLabel(teacher.status)}
                     </span>
                   </div>
 
@@ -423,6 +754,7 @@ export default function KepalaSekolahTeachersPage() {
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     <button
                       type="button"
+                      onClick={() => setViewReportsTeacher(teacher)}
                       className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-2 text-sm font-bold transition hover:bg-white"
                     >
                       View Reports
@@ -430,11 +762,20 @@ export default function KepalaSekolahTeachersPage() {
 
                     <button
                       type="button"
+                      onClick={() => openAssignModal(teacher)}
                       className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-2 text-sm font-bold transition hover:bg-white"
                     >
                       Assign
                     </button>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => openEditTeacherModal(teacher)}
+                    className="mt-3 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-2 text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF]"
+                  >
+                    Edit Profile Guru
+                  </button>
                 </div>
               </div>
             );
@@ -505,7 +846,9 @@ export default function KepalaSekolahTeachersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
           <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Tambah Guru Baru</h2>
+              <h2 className="text-xl font-bold">
+                {editingTeacher ? "Edit Profile Guru" : "Tambah Guru Baru"}
+              </h2>
 
               <button
                 type="button"
@@ -591,13 +934,14 @@ export default function KepalaSekolahTeachersPage() {
 
                 <div>
                   <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <input
+                  <textarea
                     value={form.subjects}
                     onChange={(event) =>
                       setForm({ ...form, subjects: event.target.value })
                     }
-                    placeholder="Contoh: Math, Science"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    placeholder="Contoh: MTK kelas 1, 2, 3, Bahasa Indonesia kelas 1, 2, 3"
+                    rows={4}
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                   <p className="mt-1 text-xs text-[#6B4A3A]">
                     Pisahkan dengan koma, contoh: Math, Science, Reading
@@ -610,7 +954,11 @@ export default function KepalaSekolahTeachersPage() {
                     disabled={saving}
                     className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {saving ? "Menyimpan..." : "Simpan Guru"}
+                    {saving
+                      ? "Menyimpan..."
+                      : editingTeacher
+                      ? "Update Guru"
+                      : "Simpan Guru"}
                   </button>
                 </div>
               </form>
@@ -618,6 +966,278 @@ export default function KepalaSekolahTeachersPage() {
           </div>
         </div>
       )}
+
+      {viewReportsTeacher ? (
+        <ViewReportsModal
+          teacher={viewReportsTeacher}
+          reports={getReportsByTeacher(viewReportsTeacher.id)}
+          onClose={() => setViewReportsTeacher(null)}
+        />
+      ) : null}
+
+      {assignTeacher ? (
+        <AssignModal
+          teacher={assignTeacher}
+          students={students}
+          selectedStudentIds={selectedStudentIds}
+          assigning={assigning}
+          onToggleStudent={toggleStudentSelection}
+          onClose={() => {
+            setAssignTeacher(null);
+            setSelectedStudentIds([]);
+          }}
+          onSave={handleSaveAssign}
+        />
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function ViewReportsModal({
+  teacher,
+  reports,
+  onClose,
+}: {
+  teacher: Teacher;
+  reports: KbmReport[];
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Laporan KBM Guru"
+      subtitle={`${teacher.full_name} • ${reports.length} laporan`}
+      onClose={onClose}
+      maxWidth="max-w-[900px]"
+    >
+      {reports.length === 0 ? (
+        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm text-[#6B4A3A]">
+          Belum ada laporan KBM untuk guru ini.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {reports.map((report) => (
+            <div
+              key={report.id}
+              className="rounded-2xl border border-[#E8D6C1] bg-white p-5"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-[#2B1B18]">
+                    {report.student_name}
+                  </h3>
+
+                  <p className="mt-1 text-sm text-[#6B4A3A]">
+                    {report.student_level} {report.student_grade} •{" "}
+                    {report.subject_name} • {formatDate(report.report_date)}
+                  </p>
+                </div>
+
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
+                    report.status
+                  )}`}
+                >
+                  {getStatusLabel(report.status)}
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <ReportInfo label="Semester" value={report.semester || "-"} />
+                <ReportInfo label="BAB" value={report.chapter || "-"} />
+                <ReportInfo
+                  label="Materi"
+                  value={report.material_topic || "-"}
+                />
+                <ReportInfo label="NIS" value={report.student_nis || "-"} />
+              </div>
+
+              <div className="mt-4 space-y-3 text-sm">
+                <div>
+                  <p className="font-bold text-[#2B1B18]">Masalah / Kendala</p>
+                  <p className="mt-1 whitespace-pre-line leading-6 text-[#6B4A3A]">
+                    {report.learning_issue || "-"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="font-bold text-[#2B1B18]">Solusi</p>
+                  <p className="mt-1 whitespace-pre-line leading-6 text-[#6B4A3A]">
+                    {report.solution || "-"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="font-bold text-[#2B1B18]">Catatan Guru</p>
+                  <p className="mt-1 whitespace-pre-line leading-6 text-[#6B4A3A]">
+                    {report.teacher_note || "-"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+function AssignModal({
+  teacher,
+  students,
+  selectedStudentIds,
+  assigning,
+  onToggleStudent,
+  onClose,
+  onSave,
+}: {
+  teacher: Teacher;
+  students: Student[];
+  selectedStudentIds: string[];
+  assigning: boolean;
+  onToggleStudent: (studentId: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Assign Murid ke Guru"
+      subtitle={`${teacher.full_name} • pilih murid yang menjadi dampingan`}
+      onClose={onClose}
+      maxWidth="max-w-[780px]"
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-4 text-sm text-[#6B4A3A]">
+          Centang murid yang ingin di-assign ke guru ini. Jika centang dilepas,
+          murid akan dilepaskan dari guru pendamping ini.
+        </div>
+
+        <div className="max-h-[460px] overflow-y-auto rounded-2xl border border-[#E8D6C1] bg-white">
+          {students.length === 0 ? (
+            <div className="p-8 text-center text-sm text-[#6B4A3A]">
+              Belum ada data murid.
+            </div>
+          ) : (
+            <div className="divide-y divide-[#E8D6C1]">
+              {students.map((student) => {
+                const checked = selectedStudentIds.includes(student.id);
+                const assignedToOtherTeacher =
+                  student.homeroom_teacher_id &&
+                  student.homeroom_teacher_id !== teacher.id;
+
+                return (
+                  <label
+                    key={student.id}
+                    className="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 transition hover:bg-[#FFF8EF]"
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => onToggleStudent(student.id)}
+                        className="h-4 w-4 accent-[#7A1F2B]"
+                      />
+
+                      <div>
+                        <p className="font-bold text-[#2B1B18]">
+                          {student.full_name}
+                        </p>
+                        <p className="mt-1 text-xs text-[#6B4A3A]">
+                          {student.level || "-"}
+                          {student.grade ? ` — ${student.grade}` : ""} • NIS:{" "}
+                          {student.nis || "-"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      {assignedToOtherTeacher ? (
+                        <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-bold text-yellow-700">
+                          Assigned: {student.teachers?.full_name || "-"}
+                        </span>
+                      ) : checked ? (
+                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                          Dipilih
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                          Belum dipilih
+                        </span>
+                      )}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF]"
+          >
+            Batal
+          </button>
+
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={assigning}
+            className="h-11 rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {assigning ? "Menyimpan..." : "Simpan Assign"}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ModalShell({
+  title,
+  subtitle,
+  children,
+  onClose,
+  maxWidth = "max-w-[720px]",
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  onClose: () => void;
+  maxWidth?: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      <div
+        className={`flex max-h-[88vh] w-full ${maxWidth} flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl`}
+      >
+        <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div>
+            <h2 className="text-xl font-bold text-[#2B1B18]">{title}</h2>
+            <p className="mt-1 text-sm text-[#6B4A3A]">{subtitle}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ReportInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-[#FFF8EF] p-3 text-sm">
+      <p className="text-[#6B4A3A]">{label}</p>
+      <p className="mt-1 font-bold text-[#2B1B18]">{value}</p>
+    </div>
   );
 }

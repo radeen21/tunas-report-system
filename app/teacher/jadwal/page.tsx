@@ -29,6 +29,33 @@ type SubjectRelation = {
   grade: string | null;
 };
 
+type CurriculumProgramRow = {
+  id: string;
+  teacher_id: string | null;
+  subject_name: string | null;
+  level: string | null;
+  grade: string | null;
+  semester: string | null;
+  academic_year: string | null;
+  status: string | null;
+};
+
+type CurriculumChapterRow = {
+  id: string;
+  curriculum_program_id: string | null;
+  chapter_title: string | null;
+  chapter_order: number | null;
+};
+
+type CurriculumSubChapterRow = {
+  id: string;
+  curriculum_chapter_id: string | null;
+  sub_chapter_title: string | null;
+  sub_chapter_order: number | null;
+  target_month: string | null;
+  planned_week: number | null;
+};
+
 type ScheduleRow = {
   id: string;
   student_id: string | null;
@@ -42,6 +69,9 @@ type ScheduleRow = {
   material_topic: string | null;
   academic_year: string | null;
   semester: string | null;
+  curriculum_program_id?: string | null;
+  curriculum_chapter_id?: string | null;
+  curriculum_sub_chapter_id?: string | null;
   created_at: string | null;
   students: StudentRelation | StudentRelation[] | null;
   subjects: SubjectRelation | SubjectRelation[] | null;
@@ -60,6 +90,12 @@ type Schedule = {
   material_topic: string | null;
   academic_year: string | null;
   semester: string | null;
+  curriculum_program_id: string | null;
+  curriculum_chapter_id: string | null;
+  curriculum_sub_chapter_id: string | null;
+  curriculum_program_title: string;
+  curriculum_chapter_title: string;
+  curriculum_sub_chapter_title: string;
   created_at: string | null;
   students: StudentRelation | null;
   subjects: SubjectRelation | null;
@@ -79,6 +115,10 @@ type KbmForm = {
   teacher_note: string;
   status: string;
 };
+
+const ACADEMIC_YEAR = "2026/2027";
+const ACADEMIC_YEAR_START = "2026-07-01";
+const ACADEMIC_YEAR_END = "2027-06-30";
 
 const initialKbmForm: KbmForm = {
   schedule_id: "",
@@ -100,6 +140,10 @@ function normalizeRelation<T>(value: T | T[] | null): T | null {
   return value || null;
 }
 
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
+}
+
 function formatDate(date: string | null) {
   if (!date) return "-";
 
@@ -114,7 +158,6 @@ function formatDate(date: string | null) {
 
 function formatTime(time: string | null) {
   if (!time) return "-";
-
   return time.slice(0, 5);
 }
 
@@ -137,6 +180,32 @@ function getSessionBadge(session: string | null) {
   return "bg-slate-200 text-slate-700";
 }
 
+function getProgramTitle(program?: CurriculumProgramRow | null) {
+  if (!program) return "-";
+
+  return [
+    program.subject_name || "-",
+    program.level || "-",
+    program.grade || "-",
+    `Semester ${program.semester || "-"}`,
+  ].join(" • ");
+}
+
+function getChapterDisplay(
+  chapterTitle?: string | null,
+  subChapterTitle?: string | null
+) {
+  const chapter = chapterTitle && chapterTitle !== "-" ? chapterTitle : "";
+  const subChapter =
+    subChapterTitle && subChapterTitle !== "-" ? subChapterTitle : "";
+
+  if (chapter && subChapter) return `${chapter} - ${subChapter}`;
+  if (chapter) return chapter;
+  if (subChapter) return subChapter;
+
+  return "-";
+}
+
 export default function TeacherJadwalPage() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -153,86 +222,160 @@ export default function TeacherJadwalPage() {
   const [reportForm, setReportForm] = useState<KbmForm>(initialKbmForm);
 
   async function fetchActiveTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
+
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
     const { data, error } = await supabase
       .from("teachers")
       .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .order("teacher_code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
 
-    const teacherList = data || [];
+    setTeacher((data as Teacher) || null);
 
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return (data as Teacher) || null;
   }
 
   async function fetchSchedules(teacherId: string) {
-    const { data, error } = await supabase
-      .from("schedules")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        day_name,
-        schedule_date,
-        start_time,
-        end_time,
-        session_name,
-        material_topic,
-        academic_year,
-        semester,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("schedule_date", { ascending: true })
-      .order("start_time", { ascending: true });
+    const [schedulesRes, programsRes, chaptersRes, subChaptersRes] =
+      await Promise.all([
+        supabase
+          .from("schedules")
+          .select(
+            `
+            id,
+            student_id,
+            teacher_id,
+            subject_id,
+            day_name,
+            schedule_date,
+            start_time,
+            end_time,
+            session_name,
+            material_topic,
+            academic_year,
+            semester,
+            curriculum_program_id,
+            curriculum_chapter_id,
+            curriculum_sub_chapter_id,
+            created_at,
+            students (
+              id,
+              full_name,
+              grade,
+              level,
+              nis,
+              nisn
+            ),
+            subjects (
+              id,
+              name,
+              level,
+              grade
+            )
+          `
+          )
+          .eq("teacher_id", teacherId)
+          .gte("schedule_date", ACADEMIC_YEAR_START)
+          .lte("schedule_date", ACADEMIC_YEAR_END)
+          .order("schedule_date", { ascending: true })
+          .order("start_time", { ascending: true }),
 
-    if (error) throw new Error(error.message);
+        supabase.from("curriculum_programs").select("*"),
+        supabase.from("curriculum_chapters").select("*"),
+        supabase.from("curriculum_sub_chapters").select("*"),
+      ]);
 
-    const rows = (data || []) as ScheduleRow[];
+    if (schedulesRes.error) throw new Error(schedulesRes.error.message);
+    if (programsRes.error) throw new Error(programsRes.error.message);
+    if (chaptersRes.error) throw new Error(chaptersRes.error.message);
+    if (subChaptersRes.error) throw new Error(subChaptersRes.error.message);
 
-    const normalizedSchedules: Schedule[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      day_name: item.day_name,
-      schedule_date: item.schedule_date,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      session_name: item.session_name,
-      material_topic: item.material_topic,
-      academic_year: item.academic_year,
-      semester: item.semester,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
+    const rows = (schedulesRes.data || []) as ScheduleRow[];
+    const programs = (programsRes.data || []) as CurriculumProgramRow[];
+    const chapters = (chaptersRes.data || []) as CurriculumChapterRow[];
+    const subChapters = (subChaptersRes.data || []) as CurriculumSubChapterRow[];
+
+    const programMap = new Map(programs.map((program) => [program.id, program]));
+    const chapterMap = new Map(chapters.map((chapter) => [chapter.id, chapter]));
+    const subChapterMap = new Map(
+      subChapters.map((subChapter) => [subChapter.id, subChapter])
+    );
+
+    const normalizedSchedules: Schedule[] = rows
+      .filter((item) => {
+        if (!item.schedule_date) return false;
+
+        const isAcademicYearDate =
+          item.schedule_date >= ACADEMIC_YEAR_START &&
+          item.schedule_date <= ACADEMIC_YEAR_END;
+
+        const isAcademicYearMatch =
+          !item.academic_year || item.academic_year === ACADEMIC_YEAR;
+
+        return isAcademicYearDate && isAcademicYearMatch;
+      })
+      .map((item) => {
+        const program = item.curriculum_program_id
+          ? programMap.get(item.curriculum_program_id)
+          : null;
+
+        const chapter = item.curriculum_chapter_id
+          ? chapterMap.get(item.curriculum_chapter_id)
+          : null;
+
+        const subChapter = item.curriculum_sub_chapter_id
+          ? subChapterMap.get(item.curriculum_sub_chapter_id)
+          : null;
+
+        return {
+          id: item.id,
+          student_id: item.student_id,
+          teacher_id: item.teacher_id,
+          subject_id: item.subject_id,
+          day_name: item.day_name,
+          schedule_date: item.schedule_date,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          session_name: item.session_name,
+          material_topic: item.material_topic,
+          academic_year: item.academic_year,
+          semester: item.semester,
+          curriculum_program_id: item.curriculum_program_id || null,
+          curriculum_chapter_id: item.curriculum_chapter_id || null,
+          curriculum_sub_chapter_id: item.curriculum_sub_chapter_id || null,
+          curriculum_program_title: program ? getProgramTitle(program) : "-",
+          curriculum_chapter_title: chapter?.chapter_title || "-",
+          curriculum_sub_chapter_title: subChapter?.sub_chapter_title || "-",
+          created_at: item.created_at,
+          students: normalizeRelation(item.students),
+          subjects: normalizeRelation(item.subjects),
+        };
+      });
 
     setSchedules(normalizedSchedules);
   }
@@ -275,16 +418,20 @@ export default function TeacherJadwalPage() {
   }, [schedules]);
 
   const filteredSchedules = useMemo(() => {
-    const keyword = search.toLowerCase();
+    const keyword = normalizeText(search);
 
     return schedules.filter((schedule) => {
       const matchSearch =
-        schedule.students?.full_name?.toLowerCase().includes(keyword) ||
-        schedule.students?.grade?.toLowerCase().includes(keyword) ||
-        schedule.subjects?.name?.toLowerCase().includes(keyword) ||
-        schedule.material_topic?.toLowerCase().includes(keyword) ||
-        schedule.session_name?.toLowerCase().includes(keyword) ||
-        schedule.day_name?.toLowerCase().includes(keyword);
+        !keyword ||
+        normalizeText(schedule.students?.full_name).includes(keyword) ||
+        normalizeText(schedule.students?.grade).includes(keyword) ||
+        normalizeText(schedule.subjects?.name).includes(keyword) ||
+        normalizeText(schedule.material_topic).includes(keyword) ||
+        normalizeText(schedule.session_name).includes(keyword) ||
+        normalizeText(schedule.day_name).includes(keyword) ||
+        normalizeText(schedule.curriculum_program_title).includes(keyword) ||
+        normalizeText(schedule.curriculum_chapter_title).includes(keyword) ||
+        normalizeText(schedule.curriculum_sub_chapter_title).includes(keyword);
 
       const matchDay =
         dayFilter === "Semua Hari" || schedule.day_name === dayFilter;
@@ -329,10 +476,32 @@ export default function TeacherJadwalPage() {
     return new Set(subjectIds).size;
   }, [schedules]);
 
+  const totalLinkedCurriculum = useMemo(() => {
+    return schedules.filter((schedule) => schedule.curriculum_sub_chapter_id).length;
+  }, [schedules]);
+
   const totalSessions = schedules.length;
+
+  function getReportChapterFromSchedule(schedule: Schedule) {
+    const curriculumChapter = getChapterDisplay(
+      schedule.curriculum_chapter_title,
+      schedule.curriculum_sub_chapter_title
+    );
+
+    if (curriculumChapter !== "-") return curriculumChapter;
+
+    return schedule.session_name || "";
+  }
 
   function openReportModal(schedule?: Schedule) {
     setErrorMessage("");
+
+    if (!schedule && schedules.length === 0) {
+      setErrorMessage(
+        "Belum ada jadwal untuk guru ini. Silakan buat jadwal terlebih dahulu dari menu Kepala Sekolah → Jadwal Guru."
+      );
+      return;
+    }
 
     if (schedule) {
       setReportForm({
@@ -340,11 +509,15 @@ export default function TeacherJadwalPage() {
         schedule_id: schedule.id,
         student_id: schedule.student_id || "",
         subject_id: schedule.subject_id || "",
-        report_date: schedule.schedule_date || new Date().toISOString().slice(0, 10),
+        report_date:
+          schedule.schedule_date || new Date().toISOString().slice(0, 10),
         class_level: schedule.students?.grade || "",
         semester: schedule.semester || "Genap",
-        chapter: schedule.session_name || "",
-        material_topic: schedule.material_topic || "",
+        chapter: getReportChapterFromSchedule(schedule),
+        material_topic:
+          schedule.curriculum_sub_chapter_title !== "-"
+            ? schedule.curriculum_sub_chapter_title
+            : schedule.material_topic || "",
       });
     } else {
       setReportForm({
@@ -395,8 +568,11 @@ export default function TeacherJadwalPage() {
         new Date().toISOString().slice(0, 10),
       class_level: selectedSchedule.students?.grade || "",
       semester: selectedSchedule.semester || reportForm.semester || "Genap",
-      chapter: selectedSchedule.session_name || "",
-      material_topic: selectedSchedule.material_topic || "",
+      chapter: getReportChapterFromSchedule(selectedSchedule),
+      material_topic:
+        selectedSchedule.curriculum_sub_chapter_title !== "-"
+          ? selectedSchedule.curriculum_sub_chapter_title
+          : selectedSchedule.material_topic || "",
     });
   }
 
@@ -494,12 +670,17 @@ export default function TeacherJadwalPage() {
               </span>
               .
             </p>
+
+            <p className="mt-1 text-xs font-semibold text-[#8A5A48]">
+              Academic Year {ACADEMIC_YEAR}
+            </p>
           </div>
 
           <button
             type="button"
             onClick={() => openReportModal()}
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
+            disabled={schedules.length === 0}
+            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Buat Laporan
           </button>
@@ -514,6 +695,22 @@ export default function TeacherJadwalPage() {
         {loading && (
           <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
             Loading jadwal mengajar...
+          </div>
+        )}
+
+        {!loading && schedules.length === 0 && (
+          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
+            <p className="text-[15px] font-bold text-[#2B1B18]">
+              Belum ada jadwal untuk guru ini.
+            </p>
+            <p className="mt-2 text-sm leading-6 text-[#6B4A3A]">
+              Silakan buat jadwal terlebih dahulu dari menu Kepala Sekolah →
+              Jadwal Guru. Pastikan guru yang dipilih adalah{" "}
+              <span className="font-bold text-[#2B1B18]">
+                {teacher?.full_name || "guru aktif"}
+              </span>{" "}
+              dan tanggal masuk ke Academic Year {ACADEMIC_YEAR}.
+            </p>
           </div>
         )}
 
@@ -538,8 +735,12 @@ export default function TeacherJadwalPage() {
               </div>
 
               <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Mata Pelajaran</p>
-                <p className="mt-4 text-3xl font-bold">{totalSubjects}</p>
+                <p className="text-sm text-[#6B4A3A]">
+                  Terhubung Program
+                </p>
+                <p className="mt-4 text-3xl font-bold">
+                  {totalLinkedCurriculum}
+                </p>
               </div>
             </div>
 
@@ -548,7 +749,7 @@ export default function TeacherJadwalPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, kelas, mapel, materi, sesi..."
+                  placeholder="Cari siswa, kelas, mapel, materi, program, bab, sub bab..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -590,7 +791,7 @@ export default function TeacherJadwalPage() {
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1120px] text-left">
+                  <table className="w-full min-w-[1320px] text-left">
                     <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
                       <tr>
                         <th className="px-4 py-4">Hari</th>
@@ -601,6 +802,7 @@ export default function TeacherJadwalPage() {
                         <th className="px-4 py-4">Kelas</th>
                         <th className="px-4 py-4">Mata Pelajaran</th>
                         <th className="px-4 py-4">Materi</th>
+                        <th className="px-4 py-4">Program / Bab</th>
                         <th className="px-4 py-4">Semester</th>
                         <th className="px-4 py-4">Aksi</th>
                       </tr>
@@ -610,10 +812,11 @@ export default function TeacherJadwalPage() {
                       {sortedSchedules.length === 0 && (
                         <tr>
                           <td
-                            colSpan={10}
+                            colSpan={11}
                             className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
                           >
-                            Belum ada jadwal mengajar untuk guru ini.
+                            Belum ada jadwal mengajar untuk guru ini pada
+                            Academic Year {ACADEMIC_YEAR}.
                           </td>
                         </tr>
                       )}
@@ -656,7 +859,36 @@ export default function TeacherJadwalPage() {
                           </td>
 
                           <td className="px-4 py-4">
-                            {schedule.material_topic || "-"}
+                            <p className="font-semibold text-[#2B1B18]">
+                              {schedule.material_topic || "-"}
+                            </p>
+
+                            {schedule.curriculum_sub_chapter_title !== "-" ? (
+                              <p className="mt-1 text-xs text-[#6B4A3A]">
+                                Sub Bab: {schedule.curriculum_sub_chapter_title}
+                              </p>
+                            ) : null}
+                          </td>
+
+                          <td className="px-4 py-4">
+                            {schedule.curriculum_program_id ? (
+                              <div>
+                                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                                  Terhubung
+                                </span>
+
+                                <p className="mt-2 text-xs leading-5 text-[#6B4A3A]">
+                                  {schedule.curriculum_chapter_title}
+                                  {schedule.curriculum_sub_chapter_title !== "-"
+                                    ? ` • ${schedule.curriculum_sub_chapter_title}`
+                                    : ""}
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                                Manual
+                              </span>
+                            )}
                           </td>
 
                           <td className="px-4 py-4">
@@ -743,6 +975,13 @@ export default function TeacherJadwalPage() {
                           {schedule.material_topic || "-"}
                         </p>
 
+                        {schedule.curriculum_sub_chapter_title !== "-" ? (
+                          <p className="mt-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-xs font-semibold text-[#7A1F2B]">
+                            {schedule.curriculum_chapter_title} •{" "}
+                            {schedule.curriculum_sub_chapter_title}
+                          </p>
+                        ) : null}
+
                         <button
                           type="button"
                           onClick={() => openReportModal(schedule)}
@@ -793,16 +1032,16 @@ export default function TeacherJadwalPage() {
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Tombol{" "}
+                    Jadwal yang berstatus{" "}
+                    <span className="font-bold text-emerald-700">
+                      Terhubung
+                    </span>{" "}
+                    berarti sudah tersambung dengan Program Semester, Bab, dan
+                    Sub Bab. Tombol{" "}
                     <span className="font-bold text-[#2B1B18]">
                       + Buat Laporan
                     </span>{" "}
-                    akan membuat laporan KBM dari jadwal yang dipilih dan
-                    menyimpan datanya ke table{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      kbm_reports
-                    </span>
-                    .
+                    akan membawa data materi tersebut ke laporan KBM.
                   </p>
                 </div>
               </div>
@@ -813,8 +1052,8 @@ export default function TeacherJadwalPage() {
 
       {isReportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[460px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
               <h2 className="text-xl font-bold">Buat Laporan KBM</h2>
 
               <button
@@ -826,12 +1065,19 @@ export default function TeacherJadwalPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               {errorMessage && (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
               )}
+
+              {schedules.length === 0 ? (
+                <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-4 text-sm leading-6 text-[#6B4A3A]">
+                  Belum ada jadwal untuk guru ini. Silakan buat jadwal terlebih
+                  dahulu dari menu Kepala Sekolah → Jadwal Guru.
+                </div>
+              ) : null}
 
               <form onSubmit={handleSubmitKbmReport} className="space-y-4">
                 <div>
@@ -841,9 +1087,14 @@ export default function TeacherJadwalPage() {
                     onChange={(event) =>
                       handleReportScheduleChange(event.target.value)
                     }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    disabled={schedules.length === 0}
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B] disabled:cursor-not-allowed disabled:bg-[#FFF8EF] disabled:opacity-70"
                   >
-                    <option value="">Pilih jadwal</option>
+                    <option value="">
+                      {schedules.length === 0
+                        ? "Belum ada jadwal"
+                        : "Pilih jadwal"}
+                    </option>
                     {schedules.map((schedule) => (
                       <option key={schedule.id} value={schedule.id}>
                         {schedule.students?.full_name || "-"} —{" "}
@@ -1031,7 +1282,7 @@ export default function TeacherJadwalPage() {
                 <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
                   <button
                     type="submit"
-                    disabled={savingReport}
+                    disabled={savingReport || schedules.length === 0}
                     className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {savingReport ? "Menyimpan..." : "Simpan Laporan KBM"}

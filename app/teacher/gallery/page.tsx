@@ -81,17 +81,17 @@ type GalleryForm = {
   subject_id: string;
   title: string;
   caption: string;
-  image_url: string;
   activity_date: string;
   status: string;
 };
+
+const GALLERY_BUCKET = "gallery-images";
 
 const initialForm: GalleryForm = {
   student_id: "",
   subject_id: "",
   title: "",
   caption: "",
-  image_url: "",
   activity_date: new Date().toISOString().slice(0, 10),
   status: "published",
 };
@@ -99,6 +99,10 @@ const initialForm: GalleryForm = {
 function normalizeRelation<T>(value: T | T[] | null): T | null {
   if (Array.isArray(value)) return value[0] || null;
   return value || null;
+}
+
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
 function formatDate(date: string | null) {
@@ -151,6 +155,26 @@ function isImageUrl(url: string | null) {
   );
 }
 
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getFileExtension(file: File) {
+  const filename = file.name || "";
+  const extension = filename.split(".").pop();
+
+  return extension ? extension.toLowerCase() : "jpg";
+}
+
+function getSafeFilename(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "")
+    .slice(0, 60);
+}
+
 export default function TeacherGalleryPage() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
@@ -168,27 +192,67 @@ export default function TeacherGalleryPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<GalleryForm>(initialForm);
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
 
   async function fetchActiveTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
+
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
+      "";
+
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
     const { data, error } = await supabase
       .from("teachers")
       .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .order("teacher_code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
 
-    const teacherList = data || [];
+    setTeacher((data as Teacher) || null);
 
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return (data as Teacher) || null;
   }
 
   async function fetchStudents(teacherId: string) {
@@ -302,7 +366,53 @@ export default function TeacherGalleryPage() {
 
   useEffect(() => {
     fetchPageData();
+
+    const channel = supabase
+      .channel("teacher-gallery-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "gallery" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        () => fetchPageData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  const teacherSubjectNames = useMemo(() => {
+    return (teacher?.subjects || [])
+      .map((subject) => normalizeText(subject))
+      .filter(Boolean);
+  }, [teacher]);
+
+  const uploadSubjectOptions = useMemo(() => {
+    if (teacherSubjectNames.length === 0) return subjects;
+
+    const matchedSubjects = subjects.filter((subject) => {
+      const subjectName = normalizeText(subject.name);
+
+      return teacherSubjectNames.some((teacherSubject) => {
+        return (
+          teacherSubject.includes(subjectName) ||
+          subjectName.includes(teacherSubject)
+        );
+      });
+    });
+
+    return matchedSubjects.length > 0 ? matchedSubjects : subjects;
+  }, [subjects, teacherSubjectNames]);
 
   const subjectOptions = useMemo(() => {
     const subjectNames = gallery
@@ -341,8 +451,6 @@ export default function TeacherGalleryPage() {
     (item) => item.status === "published" || !item.status
   ).length;
 
-  const draftCount = gallery.filter((item) => item.status === "draft").length;
-
   const totalStudents = useMemo(() => {
     const studentIds = gallery
       .map((item) => item.student_id)
@@ -363,11 +471,13 @@ export default function TeacherGalleryPage() {
 
   function openModal(student?: Student) {
     setErrorMessage("");
+    setSelectedImageFile(null);
+    setPreviewUrl("");
 
     setForm({
       ...initialForm,
       student_id: student?.id || "",
-      activity_date: new Date().toISOString().slice(0, 10),
+      activity_date: getTodayDate(),
     });
 
     setIsModalOpen(true);
@@ -376,11 +486,68 @@ export default function TeacherGalleryPage() {
   function closeModal() {
     setIsModalOpen(false);
     setErrorMessage("");
+    setSelectedImageFile(null);
+    setPreviewUrl("");
 
     setForm({
       ...initialForm,
-      activity_date: new Date().toISOString().slice(0, 10),
+      activity_date: getTodayDate(),
     });
+  }
+
+  function handleImageFileChange(file: File | null) {
+    setErrorMessage("");
+
+    if (!file) {
+      setSelectedImageFile(null);
+      setPreviewUrl("");
+      return;
+    }
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+
+    if (!allowedTypes.includes(file.type)) {
+      setErrorMessage("File harus berupa gambar JPG, PNG, atau WEBP.");
+      setSelectedImageFile(null);
+      setPreviewUrl("");
+      return;
+    }
+
+    const maxSize = 5 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      setErrorMessage("Ukuran gambar maksimal 5MB.");
+      setSelectedImageFile(null);
+      setPreviewUrl("");
+      return;
+    }
+
+    setSelectedImageFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+  }
+
+  async function uploadGalleryImage(file: File, teacherId: string) {
+    const extension = getFileExtension(file);
+    const safeTitle = getSafeFilename(form.title || "gallery-activity");
+    const filePath = `${teacherId}/${Date.now()}-${safeTitle}.${extension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(GALLERY_BUCKET)
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type,
+      });
+
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    const { data } = supabase.storage
+      .from(GALLERY_BUCKET)
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
   }
 
   async function handleSubmitGallery(event: React.FormEvent<HTMLFormElement>) {
@@ -407,8 +574,8 @@ export default function TeacherGalleryPage() {
       return;
     }
 
-    if (!form.image_url.trim()) {
-      setErrorMessage("Image URL wajib diisi.");
+    if (!selectedImageFile) {
+      setErrorMessage("File gambar wajib diupload.");
       return;
     }
 
@@ -420,13 +587,15 @@ export default function TeacherGalleryPage() {
     setSaving(true);
 
     try {
+      const imageUrl = await uploadGalleryImage(selectedImageFile, teacher.id);
+
       const { error } = await supabase.from("gallery").insert({
         student_id: form.student_id,
         teacher_id: teacher.id,
         subject_id: form.subject_id,
         title: form.title.trim(),
         caption: form.caption.trim() || null,
-        image_url: form.image_url.trim(),
+        image_url: imageUrl,
         activity_date: form.activity_date,
         status: form.status,
       });
@@ -437,8 +606,10 @@ export default function TeacherGalleryPage() {
 
       setForm({
         ...initialForm,
-        activity_date: new Date().toISOString().slice(0, 10),
+        activity_date: getTodayDate(),
       });
+      setSelectedImageFile(null);
+      setPreviewUrl("");
       setIsModalOpen(false);
       await fetchGallery(teacher.id);
     } catch (error) {
@@ -455,6 +626,12 @@ export default function TeacherGalleryPage() {
   return (
     <TeacherLayout
       activeMenu="Gallery Upload"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={
+        teacher?.subjects?.length
+          ? `Guru — ${teacher.subjects.slice(0, 4).join(", ")}`
+          : "Guru"
+      }
       searchPlaceholder="Cari gallery activity..."
       buttonLabel="+ Upload Activity"
     >
@@ -753,15 +930,12 @@ export default function TeacherGalleryPage() {
                     <span className="font-bold text-[#2B1B18]">
                       + Upload Activity
                     </span>{" "}
-                    akan menyimpan data baru ke table{" "}
+                    akan upload gambar ke Supabase Storage bucket{" "}
+                    <span className="font-bold text-[#2B1B18]">
+                      gallery-images
+                    </span>{" "}
+                    lalu menyimpan datanya ke table{" "}
                     <span className="font-bold text-[#2B1B18]">gallery</span>.
-                  </p>
-
-                  <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Untuk MVP, gambar masih memakai{" "}
-                    <span className="font-bold text-[#2B1B18]">Image URL</span>
-                    . Nanti bisa kita upgrade ke upload file langsung ke
-                    Supabase Storage.
                   </p>
                 </div>
               </div>
@@ -772,8 +946,8 @@ export default function TeacherGalleryPage() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[470px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
               <h2 className="text-xl font-bold">Upload Gallery Activity</h2>
 
               <button
@@ -785,14 +959,14 @@ export default function TeacherGalleryPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               {errorMessage && (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
               )}
 
-              <form onSubmit={handleSubmitGallery} className="space-y-4">
+              <form onSubmit={handleSubmitGallery} className="space-y-4 pb-24">
                 <div>
                   <label className="text-sm font-bold">Murid</label>
                   <select
@@ -821,9 +995,10 @@ export default function TeacherGalleryPage() {
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
                     <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
+                    {uploadSubjectOptions.map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {subject.name}
+                        {subject.grade ? ` — ${subject.grade}` : ""}
                       </option>
                     ))}
                   </select>
@@ -855,26 +1030,26 @@ export default function TeacherGalleryPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-bold">Image URL</label>
+                  <label className="text-sm font-bold">Upload File Gambar</label>
+
                   <input
-                    value={form.image_url}
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp"
                     onChange={(event) =>
-                      setForm({ ...form, image_url: event.target.value })
+                      handleImageFileChange(event.target.files?.[0] || null)
                     }
-                    placeholder="https://..."
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-[#7A1F2B] file:px-4 file:py-2 file:text-sm file:font-bold file:text-white focus:border-[#7A1F2B]"
                   />
 
                   <p className="mt-2 text-xs text-[#6B4A3A]">
-                    Untuk sementara pakai link gambar. Nanti bisa kita upgrade
-                    ke upload file.
+                    Format JPG, PNG, atau WEBP. Maksimal 5MB.
                   </p>
                 </div>
 
-                {form.image_url && isImageUrl(form.image_url) && (
+                {previewUrl && (
                   <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white">
                     <img
-                      src={form.image_url}
+                      src={previewUrl}
                       alt="Preview"
                       className="h-44 w-full object-cover"
                     />
@@ -914,13 +1089,13 @@ export default function TeacherGalleryPage() {
                   </div>
                 </div>
 
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
+                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-4 pt-4">
                   <button
                     type="submit"
                     disabled={saving}
                     className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {saving ? "Menyimpan..." : "Simpan Gallery"}
+                    {saving ? "Mengupload..." : "Simpan Gallery"}
                   </button>
                 </div>
               </form>

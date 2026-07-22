@@ -9,11 +9,12 @@ import {
   ChevronDown,
   ChevronRight,
   Edit3,
+  FileText,
   Layers3,
   Plus,
   Search,
+  Send,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -42,6 +43,11 @@ type CurriculumProgram = {
   semester: string | null;
   academic_year: string | null;
   status: string | null;
+  document_url?: string | null;
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+  rejection_note?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -99,6 +105,7 @@ type ProgramForm = {
   semester: string;
   academic_year: string;
   status: string;
+  document_url: string;
 };
 
 type ChapterForm = {
@@ -129,12 +136,12 @@ const monthLabels: Record<string, string> = {
   December: "Desember",
 };
 
-const weeks = ["W1", "W2", "W3", "W4"];
+const weeks = ["W1", "W2", "W3", "W4", "W5"];
 
 const levelOptions = ["SD", "SMP", "SMA"];
 const semesterOptions = ["Ganjil", "Genap"];
 const programTypeOptions = ["Regular", "Special Needs"];
-const statusOptions = ["draft", "published"];
+const statusOptions = ["draft", "submitted", "approved", "rejected", "published"];
 
 function emptyProgramForm(): ProgramForm {
   return {
@@ -147,6 +154,7 @@ function emptyProgramForm(): ProgramForm {
     semester: "Ganjil",
     academic_year: "2026/2027",
     status: "draft",
+    document_url: "",
   };
 }
 
@@ -201,9 +209,41 @@ function getWeekOfMonth(value?: string | null) {
   return Math.ceil(date.getDate() / 7);
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 function getStatusLabel(status?: string | null) {
+  if (status === "submitted") return "Submitted";
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Rejected";
   if (status === "published") return "Published";
   return "Draft";
+}
+
+function getStatusClass(status?: string | null) {
+  if (status === "approved" || status === "published") {
+    return "bg-[#C7F0DA] text-[#158A58]";
+  }
+
+  if (status === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
+  if (status === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
+
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
+function isPdfUrl(url?: string | null) {
+  if (!url) return false;
+
+  return url.toLowerCase().split("?")[0].endsWith(".pdf");
 }
 
 function getProgressPercent(program: EnrichedProgram) {
@@ -273,6 +313,7 @@ export default function KepalaSekolahProgramSemesterPage() {
   const [levelFilter, setLevelFilter] = useState("Semua Level");
   const [teacherFilter, setTeacherFilter] = useState("Semua Guru");
   const [semesterFilter, setSemesterFilter] = useState("Semua Semester");
+  const [statusFilter, setStatusFilter] = useState("Semua Status");
 
   const [expandedProgramIds, setExpandedProgramIds] = useState<string[]>([]);
   const [expandedChapterIds, setExpandedChapterIds] = useState<string[]>([]);
@@ -286,27 +327,38 @@ export default function KepalaSekolahProgramSemesterPage() {
   const [subChapterForm, setSubChapterForm] =
     useState<SubChapterForm>(emptySubChapterForm());
 
+  const [previewProgram, setPreviewProgram] = useState<EnrichedProgram | null>(null);
+  const [rejectingProgram, setRejectingProgram] =
+    useState<EnrichedProgram | null>(null);
+  const [rejectionNote, setRejectionNote] = useState("");
+
   async function fetchData() {
     setLoading(true);
 
-    const [teachersRes, subjectsRes, programsRes, chaptersRes, subChaptersRes, progressRes] =
-      await Promise.all([
-        supabase.from("teachers").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
-        supabase
-          .from("curriculum_programs")
-          .select("*")
-          .order("updated_at", { ascending: false }),
-        supabase
-          .from("curriculum_chapters")
-          .select("*")
-          .order("chapter_order", { ascending: true }),
-        supabase
-          .from("curriculum_sub_chapters")
-          .select("*")
-          .order("sub_chapter_order", { ascending: true }),
-        supabase.from("curriculum_progress").select("*"),
-      ]);
+    const [
+      teachersRes,
+      subjectsRes,
+      programsRes,
+      chaptersRes,
+      subChaptersRes,
+      progressRes,
+    ] = await Promise.all([
+      supabase.from("teachers").select("*").order("full_name"),
+      supabase.from("subjects").select("*").order("name"),
+      supabase
+        .from("curriculum_programs")
+        .select("*")
+        .order("updated_at", { ascending: false }),
+      supabase
+        .from("curriculum_chapters")
+        .select("*")
+        .order("chapter_order", { ascending: true }),
+      supabase
+        .from("curriculum_sub_chapters")
+        .select("*")
+        .order("sub_chapter_order", { ascending: true }),
+      supabase.from("curriculum_progress").select("*"),
+    ]);
 
     const teachersData = (teachersRes.data || []) as TeacherRow[];
     const subjectsData = (subjectsRes.data || []) as SubjectRow[];
@@ -433,9 +485,12 @@ export default function KepalaSekolahProgramSemesterPage() {
       const matchSemester =
         semesterFilter === "Semua Semester" || program.semester === semesterFilter;
 
-      return matchSearch && matchLevel && matchTeacher && matchSemester;
+      const matchStatus =
+        statusFilter === "Semua Status" || program.status === statusFilter;
+
+      return matchSearch && matchLevel && matchTeacher && matchSemester && matchStatus;
     });
-  }, [programs, search, levelFilter, teacherFilter, semesterFilter]);
+  }, [programs, search, levelFilter, teacherFilter, semesterFilter, statusFilter]);
 
   const summary = useMemo(() => {
     const totalPrograms = programs.length;
@@ -467,11 +522,21 @@ export default function KepalaSekolahProgramSemesterPage() {
       );
     }, 0);
 
+    const submittedPrograms = programs.filter(
+      (program) => program.status === "submitted"
+    ).length;
+
+    const approvedPrograms = programs.filter(
+      (program) => program.status === "approved" || program.status === "published"
+    ).length;
+
     return {
       totalPrograms,
       totalChapters,
       totalSubChapters,
       completedSubChapters,
+      submittedPrograms,
+      approvedPrograms,
     };
   }, [programs]);
 
@@ -528,6 +593,7 @@ export default function KepalaSekolahProgramSemesterPage() {
       semester: program.semester || "Ganjil",
       academic_year: program.academic_year || "2026/2027",
       status: program.status || "draft",
+      document_url: program.document_url || "",
     });
 
     setShowProgramModal(true);
@@ -599,6 +665,8 @@ export default function KepalaSekolahProgramSemesterPage() {
 
     setSaving(true);
 
+    const now = new Date().toISOString();
+
     const payload = {
       teacher_id: programForm.teacher_id,
       program_type: programForm.program_type,
@@ -608,7 +676,14 @@ export default function KepalaSekolahProgramSemesterPage() {
       semester: programForm.semester,
       academic_year: programForm.academic_year.trim(),
       status: programForm.status,
-      updated_at: new Date().toISOString(),
+      document_url: programForm.document_url.trim() || null,
+      submitted_at: programForm.status === "submitted" ? now : null,
+      approved_at:
+        programForm.status === "approved" || programForm.status === "published"
+          ? now
+          : null,
+      rejected_at: programForm.status === "rejected" ? now : null,
+      updated_at: now,
     };
 
     if (programForm.id) {
@@ -637,6 +712,65 @@ export default function KepalaSekolahProgramSemesterPage() {
     setSaving(false);
     setShowProgramModal(false);
     setProgramForm(emptyProgramForm());
+  }
+
+  async function handleApproveProgram(program: EnrichedProgram) {
+    const confirmApprove = confirm(
+      `Approve Program Semester "${program.subject_name}" dari ${program.teacher_name}?`
+    );
+
+    if (!confirmApprove) return;
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("curriculum_programs")
+      .update({
+        status: "approved",
+        approved_at: now,
+        rejected_at: null,
+        rejection_note: null,
+        updated_at: now,
+      })
+      .eq("id", program.id);
+
+    if (error) {
+      alert(`Gagal approve Program Semester: ${error.message}`);
+      return;
+    }
+
+    await fetchData();
+  }
+
+  async function handleRejectProgram() {
+    if (!rejectingProgram) return;
+
+    if (!rejectionNote.trim()) {
+      alert("Isi catatan revisi terlebih dahulu.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabase
+      .from("curriculum_programs")
+      .update({
+        status: "rejected",
+        rejected_at: now,
+        rejection_note: rejectionNote.trim(),
+        updated_at: now,
+      })
+      .eq("id", rejectingProgram.id);
+
+    if (error) {
+      alert(`Gagal reject Program Semester: ${error.message}`);
+      return;
+    }
+
+    await fetchData();
+
+    setRejectingProgram(null);
+    setRejectionNote("");
   }
 
   async function handleSaveChapter() {
@@ -898,7 +1032,7 @@ export default function KepalaSekolahProgramSemesterPage() {
             icon={<CalendarDays className="h-5 w-5" />}
             label="Total Program"
             value={summary.totalPrograms}
-            info="Program"
+            info={`${summary.submittedPrograms} review`}
             tone="pink"
           />
 
@@ -922,13 +1056,13 @@ export default function KepalaSekolahProgramSemesterPage() {
             icon={<CheckCircle2 className="h-5 w-5" />}
             label="Terealisasi"
             value={summary.completedSubChapters}
-            info="Checklist"
+            info={`${summary.approvedPrograms} approved`}
             tone="green"
           />
         </div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr_1fr_1fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr_1fr_1fr_1fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
@@ -972,6 +1106,19 @@ export default function KepalaSekolahProgramSemesterPage() {
               {semesterOptions.map((semester) => (
                 <option key={semester}>{semester}</option>
               ))}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Status</option>
+              <option value="draft">draft</option>
+              <option value="submitted">submitted</option>
+              <option value="approved">approved</option>
+              <option value="rejected">rejected</option>
+              <option value="published">published</option>
             </select>
           </div>
         </div>
@@ -1025,6 +1172,12 @@ export default function KepalaSekolahProgramSemesterPage() {
                             <span className="rounded-full bg-[#FFF2B8] px-3 py-1 text-[12px] font-extrabold text-[#B26A00]">
                               Semester {program.semester}
                             </span>
+
+                            {program.document_url ? (
+                              <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+                                Ada Dokumen
+                              </span>
+                            ) : null}
                           </div>
 
                           <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
@@ -1035,6 +1188,12 @@ export default function KepalaSekolahProgramSemesterPage() {
                             {program.teacher_name} • Tahun Ajaran{" "}
                             {program.academic_year || "-"}
                           </p>
+
+                          {program.rejection_note ? (
+                            <p className="mt-2 max-w-[620px] rounded-xl bg-[#FFF1F2] px-3 py-2 text-[13px] font-bold text-[#BE123C]">
+                              Catatan revisi: {program.rejection_note}
+                            </p>
+                          ) : null}
 
                           <div className="mt-4 max-w-[420px]">
                             <div className="mb-2 flex items-center justify-between text-[12px] font-bold text-[#6F5549]">
@@ -1053,6 +1212,44 @@ export default function KepalaSekolahProgramSemesterPage() {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        {program.document_url ? (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewProgram(program)}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#BAE6FD] bg-white px-3 text-[13px] font-extrabold text-[#0369A1] transition hover:bg-[#F0F9FF]"
+                          >
+                            <FileText className="h-4 w-4" />
+                            {isPdfUrl(program.document_url)
+                              ? "Preview PDF"
+                              : "Dokumen"}
+                          </button>
+                        ) : null}
+
+                        {program.status === "submitted" ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRejectingProgram(program);
+                                setRejectionNote("");
+                              }}
+                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
+                            >
+                              <X className="h-4 w-4" />
+                              Revisi
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleApproveProgram(program)}
+                              className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#158A58] px-3 text-[13px] font-extrabold text-white transition hover:bg-[#116C46]"
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                              Approve
+                            </button>
+                          </>
+                        ) : null}
+
                         <button
                           type="button"
                           onClick={() => openCreateChapterModal(program.id)}
@@ -1088,7 +1285,7 @@ export default function KepalaSekolahProgramSemesterPage() {
                       <MatrixLegend />
 
                       <div className="overflow-x-auto rounded-2xl border border-[#EADACA]">
-                        <table className="w-full min-w-[1180px] border-collapse bg-white">
+                        <table className="w-full min-w-[1380px] border-collapse bg-white">
                           <thead>
                             <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
                               <th className="sticky left-0 z-10 w-[360px] border-r border-[#EADACA] bg-[#FFF8EF] px-4 py-3 text-left text-[13px] font-extrabold text-[#6F5549]">
@@ -1098,7 +1295,7 @@ export default function KepalaSekolahProgramSemesterPage() {
                               {months.map((month) => (
                                 <th
                                   key={month}
-                                  colSpan={4}
+                                  colSpan={5}
                                   className="border-r border-[#EADACA] px-4 py-3 text-center text-[13px] font-extrabold text-[#6F5549]"
                                 >
                                   {monthLabels[month]}
@@ -1139,165 +1336,22 @@ export default function KepalaSekolahProgramSemesterPage() {
                                 );
 
                                 return (
-                                  <>
-                                    <tr
-                                      key={chapter.id}
-                                      className="border-b border-[#EADACA] bg-[#FFF8EF]"
-                                    >
-                                      <td
-                                        colSpan={1 + months.length * weeks.length}
-                                        className="px-4 py-3"
-                                      >
-                                        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleChapter(chapter.id)}
-                                            className="flex items-center gap-2 text-left"
-                                          >
-                                            {chapterExpanded ? (
-                                              <ChevronDown className="h-4 w-4 text-[#8C0F2D]" />
-                                            ) : (
-                                              <ChevronRight className="h-4 w-4 text-[#8C0F2D]" />
-                                            )}
-
-                                            <span className="text-[14px] font-extrabold text-[#2B1B18]">
-                                              Bab {chapter.chapter_order}.{" "}
-                                              {chapter.chapter_title}
-                                            </span>
-
-                                            <span className="rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-[#8A5A48]">
-                                              {chapter.sub_chapters.length} Sub Bab
-                                            </span>
-                                          </button>
-
-                                          <div className="flex flex-wrap gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                openCreateSubChapterModal(
-                                                  program.id,
-                                                  chapter.id
-                                                )
-                                              }
-                                              className="inline-flex h-8 items-center gap-2 rounded-lg bg-[#8C0F2D] px-3 text-[12px] font-extrabold text-white"
-                                            >
-                                              <Plus className="h-3.5 w-3.5" />
-                                              Sub Bab
-                                            </button>
-
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                openEditChapterModal(chapter)
-                                              }
-                                              className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#DCC8B6] bg-white px-3 text-[12px] font-extrabold text-[#8C0F2D]"
-                                            >
-                                              <Edit3 className="h-3.5 w-3.5" />
-                                              Edit
-                                            </button>
-
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                handleDeleteChapter(chapter)
-                                              }
-                                              className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#FECACA] bg-white px-3 text-[12px] font-extrabold text-[#DC2626]"
-                                            >
-                                              <Trash2 className="h-3.5 w-3.5" />
-                                              Hapus
-                                            </button>
-                                          </div>
-                                        </div>
-                                      </td>
-                                    </tr>
-
-                                    {chapterExpanded
-                                      ? chapter.sub_chapters.map((subChapter) => (
-                                          <tr
-                                            key={subChapter.id}
-                                            className="border-b border-[#F0E1D4]"
-                                          >
-                                            <td className="sticky left-0 z-10 border-r border-[#EADACA] bg-white px-4 py-3">
-                                              <div className="flex items-start justify-between gap-3">
-                                                <div>
-                                                  <p className="text-[13px] font-bold text-[#2B1B18]">
-                                                    {subChapter.sub_chapter_order}.{" "}
-                                                    {subChapter.sub_chapter_title}
-                                                  </p>
-
-                                                  <p className="mt-1 text-[12px] text-[#6F5549]">
-                                                    Target:{" "}
-                                                    {monthLabels[
-                                                      subChapter.target_month || "July"
-                                                    ] || subChapter.target_month}{" "}
-                                                    W{subChapter.planned_week || 1}
-                                                  </p>
-                                                </div>
-
-                                                <div className="flex shrink-0 gap-1">
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      openEditSubChapterModal(
-                                                        program.id,
-                                                        subChapter
-                                                      )
-                                                    }
-                                                    className="rounded-lg border border-[#DCC8B6] p-1.5 text-[#8C0F2D]"
-                                                  >
-                                                    <Edit3 className="h-3.5 w-3.5" />
-                                                  </button>
-
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      handleDeleteSubChapter(
-                                                        subChapter
-                                                      )
-                                                    }
-                                                    className="rounded-lg border border-[#FECACA] p-1.5 text-[#DC2626]"
-                                                  >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                  </button>
-                                                </div>
-                                              </div>
-                                            </td>
-
-                                            {months.flatMap((month) =>
-                                              weeks.map((week) => {
-                                                const status =
-                                                  getSubChapterCellStatus(
-                                                    subChapter,
-                                                    month,
-                                                    week
-                                                  );
-
-                                                return (
-                                                  <td
-                                                    key={`${subChapter.id}-${month}-${week}`}
-                                                    className="h-12 border-r border-[#F0E1D4] px-3 py-2 text-center"
-                                                  >
-                                                    {status.type === "completed" ? (
-                                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#C7F0DA] text-[#158A58]">
-                                                        <Check className="h-4 w-4" />
-                                                      </span>
-                                                    ) : status.type === "planned" ? (
-                                                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#FFE4E6] text-[20px] leading-none text-[#BE123C]">
-                                                        •
-                                                      </span>
-                                                    ) : (
-                                                      <span className="text-[#EADACA]">
-                                                        -
-                                                      </span>
-                                                    )}
-                                                  </td>
-                                                );
-                                              })
-                                            )}
-                                          </tr>
-                                        ))
-                                      : null}
-                                  </>
+                                  <FragmentRows
+                                    key={chapter.id}
+                                    program={program}
+                                    chapter={chapter}
+                                    chapterExpanded={chapterExpanded}
+                                    toggleChapter={toggleChapter}
+                                    openCreateSubChapterModal={
+                                      openCreateSubChapterModal
+                                    }
+                                    openEditChapterModal={openEditChapterModal}
+                                    handleDeleteChapter={handleDeleteChapter}
+                                    openEditSubChapterModal={
+                                      openEditSubChapterModal
+                                    }
+                                    handleDeleteSubChapter={handleDeleteSubChapter}
+                                  />
                                 );
                               })
                             )}
@@ -1344,7 +1398,175 @@ export default function KepalaSekolahProgramSemesterPage() {
           onSave={handleSaveSubChapter}
         />
       ) : null}
+
+      {previewProgram ? (
+        <DocumentPreviewModal
+          program={previewProgram}
+          onClose={() => setPreviewProgram(null)}
+        />
+      ) : null}
+
+      {rejectingProgram ? (
+        <RejectModal
+          program={rejectingProgram}
+          note={rejectionNote}
+          onChange={setRejectionNote}
+          onClose={() => setRejectingProgram(null)}
+          onSubmit={handleRejectProgram}
+        />
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function FragmentRows({
+  program,
+  chapter,
+  chapterExpanded,
+  toggleChapter,
+  openCreateSubChapterModal,
+  openEditChapterModal,
+  handleDeleteChapter,
+  openEditSubChapterModal,
+  handleDeleteSubChapter,
+}: {
+  program: EnrichedProgram;
+  chapter: EnrichedChapter;
+  chapterExpanded: boolean;
+  toggleChapter: (chapterId: string) => void;
+  openCreateSubChapterModal: (programId: string, chapterId: string) => void;
+  openEditChapterModal: (chapter: EnrichedChapter) => void;
+  handleDeleteChapter: (chapter: EnrichedChapter) => void;
+  openEditSubChapterModal: (
+    programId: string,
+    subChapter: EnrichedSubChapter
+  ) => void;
+  handleDeleteSubChapter: (subChapter: EnrichedSubChapter) => void;
+}) {
+  return (
+    <>
+      <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
+        <td colSpan={1 + months.length * weeks.length} className="px-4 py-3">
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+            <button
+              type="button"
+              onClick={() => toggleChapter(chapter.id)}
+              className="flex items-center gap-2 text-left"
+            >
+              {chapterExpanded ? (
+                <ChevronDown className="h-4 w-4 text-[#8C0F2D]" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-[#8C0F2D]" />
+              )}
+
+              <span className="text-[14px] font-extrabold text-[#2B1B18]">
+                Bab {chapter.chapter_order}. {chapter.chapter_title}
+              </span>
+
+              <span className="rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-[#8A5A48]">
+                {chapter.sub_chapters.length} Sub Bab
+              </span>
+            </button>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => openCreateSubChapterModal(program.id, chapter.id)}
+                className="inline-flex h-8 items-center gap-2 rounded-lg bg-[#8C0F2D] px-3 text-[12px] font-extrabold text-white"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Sub Bab
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openEditChapterModal(chapter)}
+                className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#DCC8B6] bg-white px-3 text-[12px] font-extrabold text-[#8C0F2D]"
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+                Edit
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleDeleteChapter(chapter)}
+                className="inline-flex h-8 items-center gap-2 rounded-lg border border-[#FECACA] bg-white px-3 text-[12px] font-extrabold text-[#DC2626]"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Hapus
+              </button>
+            </div>
+          </div>
+        </td>
+      </tr>
+
+      {chapterExpanded
+        ? chapter.sub_chapters.map((subChapter) => (
+            <tr key={subChapter.id} className="border-b border-[#F0E1D4]">
+              <td className="sticky left-0 z-10 border-r border-[#EADACA] bg-white px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-bold text-[#2B1B18]">
+                      {subChapter.sub_chapter_order}.{" "}
+                      {subChapter.sub_chapter_title}
+                    </p>
+
+                    <p className="mt-1 text-[12px] text-[#6F5549]">
+                      Target:{" "}
+                      {monthLabels[subChapter.target_month || "July"] ||
+                        subChapter.target_month}{" "}
+                      W{subChapter.planned_week || 1}
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditSubChapterModal(program.id, subChapter)}
+                      className="rounded-lg border border-[#DCC8B6] p-1.5 text-[#8C0F2D]"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSubChapter(subChapter)}
+                      className="rounded-lg border border-[#FECACA] p-1.5 text-[#DC2626]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </td>
+
+              {months.flatMap((month) =>
+                weeks.map((week) => {
+                  const status = getSubChapterCellStatus(subChapter, month, week);
+
+                  return (
+                    <td
+                      key={`${subChapter.id}-${month}-${week}`}
+                      className="h-12 border-r border-[#F0E1D4] px-3 py-2 text-center"
+                    >
+                      {status.type === "completed" ? (
+                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#C7F0DA] text-[#158A58]">
+                          <Check className="h-4 w-4" />
+                        </span>
+                      ) : status.type === "planned" ? (
+                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#FFE4E6] text-[20px] leading-none text-[#BE123C]">
+                          •
+                        </span>
+                      ) : (
+                        <span className="text-[#EADACA]">-</span>
+                      )}
+                    </td>
+                  );
+                })
+              )}
+            </tr>
+          ))
+        : null}
+    </>
   );
 }
 
@@ -1474,6 +1696,15 @@ function ProgramModal({
             </select>
           </FormGroup>
         </div>
+
+        <FormGroup label="Link Dokumen Program Semester">
+          <input
+            value={form.document_url}
+            onChange={(event) => onChange("document_url", event.target.value)}
+            placeholder="Opsional: link PDF / dokumen jika ada"
+            className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+          />
+        </FormGroup>
 
         <button
           type="button"
@@ -1608,6 +1839,7 @@ function SubChapterModal({
               <option value="2">W2</option>
               <option value="3">W3</option>
               <option value="4">W4</option>
+              <option value="5">W5</option>
             </select>
           </FormGroup>
         </div>
@@ -1619,6 +1851,105 @@ function SubChapterModal({
           className="h-12 w-full rounded-xl bg-[#8C0F2D] text-[15px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? "Menyimpan..." : "Simpan Sub Bab"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function DocumentPreviewModal({
+  program,
+  onClose,
+}: {
+  program: EnrichedProgram;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Preview Dokumen Program Semester"
+      subtitle={`${program.subject_name || "-"} • ${program.teacher_name}`}
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        {program.document_url ? (
+          <>
+            <div className="overflow-hidden rounded-xl border border-[#E1CFBE] bg-[#F8F2EA]">
+              {isPdfUrl(program.document_url) ? (
+                <iframe
+                  src={program.document_url}
+                  title="Preview PDF Program Semester"
+                  className="h-[560px] w-full"
+                />
+              ) : (
+                <div className="px-5 py-8 text-center">
+                  <FileText className="mx-auto h-10 w-10 text-[#8C0F2D]" />
+                  <p className="mt-3 text-[14px] text-[#6F5549]">
+                    Preview langsung hanya tersedia untuk file PDF. Untuk DOC
+                    atau DOCX, buka dokumen melalui tombol di bawah.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <a
+              href={program.document_url}
+              target="_blank"
+              rel="noreferrer"
+              className="block rounded-xl bg-[#8C0F2D] px-4 py-3 text-center text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+            >
+              {isPdfUrl(program.document_url) ? "Buka PDF" : "Buka Dokumen"}
+            </a>
+          </>
+        ) : (
+          <p className="rounded-xl bg-white px-4 py-5 text-center text-[14px] text-[#6F5549]">
+            Program Semester ini belum memiliki dokumen.
+          </p>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function RejectModal({
+  program,
+  note,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  program: EnrichedProgram;
+  note: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Reject / Revisi Program Semester"
+      subtitle={`${program.subject_name || "-"} • ${program.teacher_name}`}
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <label className="block">
+          <p className="mb-2 text-[14px] font-extrabold text-[#2B1B18]">
+            Catatan Revisi
+          </p>
+
+          <textarea
+            value={note}
+            onChange={(event) => onChange(event.target.value)}
+            rows={5}
+            placeholder="Contoh: Mohon lengkapi Sub Bab, target bulan, atau dokumen Program Semester."
+            className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="h-11 w-full rounded-xl bg-[#DC2626] text-[14px] font-extrabold text-white transition hover:bg-[#B91C1C]"
+        >
+          Kirim Revisi
         </button>
       </div>
     </ModalShell>
@@ -1741,18 +2072,13 @@ function MatrixLegend() {
 }
 
 function StatusBadge({ status }: { status?: string | null }) {
-  const safe = status || "draft";
-
-  const className =
-    safe === "published"
-      ? "bg-[#C7F0DA] text-[#158A58]"
-      : "bg-[#F1F5F9] text-[#64748B]";
-
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+        status
+      )}`}
     >
-      {getStatusLabel(safe)}
+      {getStatusLabel(status)}
     </span>
   );
 }

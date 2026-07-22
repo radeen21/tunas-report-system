@@ -74,13 +74,18 @@ type RppRow = {
   grade: string | null;
   semester: string | null;
   academic_year: string | null;
+
+  // Field lama tetap ada untuk compatibility data lama, tapi tidak dipakai di UI baru
   meeting_date: string | null;
   meeting_number: number | null;
-  rpp_title: string | null;
-  learning_objectives: string | null;
   opening_activity: string | null;
   core_activity: string | null;
   closing_activity: string | null;
+
+  rpp_title: string | null;
+  indicator: string | null;
+  subject_material: string | null;
+  learning_objectives: string | null;
   assessment: string | null;
   learning_media: string | null;
   learning_resources: string | null;
@@ -100,13 +105,10 @@ type RppForm = {
   curriculum_program_id: string;
   curriculum_chapter_id: string;
   curriculum_sub_chapter_id: string;
-  meeting_date: string;
-  meeting_number: string;
   rpp_title: string;
+  indicator: string;
+  subject_material: string;
   learning_objectives: string;
-  opening_activity: string;
-  core_activity: string;
-  closing_activity: string;
   assessment: string;
   learning_media: string;
   learning_resources: string;
@@ -121,13 +123,10 @@ function emptyForm(): RppForm {
     curriculum_program_id: "",
     curriculum_chapter_id: "",
     curriculum_sub_chapter_id: "",
-    meeting_date: "",
-    meeting_number: "1",
     rpp_title: "",
+    indicator: "",
+    subject_material: "",
     learning_objectives: "",
-    opening_activity: "",
-    core_activity: "",
-    closing_activity: "",
     assessment: "",
     learning_media: "",
     learning_resources: "",
@@ -145,16 +144,6 @@ function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
   if (Array.isArray(subjects)) return `Guru — ${subjects.slice(0, 4).join(", ")}`;
   return `Guru — ${subjects}`;
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-
-  return new Intl.DateTimeFormat("id-ID", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(value));
 }
 
 function formatDateTime(value?: string | null) {
@@ -404,6 +393,8 @@ export default function TeacherRppPage() {
         !q ||
         normalizeText(getRppTitle(rpp)).includes(q) ||
         normalizeText(rpp.subject_name).includes(q) ||
+        normalizeText(rpp.indicator).includes(q) ||
+        normalizeText(rpp.subject_material).includes(q) ||
         normalizeText(rpp.learning_objectives).includes(q) ||
         normalizeText(rpp.notes).includes(q);
 
@@ -442,13 +433,10 @@ export default function TeacherRppPage() {
       curriculum_program_id: rpp.curriculum_program_id || "",
       curriculum_chapter_id: rpp.curriculum_chapter_id || "",
       curriculum_sub_chapter_id: rpp.curriculum_sub_chapter_id || "",
-      meeting_date: rpp.meeting_date || "",
-      meeting_number: String(rpp.meeting_number || 1),
       rpp_title: rpp.rpp_title || rpp.title || "",
+      indicator: rpp.indicator || "",
+      subject_material: rpp.subject_material || "",
       learning_objectives: rpp.learning_objectives || "",
-      opening_activity: rpp.opening_activity || "",
-      core_activity: rpp.core_activity || "",
-      closing_activity: rpp.closing_activity || "",
       assessment: rpp.assessment || "",
       learning_media: rpp.learning_media || "",
       learning_resources: rpp.learning_resources || "",
@@ -484,6 +472,16 @@ export default function TeacherRppPage() {
 
     if (!form.rpp_title.trim()) {
       alert("Isi judul RPP terlebih dahulu.");
+      return false;
+    }
+
+    if (!form.indicator.trim()) {
+      alert("Isi indikator terlebih dahulu.");
+      return false;
+    }
+
+    if (!form.subject_material.trim()) {
+      alert("Isi materi pelajaran terlebih dahulu.");
       return false;
     }
 
@@ -554,13 +552,18 @@ export default function TeacherRppPage() {
         grade: selectedProgram.grade,
         semester: selectedProgram.semester,
         academic_year: selectedProgram.academic_year,
-        meeting_date: form.meeting_date || null,
-        meeting_number: Number(form.meeting_number || 1),
+
+        // Field lama sengaja dikirim null supaya UI baru tidak pakai tanggal/pertemuan/kegiatan
+        meeting_date: null,
+        meeting_number: null,
+        opening_activity: null,
+        core_activity: null,
+        closing_activity: null,
+
         rpp_title: form.rpp_title.trim(),
+        indicator: form.indicator.trim(),
+        subject_material: form.subject_material.trim(),
         learning_objectives: form.learning_objectives.trim(),
-        opening_activity: form.opening_activity.trim() || null,
-        core_activity: form.core_activity.trim() || null,
-        closing_activity: form.closing_activity.trim() || null,
         assessment: form.assessment.trim() || null,
         learning_media: form.learning_media.trim() || null,
         learning_resources: form.learning_resources.trim() || null,
@@ -646,9 +649,8 @@ export default function TeacherRppPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Buat RPP berdasarkan Program Semester, Bab, dan Sub Bab. Guru bisa
-              upload dokumen PDF/DOCX, simpan draft, atau submit ke Kepala
-              Sekolah.
+              Buat RPP berdasarkan Program Semester, Bab, dan Sub Bab. Format
+              baru menggunakan Indikator dan Materi Pelajaran.
             </p>
           </div>
 
@@ -701,7 +703,7 @@ export default function TeacherRppPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, mapel, tujuan, atau catatan..."
+                placeholder="Cari judul, mapel, indikator, materi, tujuan, atau catatan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -755,20 +757,21 @@ export default function TeacherRppPage() {
                   </h2>
 
                   <p className="mt-2 text-[14px] text-[#6F5549]">
-                    {rpp.subject_name || "-"} • Pertemuan{" "}
-                    {rpp.meeting_number || "-"} • {formatDate(rpp.meeting_date)}
+                    {rpp.subject_name || "-"} • {rpp.academic_year || "-"}
                   </p>
                 </div>
 
                 <div className="space-y-4 px-6 py-5">
+                  <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
+
                   <InfoBlock
-                    label="Tujuan Pembelajaran"
-                    value={rpp.learning_objectives || "-"}
+                    label="Materi Pelajaran"
+                    value={rpp.subject_material || "-"}
                   />
 
                   <InfoBlock
-                    label="Kegiatan Inti"
-                    value={rpp.core_activity || "-"}
+                    label="Tujuan Pembelajaran"
+                    value={rpp.learning_objectives || "-"}
                   />
 
                   {rpp.status === "rejected" ? (
@@ -796,6 +799,7 @@ export default function TeacherRppPage() {
                       <a
                         href={rpp.document_url}
                         target="_blank"
+                        rel="noreferrer"
                         className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#BAE6FD] px-3 text-[13px] font-extrabold text-[#0369A1] transition hover:bg-[#F0F9FF]"
                       >
                         <FileText className="h-4 w-4" />
@@ -885,7 +889,7 @@ function RppModal({
   return (
     <ModalShell
       title={form.id ? "Edit RPP" : "Tambah RPP"}
-      subtitle="Pilih Program Semester, Bab, Sub Bab, lalu upload dokumen RPP jika ada."
+      subtitle="Pilih Program Semester, Bab, Sub Bab, lalu isi format RPP terbaru."
       onClose={onClose}
     >
       <div className="space-y-5">
@@ -948,26 +952,6 @@ function RppModal({
           </FormGroup>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <FormGroup label="Tanggal Pertemuan">
-            <input
-              type="date"
-              value={form.meeting_date}
-              onChange={(event) => onChange("meeting_date", event.target.value)}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            />
-          </FormGroup>
-
-          <FormGroup label="Pertemuan Ke">
-            <input
-              type="number"
-              value={form.meeting_number}
-              onChange={(event) => onChange("meeting_number", event.target.value)}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            />
-          </FormGroup>
-        </div>
-
         <FormGroup label="Judul RPP">
           <input
             value={form.rpp_title}
@@ -978,29 +962,31 @@ function RppModal({
         </FormGroup>
 
         <TextArea
+          label="Indikator"
+          value={form.indicator}
+          onChange={(value) => onChange("indicator", value)}
+          placeholder="Tuliskan indikator pembelajaran..."
+        />
+
+        <TextArea
+          label="Materi Pelajaran"
+          value={form.subject_material}
+          onChange={(value) => onChange("subject_material", value)}
+          placeholder="Tuliskan materi pelajaran..."
+        />
+
+        <TextArea
           label="Tujuan Pembelajaran"
           value={form.learning_objectives}
           onChange={(value) => onChange("learning_objectives", value)}
+          placeholder="Tuliskan tujuan pembelajaran..."
         />
-        <TextArea
-          label="Kegiatan Pembukaan"
-          value={form.opening_activity}
-          onChange={(value) => onChange("opening_activity", value)}
-        />
-        <TextArea
-          label="Kegiatan Inti"
-          value={form.core_activity}
-          onChange={(value) => onChange("core_activity", value)}
-        />
-        <TextArea
-          label="Kegiatan Penutup"
-          value={form.closing_activity}
-          onChange={(value) => onChange("closing_activity", value)}
-        />
+
         <TextArea
           label="Assessment / Penilaian"
           value={form.assessment}
           onChange={(value) => onChange("assessment", value)}
+          placeholder="Tuliskan assessment / penilaian..."
         />
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -1008,11 +994,13 @@ function RppModal({
             label="Media Pembelajaran"
             value={form.learning_media}
             onChange={(value) => onChange("learning_media", value)}
+            placeholder="Tuliskan media pembelajaran..."
           />
           <TextArea
             label="Sumber Belajar"
             value={form.learning_resources}
             onChange={(value) => onChange("learning_resources", value)}
+            placeholder="Tuliskan sumber belajar..."
           />
         </div>
 
@@ -1032,6 +1020,7 @@ function RppModal({
                 <a
                   href={form.document_url}
                   target="_blank"
+                  rel="noreferrer"
                   className="mt-2 inline-block text-[13px] font-extrabold text-[#0369A1] underline"
                 >
                   Lihat dokumen yang sudah ada
@@ -1074,6 +1063,7 @@ function RppModal({
           value={form.notes}
           onChange={(value) => onChange("notes", value)}
           rows={3}
+          placeholder="Catatan tambahan jika ada..."
         />
 
         <div className="grid gap-3 md:grid-cols-2">
@@ -1118,19 +1108,18 @@ function RppDetailModal({ rpp, onClose }: { rpp: RppRow; onClose: () => void }) 
           </span>
         </div>
 
+        <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
+
         <InfoBlock
-          label="Tanggal / Pertemuan"
-          value={`${formatDate(rpp.meeting_date)} • Pertemuan ${
-            rpp.meeting_number || "-"
-          }`}
+          label="Materi Pelajaran"
+          value={rpp.subject_material || "-"}
         />
+
         <InfoBlock
           label="Tujuan Pembelajaran"
           value={rpp.learning_objectives || "-"}
         />
-        <InfoBlock label="Kegiatan Pembukaan" value={rpp.opening_activity || "-"} />
-        <InfoBlock label="Kegiatan Inti" value={rpp.core_activity || "-"} />
-        <InfoBlock label="Kegiatan Penutup" value={rpp.closing_activity || "-"} />
+
         <InfoBlock label="Assessment" value={rpp.assessment || "-"} />
         <InfoBlock label="Media Pembelajaran" value={rpp.learning_media || "-"} />
         <InfoBlock label="Sumber Belajar" value={rpp.learning_resources || "-"} />
@@ -1140,6 +1129,7 @@ function RppDetailModal({ rpp, onClose }: { rpp: RppRow; onClose: () => void }) 
           <a
             href={rpp.document_url}
             target="_blank"
+            rel="noreferrer"
             className="block rounded-xl bg-[#8C0F2D] px-4 py-3 text-center text-[14px] font-extrabold text-white"
           >
             Buka Dokumen RPP
@@ -1251,11 +1241,13 @@ function TextArea({
   value,
   onChange,
   rows = 4,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   rows?: number;
+  placeholder?: string;
 }) {
   return (
     <FormGroup label={label}>
@@ -1263,7 +1255,8 @@ function TextArea({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={rows}
-        className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
+        placeholder={placeholder}
+        className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
       />
     </FormGroup>
   );

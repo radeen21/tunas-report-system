@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
@@ -127,6 +127,24 @@ function getStatusLabel(status: string | null) {
   return "Draft";
 }
 
+function escapeExcelCell(value: string | number | null | undefined) {
+  const text = String(value ?? "-");
+
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function formatExportDateName() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
 export default function KepalaSekolahLaporanKBMPage() {
   const [reports, setReports] = useState<KbmReport[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -143,6 +161,11 @@ export default function KepalaSekolahLaporanKBMPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<KbmReportForm>(initialForm);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const [selectedReport, setSelectedReport] = useState<KbmReport | null>(null);
+  const [reviewReport, setReviewReport] = useState<KbmReport | null>(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
 
   async function fetchStudents() {
     const { data, error } = await supabase
@@ -272,6 +295,19 @@ export default function KepalaSekolahLaporanKBMPage() {
 
   useEffect(() => {
     fetchAllData();
+
+    const channel = supabase
+      .channel("kepala-laporan-kbm-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "kbm_reports" },
+        () => fetchReports()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredReports = useMemo(() => {
@@ -376,6 +412,204 @@ export default function KepalaSekolahLaporanKBMPage() {
     }
   }
 
+  async function handleApproveReport(report: KbmReport) {
+    const confirmApprove = confirm(
+      `Approve Laporan KBM ${report.students?.full_name || "-"}?`
+    );
+
+    if (!confirmApprove) return;
+
+    setReviewSaving(true);
+
+    const { error } = await supabase
+      .from("kbm_reports")
+      .update({
+        status: "approved",
+      })
+      .eq("id", report.id);
+
+    if (error) {
+      setReviewSaving(false);
+      alert(`Gagal approve laporan KBM: ${error.message}`);
+      return;
+    }
+
+    await fetchReports();
+
+    setReviewSaving(false);
+    setReviewReport(null);
+    setSelectedReport(null);
+    setReviewNote("");
+  }
+
+  async function handleRevisionReport() {
+    if (!reviewReport) return;
+
+    if (!reviewNote.trim()) {
+      alert("Isi catatan revisi terlebih dahulu.");
+      return;
+    }
+
+    setReviewSaving(true);
+
+    const previousNote = reviewReport.teacher_note || "";
+    const revisionNote = `Catatan Revisi Kepala Sekolah: ${reviewNote.trim()}`;
+    const nextTeacherNote = previousNote
+      ? `${previousNote}\n\n${revisionNote}`
+      : revisionNote;
+
+    const { error } = await supabase
+      .from("kbm_reports")
+      .update({
+        status: "revision",
+        teacher_note: nextTeacherNote,
+      })
+      .eq("id", reviewReport.id);
+
+    if (error) {
+      setReviewSaving(false);
+      alert(`Gagal mengirim revisi: ${error.message}`);
+      return;
+    }
+
+    await fetchReports();
+
+    setReviewSaving(false);
+    setReviewReport(null);
+    setSelectedReport(null);
+    setReviewNote("");
+  }
+
+  function openReview(report: KbmReport) {
+    setReviewReport(report);
+    setReviewNote("");
+  }
+
+  function handleExportExcel() {
+    if (filteredReports.length === 0) {
+      alert("Tidak ada data laporan KBM yang bisa diexport.");
+      return;
+    }
+
+    const rows = filteredReports.map((report, index) => ({
+      No: index + 1,
+      "Tanggal Laporan": formatDate(report.report_date),
+      "Nama Siswa": report.students?.full_name || "-",
+      NIS: report.students?.nis || "-",
+      Guru: report.teachers?.full_name || "-",
+      "Email Guru": report.teachers?.email || "-",
+      "Mata Pelajaran": report.subjects?.name || "-",
+      Kelas: report.class_level || "-",
+      Semester: report.semester || "-",
+      BAB: report.chapter || "-",
+      "Materi Pokok": report.material_topic || "-",
+      "Masalah / Kendala": report.learning_issue || "-",
+      Solusi: report.solution || "-",
+      "Catatan Guru / Revisi": report.teacher_note || "-",
+      Status: getStatusLabel(report.status),
+    }));
+
+    const headers = Object.keys(rows[0]);
+
+    const tableRows = rows
+      .map((row) => {
+        return `
+          <tr>
+            ${headers
+              .map((header) => {
+                const value = row[header as keyof typeof row];
+                return `<td>${escapeExcelCell(value)}</td>`;
+              })
+              .join("")}
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <style>
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              font-family: Arial, sans-serif;
+              font-size: 12px;
+            }
+
+            th {
+              background: #7A1F2B;
+              color: #ffffff;
+              font-weight: bold;
+              border: 1px solid #dddddd;
+              padding: 8px;
+              text-align: left;
+              white-space: nowrap;
+            }
+
+            td {
+              border: 1px solid #dddddd;
+              padding: 8px;
+              vertical-align: top;
+              mso-number-format: "\\@";
+            }
+
+            .title {
+              font-size: 18px;
+              font-weight: bold;
+              color: #2B1B18;
+              margin-bottom: 6px;
+            }
+
+            .subtitle {
+              font-size: 12px;
+              color: #6B4A3A;
+              margin-bottom: 16px;
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="title">Laporan KBM</div>
+          <div class="subtitle">
+            Export tanggal ${formatDate(new Date().toISOString())} |
+            Total data: ${filteredReports.length}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                ${headers
+                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
+                  .join("")}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    const blob = new Blob([html], {
+      type: "application/vnd.ms-excel;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `laporan-kbm-${formatExportDateName()}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  }
+
   function closeModal() {
     setIsModalOpen(false);
     setErrorMessage("");
@@ -399,6 +633,7 @@ export default function KepalaSekolahLaporanKBMPage() {
         <div className="flex gap-3">
           <button
             type="button"
+            onClick={handleExportExcel}
             className="rounded-xl border border-[#E8D6C1] bg-white px-5 py-3 text-sm font-semibold text-[#2B1B18] shadow-sm transition hover:bg-[#FFF8EF]"
           >
             ⬇ Export
@@ -570,14 +805,16 @@ export default function KepalaSekolahLaporanKBMPage() {
               <div className="mt-5 flex justify-end gap-2">
                 <button
                   type="button"
-                  className="rounded-lg border border-[#E8D6C1] px-4 py-2 text-xs font-bold"
+                  onClick={() => setSelectedReport(report)}
+                  className="rounded-lg border border-[#E8D6C1] px-4 py-2 text-xs font-bold transition hover:bg-[#FFF8EF]"
                 >
                   View
                 </button>
 
                 <button
                   type="button"
-                  className="rounded-lg bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white"
+                  onClick={() => openReview(report)}
+                  className="rounded-lg bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
                 >
                   Review
                 </button>
@@ -799,6 +1036,209 @@ export default function KepalaSekolahLaporanKBMPage() {
           </div>
         </div>
       )}
+
+      {selectedReport ? (
+        <ReportDetailModal
+          report={selectedReport}
+          onClose={() => setSelectedReport(null)}
+          onReview={() => openReview(selectedReport)}
+        />
+      ) : null}
+
+      {reviewReport ? (
+        <ReviewModal
+          report={reviewReport}
+          note={reviewNote}
+          saving={reviewSaving}
+          onChange={setReviewNote}
+          onClose={() => {
+            setReviewReport(null);
+            setReviewNote("");
+          }}
+          onApprove={() => handleApproveReport(reviewReport)}
+          onRevision={handleRevisionReport}
+        />
+      ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function ReportDetailModal({
+  report,
+  onClose,
+  onReview,
+}: {
+  report: KbmReport;
+  onClose: () => void;
+  onReview: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Detail Laporan KBM"
+      subtitle={`${report.students?.full_name || "-"} • ${
+        report.subjects?.name || "-"
+      }`}
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
+              report.status
+            )}`}
+          >
+            {getStatusLabel(report.status)}
+          </span>
+
+          <span className="rounded-full bg-[#FFF8EF] px-3 py-1 text-xs font-bold text-[#7A1F2B]">
+            {formatDate(report.report_date)}
+          </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <InfoBox label="Nama Siswa" value={report.students?.full_name || "-"} />
+          <InfoBox label="NIS" value={report.students?.nis || "-"} />
+          <InfoBox label="Guru" value={report.teachers?.full_name || "-"} />
+          <InfoBox label="Email Guru" value={report.teachers?.email || "-"} />
+          <InfoBox label="Mata Pelajaran" value={report.subjects?.name || "-"} />
+          <InfoBox label="Kelas" value={report.class_level || "-"} />
+          <InfoBox label="Semester" value={report.semester || "-"} />
+          <InfoBox label="BAB" value={report.chapter || "-"} />
+        </div>
+
+        <InfoBox label="Materi Pokok" value={report.material_topic || "-"} />
+        <InfoBox label="Masalah / Kendala" value={report.learning_issue || "-"} />
+        <InfoBox label="Solusi" value={report.solution || "-"} />
+        <InfoBox label="Catatan Guru" value={report.teacher_note || "-"} />
+
+        <button
+          type="button"
+          onClick={onReview}
+          className="h-11 w-full rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D]"
+        >
+          Review Laporan KBM
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ReviewModal({
+  report,
+  note,
+  saving,
+  onChange,
+  onClose,
+  onApprove,
+  onRevision,
+}: {
+  report: KbmReport;
+  note: string;
+  saving: boolean;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onApprove: () => void;
+  onRevision: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Review Laporan KBM"
+      subtitle={`${report.students?.full_name || "-"} • ${
+        report.subjects?.name || "-"
+      }`}
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-[#E8D6C1] bg-white p-4">
+          <p className="text-sm font-bold text-[#2B1B18]">Ringkasan Laporan</p>
+          <p className="mt-2 text-sm leading-6 text-[#6B4A3A]">
+            {report.teachers?.full_name || "-"} melaporkan KBM tanggal{" "}
+            {formatDate(report.report_date)} untuk materi{" "}
+            <b>{report.material_topic || "-"}</b>.
+          </p>
+        </div>
+
+        <div>
+          <label className="text-sm font-bold">Catatan Revisi</label>
+          <textarea
+            value={note}
+            onChange={(event) => onChange(event.target.value)}
+            rows={5}
+            placeholder="Isi jika laporan perlu revisi. Contoh: Mohon lengkapi solusi dan catatan perkembangan siswa."
+            className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+          />
+          <p className="mt-2 text-xs leading-5 text-[#6B4A3A]">
+            Catatan revisi akan ditambahkan ke bagian Catatan Guru agar guru bisa
+            melihat arahan dari Kepala Sekolah.
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={onRevision}
+            disabled={saving}
+            className="h-11 rounded-xl border border-red-200 text-sm font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Memproses..." : "Kirim Revisi"}
+          </button>
+
+          <button
+            type="button"
+            onClick={onApprove}
+            disabled={saving}
+            className="h-11 rounded-xl bg-[#158A58] text-sm font-bold text-white transition hover:bg-[#116C46] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Memproses..." : "Approve"}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ModalShell({
+  title,
+  subtitle,
+  children,
+  onClose,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      <div className="flex max-h-[88vh] w-full max-w-[720px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div>
+            <h2 className="text-xl font-bold">{title}</h2>
+            <p className="mt-1 text-sm text-[#6B4A3A]">{subtitle}</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-white p-4 text-sm">
+      <p className="font-bold text-[#6B4A3A]">{label}</p>
+      <p className="mt-2 whitespace-pre-line leading-6 text-[#2B1B18]">
+        {value}
+      </p>
+    </div>
   );
 }

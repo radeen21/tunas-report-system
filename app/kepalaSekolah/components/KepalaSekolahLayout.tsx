@@ -23,6 +23,7 @@ import {
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
+import AcademicFooter from "@/app/components/AcademicFooter";
 
 type ActiveMenu =
   | "Dashboard"
@@ -100,7 +101,10 @@ export default function KepalaSekolahLayout({
   activeMenu,
   searchPlaceholder = "Cari murid, guru, atau report...",
   children,
+  buttonLabel,
 }: KepalaSekolahLayoutProps) {
+  void buttonLabel;
+
   const [principalName, setPrincipalName] = useState("Kepala Sekolah");
 
   useEffect(() => {
@@ -145,16 +149,18 @@ export default function KepalaSekolahLayout({
               <Link
                 key={menu.name}
                 href={menu.href}
-                className={`group flex items-center gap-3 rounded-2xl px-4 py-3 text-[14px] font-semibold transition ${isActive
-                  ? "bg-white/12 text-white"
-                  : "text-white/75 hover:bg-white/8 hover:text-white"
-                  }`}
+                className={`group flex items-center gap-3 rounded-2xl px-4 py-3 text-[14px] font-semibold transition ${
+                  isActive
+                    ? "bg-white/12 text-white"
+                    : "text-white/75 hover:bg-white/8 hover:text-white"
+                }`}
               >
                 <Icon
                   size={17}
                   strokeWidth={2.2}
-                  className={`shrink-0 ${isActive ? "text-[#E7792B]" : "text-white/70"
-                    }`}
+                  className={`shrink-0 ${
+                    isActive ? "text-[#E7792B]" : "text-white/70"
+                  }`}
                 />
 
                 <span className="truncate">{menu.name}</span>
@@ -244,7 +250,10 @@ export default function KepalaSekolahLayout({
           </div>
         </header>
 
-        <main className="px-6 py-7 lg:px-8">{children}</main>
+        <main className="px-6 py-7 lg:px-8">
+          {children}
+          <AcademicFooter />
+        </main>
       </div>
     </div>
   );

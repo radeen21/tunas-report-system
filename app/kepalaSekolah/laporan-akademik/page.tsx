@@ -3,13 +3,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CheckCircle2,
-  ClipboardCheck,
   Eye,
   FileText,
   GraduationCap,
   Search,
   Send,
-  UserCheck,
   X,
   XCircle,
 } from "lucide-react";
@@ -88,6 +86,8 @@ type EnrichedReport = AcademicReportRow & {
   student_name: string;
   student_grade: string;
   student_level: string;
+  student_nis: string;
+  student_nisn: string;
   teacher_name: string;
   subject_name: string;
 };
@@ -158,6 +158,21 @@ function getReportTypeLabel(type?: string | null) {
   return "Bulanan";
 }
 
+function formatExportDateName() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function escapeCsvCell(value: string | number | null | undefined) {
+  const text = String(value ?? "-").replace(/"/g, '""');
+
+  return `"${text}"`;
+}
+
 export default function KepalaSekolahReportsPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -213,6 +228,8 @@ export default function KepalaSekolahReportsPage() {
         student_name: student?.full_name || "-",
         student_grade: student?.grade || "-",
         student_level: student?.level || "-",
+        student_nis: student?.nis || "-",
+        student_nisn: student?.nisn || "-",
         subject_name: subject?.name || "-",
       };
     });
@@ -396,6 +413,81 @@ export default function KepalaSekolahReportsPage() {
     setSelectedReport(null);
   }
 
+  function handleExportData() {
+    if (filteredReports.length === 0) {
+      alert("Tidak ada data laporan akademik yang bisa diexport.");
+      return;
+    }
+
+    const rows = filteredReports.map((report, index) => {
+      const status = getStatusKey(report);
+
+      return {
+        No: index + 1,
+        "Nama Siswa": report.student_name,
+        NIS: report.student_nis,
+        NISN: report.student_nisn,
+        Level: report.student_level,
+        Kelas: report.student_grade,
+        Guru: report.teacher_name,
+        "Mata Pelajaran": report.subject_name,
+        Periode: report.report_period || "-",
+        "Jenis Laporan": getReportTypeLabel(report.report_type),
+        "UH 1": formatNumber(report.uh_1 || report.uh_score),
+        "UH 2": formatNumber(report.uh_2),
+        "UH 3": formatNumber(report.uh_3),
+        "UH 4": formatNumber(report.uh_4),
+        "Rata-rata UH": formatNumber(report.average_uh || report.uh_score),
+        "Tugas 1": formatNumber(report.task_1 || report.task_score),
+        "Tugas 2": formatNumber(report.task_2),
+        "Tugas 3": formatNumber(report.task_3),
+        "Tugas 4": formatNumber(report.task_4),
+        "Tugas 5": formatNumber(report.task_5),
+        "Rata-rata Tugas": formatNumber(report.average_task || report.task_score),
+        UTS: formatNumber(report.mid_score || report.uts_score),
+        UAS: formatNumber(report.final_exam_score || report.uas_score),
+        "Nilai Proses": formatNumber(report.process_score),
+        "Nilai Akhir": formatNumber(report.final_grade || report.final_score),
+        Predikat: report.predicate || report.description || "-",
+        "Catatan Guru": report.teacher_comment || "-",
+        Status: getStatusLabel(status),
+        "Submitted At": formatDateTime(report.submitted_at),
+        "Approved At": formatDateTime(report.approved_at),
+        "Rejected At": formatDateTime(report.rejected_at),
+        "Catatan Rejection": report.rejection_note || "-",
+      };
+    });
+
+    const headers = Object.keys(rows[0]);
+
+    const csvContent = [
+      headers.map((header) => escapeCsvCell(header)).join(","),
+      ...rows.map((row) =>
+        headers
+          .map((header) => {
+            const value = row[header as keyof typeof row];
+            return escapeCsvCell(value);
+          })
+          .join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `laporan-akademik-${formatExportDateName()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <KepalaSekolahLayout
       activeMenu="Laporan Akademik"
@@ -417,6 +509,14 @@ export default function KepalaSekolahReportsPage() {
               approve atau reject laporan sebelum tampil ke orang tua.
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={handleExportData}
+            className="h-11 w-fit rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] shadow-sm transition hover:bg-[#FFF8EF]"
+          >
+            Export Data
+          </button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

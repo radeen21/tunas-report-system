@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  BookOpen,
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
@@ -45,6 +44,9 @@ type ScheduleRow = {
   session_name: string | null;
   material_topic: string | null;
   semester?: string | null;
+  curriculum_program_id?: string | null;
+  curriculum_chapter_id?: string | null;
+  curriculum_sub_chapter_id?: string | null;
 };
 
 type AttendanceRow = {
@@ -100,6 +102,9 @@ type RombelSchedule = {
   session_name: string;
   material_topic: string;
   semester: string;
+  curriculum_program_id: string | null;
+  curriculum_chapter_id: string | null;
+  curriculum_sub_chapter_id: string | null;
   schedules: ScheduleRow[];
   students: StudentRow[];
   alreadyAttendance: boolean;
@@ -155,7 +160,7 @@ function formatDate(value?: string | null) {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(new Date(`${value}T00:00:00`));
 }
 
 function formatTime(value?: string | null) {
@@ -173,6 +178,9 @@ function createRombelKey(schedule: ScheduleRow) {
     schedule.session_name || "",
     schedule.material_topic || "",
     schedule.semester || "",
+    schedule.curriculum_program_id || "",
+    schedule.curriculum_chapter_id || "",
+    schedule.curriculum_sub_chapter_id || "",
   ].join("|");
 }
 
@@ -425,6 +433,9 @@ export default function TeacherAbsensiPage() {
             session_name: schedule.session_name || "-",
             material_topic: schedule.material_topic || "-",
             semester: schedule.semester || "-",
+            curriculum_program_id: schedule.curriculum_program_id || null,
+            curriculum_chapter_id: schedule.curriculum_chapter_id || null,
+            curriculum_sub_chapter_id: schedule.curriculum_sub_chapter_id || null,
             schedules: [schedule],
             students: student ? [student] : [],
             alreadyAttendance: hasAttendance,
@@ -474,6 +485,8 @@ export default function TeacherAbsensiPage() {
     if (!selectedRombel) return programs;
 
     return programs.filter((program) => {
+      if (program.id === selectedRombel.curriculum_program_id) return true;
+
       const matchSubject = sameSubject(
         program.subject_name,
         selectedRombel.subject_name
@@ -487,7 +500,12 @@ export default function TeacherAbsensiPage() {
         (student) => student.grade === program.grade
       );
 
-      return matchSubject || (matchLevel && matchGrade);
+      const matchSemester =
+        !selectedRombel.semester ||
+        selectedRombel.semester === "-" ||
+        program.semester === selectedRombel.semester;
+
+      return (matchSubject || (matchLevel && matchGrade)) && matchSemester;
     });
   }, [programs, selectedRombel]);
 
@@ -539,6 +557,9 @@ export default function TeacherAbsensiPage() {
 
     if (!rombel) {
       setRombelStudents([]);
+      setSelectedProgramId("");
+      setSelectedChapterId("");
+      setSelectedSubChapterId("");
       return;
     }
 
@@ -570,9 +591,9 @@ export default function TeacherAbsensiPage() {
 
     setRombelStudents(nextStudents);
 
-    setSelectedProgramId("");
-    setSelectedChapterId("");
-    setSelectedSubChapterId("");
+    setSelectedProgramId(rombel.curriculum_program_id || "");
+    setSelectedChapterId(rombel.curriculum_chapter_id || "");
+    setSelectedSubChapterId(rombel.curriculum_sub_chapter_id || "");
   }
 
   function updateStudentAttendance(
@@ -665,7 +686,13 @@ export default function TeacherAbsensiPage() {
 
   async function handleSaveAttendance() {
     if (!validateBeforeSave()) return;
-    if (!teacher?.id || !selectedRombel || !selectedProgram || !selectedChapter || !selectedSubChapter) {
+    if (
+      !teacher?.id ||
+      !selectedRombel ||
+      !selectedProgram ||
+      !selectedChapter ||
+      !selectedSubChapter
+    ) {
       return;
     }
 
@@ -783,9 +810,9 @@ export default function TeacherAbsensiPage() {
           </h1>
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
-            Pilih jadwal/rombel, pilih Program Semester, Bab, Sub Bab, lalu
-            input absensi murid. Sub Bab yang dipilih otomatis menjadi checklist
-            realisasi Program Semester.
+            Pilih jadwal/rombel. Jika jadwal sudah terhubung dengan Program
+            Semester, Bab, dan Sub Bab, data tersebut otomatis terpilih di
+            halaman ini.
           </p>
         </div>
 
@@ -842,6 +869,9 @@ export default function TeacherAbsensiPage() {
                 setDateFilter(event.target.value);
                 setSelectedRombelKey("");
                 setRombelStudents([]);
+                setSelectedProgramId("");
+                setSelectedChapterId("");
+                setSelectedSubChapterId("");
               }}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             />
@@ -906,6 +936,16 @@ export default function TeacherAbsensiPage() {
                       Materi: {rombel.material_topic}
                     </p>
 
+                    {rombel.curriculum_sub_chapter_id ? (
+                      <p className="mt-2 rounded-xl bg-[#F4E5DA] px-3 py-2 text-[12px] font-bold text-[#8A2332]">
+                        Terhubung Program Semester
+                      </p>
+                    ) : (
+                      <p className="mt-2 rounded-xl bg-[#F1F5F9] px-3 py-2 text-[12px] font-bold text-[#64748B]">
+                        Belum terhubung Program Semester
+                      </p>
+                    )}
+
                     <p className="mt-2 text-[12px] font-bold text-[#8A5A48]">
                       {rombel.students.length} murid
                     </p>
@@ -922,8 +962,20 @@ export default function TeacherAbsensiPage() {
               </h2>
 
               <p className="mt-1 text-[13px] text-[#6F5549]">
-                Pilih Program, Bab, dan Sub Bab yang sedang diajarkan.
+                Jika jadwal sudah dibuat dari Program Semester, pilihan di bawah
+                akan otomatis terisi.
               </p>
+
+              {selectedRombel ? (
+                <div className="mt-4 rounded-2xl border border-[#EADACA] bg-[#FFF8EF] px-4 py-3">
+                  <p className="text-[13px] font-bold text-[#6F5549]">
+                    Materi dari Jadwal
+                  </p>
+                  <p className="mt-1 text-[14px] font-extrabold text-[#2B1B18]">
+                    {selectedRombel.material_topic || "-"}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="mt-4 grid gap-4 md:grid-cols-3">
                 <FormGroup label="Program">

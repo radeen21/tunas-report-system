@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import AcademicFooter from "@/app/components/AcademicFooter";
 
 type ActiveMenu =
   | "Dashboard"
@@ -42,8 +43,6 @@ type TeacherLayoutProps = {
   teacherName?: string;
   teacherSubject?: string;
   searchPlaceholder?: string;
-
-  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
   buttonLabel?: string;
 };
 
@@ -103,7 +102,10 @@ export default function TeacherLayout({
   teacherName,
   teacherSubject,
   children,
+  buttonLabel,
 }: TeacherLayoutProps) {
+  void buttonLabel;
+
   const pathname = usePathname();
   const router = useRouter();
 
@@ -137,6 +139,24 @@ export default function TeacherLayout({
           .maybeSingle();
 
         teacher = data;
+      }
+
+      if (!teacher) {
+        const teacherCode =
+          localStorage.getItem("hstkb_teacher_code") ||
+          localStorage.getItem("teacher_code") ||
+          "";
+
+        if (teacherCode) {
+          const { data } = await supabase
+            .from("teachers")
+            .select("*")
+            .eq("teacher_code", teacherCode)
+            .limit(1)
+            .maybeSingle();
+
+          teacher = data;
+        }
       }
 
       if (!teacher) {
@@ -178,9 +198,12 @@ export default function TeacherLayout({
   async function handleLogout() {
     localStorage.removeItem("hstkb_demo_role");
     localStorage.removeItem("hstkb_demo_email");
+    localStorage.removeItem("hstkb_email");
     localStorage.removeItem("hstkb_full_name");
     localStorage.removeItem("hstkb_teacher_name");
     localStorage.removeItem("hstkb_teacher_subject");
+    localStorage.removeItem("hstkb_teacher_code");
+    localStorage.removeItem("teacher_code");
 
     await supabase.auth.signOut();
 
@@ -188,8 +211,8 @@ export default function TeacherLayout({
   }
 
   return (
-    <main className="min-h-screen bg-[#F6EFE6] text-[#2C1A17]">
-      <div className="flex min-h-screen">
+    <main className="min-h-screen w-full overflow-x-hidden bg-[#F6EFE6] text-[#2C1A17]">
+      <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-[#F6EFE6]">
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-[266px] flex-col bg-[#8A0017] text-white">
           <div className="flex h-[98px] items-center border-b border-white/10 px-5">
             <Link href="/teacher" className="flex items-center gap-3">
@@ -222,14 +245,15 @@ export default function TeacherLayout({
                   menu.href === "/teacher"
                     ? pathname === "/teacher"
                     : pathname === menu.href ||
-                    pathname.startsWith(`${menu.href}/`);
+                      pathname.startsWith(`${menu.href}/`);
 
                 return (
                   <Link
                     key={menu.name}
                     href={menu.href}
-                    className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
-                      }`}
+                    className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${
+                      isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
+                    }`}
                   >
                     <span className="flex items-center gap-3">
                       <Icon className="h-[18px] w-[18px]" />
@@ -276,6 +300,7 @@ export default function TeacherLayout({
                 onClick={handleLogout}
                 className="text-white/80 transition hover:text-white"
                 title="Logout"
+                type="button"
               >
                 <LogOut className="h-4 w-4" />
               </button>
@@ -283,8 +308,8 @@ export default function TeacherLayout({
           </div>
         </aside>
 
-        <section className="ml-[266px] min-h-screen flex-1">
-          <header className="sticky top-0 z-30 flex h-[98px] items-center justify-between border-b border-[#E8D7C5] bg-[#F6EFE6]/95 px-8 backdrop-blur">
+        <section className="ml-[266px] min-h-screen w-[calc(100%-266px)] max-w-[calc(100%-266px)] flex-1 overflow-x-hidden bg-[#F6EFE6]">
+          <header className="sticky top-0 z-30 flex h-[98px] w-full max-w-full items-center justify-between border-b border-[#E8D7C5] bg-[#F6EFE6]/95 px-8 backdrop-blur">
             <div className="relative w-full max-w-[470px]">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
@@ -293,18 +318,18 @@ export default function TeacherLayout({
               />
             </div>
 
-            <div className="ml-8 flex items-center gap-5">
-              <Bell className="h-5 w-5 text-[#8A4A32]" />
+            <div className="ml-8 flex min-w-0 items-center gap-5">
+              <Bell className="h-5 w-5 shrink-0 text-[#8A4A32]" />
 
-              <div className="h-10 w-px bg-[#DCC8B6]" />
+              <div className="h-10 w-px shrink-0 bg-[#DCC8B6]" />
 
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EEE5DA] text-[17px] font-bold text-[#8A2332]">
                   {getInitials(displayName)}
                 </div>
 
-                <div className="leading-tight">
-                  <p className="text-[16px] font-bold text-[#2C1A17]">
+                <div className="min-w-0 leading-tight">
+                  <p className="truncate text-[16px] font-bold text-[#2C1A17]">
                     {displayName}
                   </p>
                   <p className="mt-1 max-w-[340px] truncate text-[13px] text-[#7D5E50]">
@@ -315,7 +340,10 @@ export default function TeacherLayout({
             </div>
           </header>
 
-          <div className="px-8 py-8">{children}</div>
+          <div className="w-full max-w-full overflow-x-hidden px-8 py-8">
+            <div className="w-full max-w-full overflow-hidden">{children}</div>
+            <AcademicFooter />
+          </div>
         </section>
       </div>
     </main>

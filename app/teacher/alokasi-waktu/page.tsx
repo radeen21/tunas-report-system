@@ -102,8 +102,8 @@ const initialForm: AllocationForm = {
   student_id: "",
   subject_id: "",
   class_level: "",
-  academic_year: "2025/2026",
-  semester: "Genap",
+  academic_year: "2026/2027",
+  semester: "Ganjil",
   month_name: "",
   week_1: "",
   week_2: "",
@@ -130,6 +130,10 @@ const monthOptions = [
 function normalizeRelation<T>(value: T | T[] | null): T | null {
   if (Array.isArray(value)) return value[0] || null;
   return value || null;
+}
+
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
 function formatTimeAllocation(value: string | null) {
@@ -187,25 +191,63 @@ export default function TeacherAlokasiWaktuPage() {
   const [form, setForm] = useState<AllocationForm>(initialForm);
 
   async function fetchActiveTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
+
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
+      "";
+
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
     const { data, error } = await supabase
       .from("teachers")
       .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .order("teacher_code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
 
-    const teacherList = data || [];
+    setTeacher((data as Teacher) || null);
 
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return (data as Teacher) || null;
   }
 
   async function fetchStudents(teacherId: string) {
@@ -326,13 +368,60 @@ export default function TeacherAlokasiWaktuPage() {
 
   useEffect(() => {
     fetchPageData();
+
+    const channel = supabase
+      .channel("teacher-alokasi-waktu-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "time_allocations" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        () => fetchPageData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
+  const teacherSubjectNames = useMemo(() => {
+    return (teacher?.subjects || [])
+      .map((subject) => normalizeText(subject))
+      .filter(Boolean);
+  }, [teacher]);
+
+  const subjectOptions = useMemo(() => {
+    if (teacherSubjectNames.length === 0) return subjects;
+
+    const matchedSubjects = subjects.filter((subject) => {
+      const subjectName = normalizeText(subject.name);
+
+      return teacherSubjectNames.some((teacherSubject) => {
+        return (
+          teacherSubject.includes(subjectName) ||
+          subjectName.includes(teacherSubject)
+        );
+      });
+    });
+
+    return matchedSubjects.length > 0 ? matchedSubjects : subjects;
+  }, [subjects, teacherSubjectNames]);
 
   const filteredAllocations = useMemo(() => {
     const keyword = search.toLowerCase();
 
     return allocations.filter((allocation) => {
       const matchSearch =
+        !keyword ||
         allocation.students?.full_name?.toLowerCase().includes(keyword) ||
         allocation.students?.grade?.toLowerCase().includes(keyword) ||
         allocation.subjects?.name?.toLowerCase().includes(keyword) ||
@@ -512,6 +601,12 @@ export default function TeacherAlokasiWaktuPage() {
   return (
     <TeacherLayout
       activeMenu="Alokasi Waktu"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={
+        teacher?.subjects?.length
+          ? `Guru — ${teacher.subjects.slice(0, 4).join(", ")}`
+          : "Guru"
+      }
       searchPlaceholder="Cari alokasi waktu..."
       buttonLabel="+ Tambah Alokasi"
     >
@@ -863,8 +958,8 @@ export default function TeacherAlokasiWaktuPage() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[470px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
               <h2 className="text-xl font-bold">Tambah Alokasi Waktu</h2>
 
               <button
@@ -876,14 +971,14 @@ export default function TeacherAlokasiWaktuPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               {errorMessage && (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
               )}
 
-              <form onSubmit={handleSubmitAllocation} className="space-y-4">
+              <form onSubmit={handleSubmitAllocation} className="space-y-4 pb-24">
                 <div>
                   <label className="text-sm font-bold">Murid</label>
                   <select
@@ -910,9 +1005,10 @@ export default function TeacherAlokasiWaktuPage() {
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
                     <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
+                    {subjectOptions.map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {subject.name}
+                        {subject.grade ? ` — ${subject.grade}` : ""}
                       </option>
                     ))}
                   </select>
@@ -938,7 +1034,7 @@ export default function TeacherAlokasiWaktuPage() {
                       onChange={(event) =>
                         setForm({ ...form, academic_year: event.target.value })
                       }
-                      placeholder="2025/2026"
+                      placeholder="2026/2027"
                       className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                     />
                   </div>
@@ -1039,7 +1135,7 @@ export default function TeacherAlokasiWaktuPage() {
                   />
                 </div>
 
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
+                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-4 pt-4">
                   <button
                     type="submit"
                     disabled={saving}

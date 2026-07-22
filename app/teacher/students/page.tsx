@@ -106,12 +106,16 @@ const initialKbmForm: KbmForm = {
   learning_issue: "",
   solution: "",
   teacher_note: "",
-  status: "draft",
+  status: "pending_review",
 };
 
 function normalizeRelation<T>(value: T | T[] | null): T | null {
   if (Array.isArray(value)) return value[0] || null;
   return value || null;
+}
+
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
 }
 
 function getInitials(name: string) {
@@ -152,6 +156,10 @@ function getProgressColor(progress: number | null) {
   return "bg-red-500";
 }
 
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function TeacherStudentsPage() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
@@ -173,25 +181,63 @@ export default function TeacherStudentsPage() {
   const [reportForm, setReportForm] = useState<KbmForm>(initialKbmForm);
 
   async function fetchActiveTeacher() {
+    const { data: authData } = await supabase.auth.getUser();
+
+    const email =
+      authData.user?.email ||
+      localStorage.getItem("hstkb_demo_email") ||
+      localStorage.getItem("hstkb_email") ||
+      "";
+
+    if (email) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
+      "";
+
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("id, full_name, email, phone, teacher_code, subjects")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+
+      if (data) {
+        setTeacher(data as Teacher);
+        return data as Teacher;
+      }
+    }
+
     const { data, error } = await supabase
       .from("teachers")
       .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("created_at", { ascending: true });
+      .order("teacher_code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
 
-    const teacherList = data || [];
+    setTeacher((data as Teacher) || null);
 
-    const sarahTeacher =
-      teacherList.find((item) =>
-        item.full_name?.toLowerCase().includes("sarah")
-      ) || null;
-
-    const selectedTeacher = sarahTeacher || teacherList[0] || null;
-
-    setTeacher(selectedTeacher);
-
-    return selectedTeacher;
+    return (data as Teacher) || null;
   }
 
   async function fetchStudents(teacherId: string) {
@@ -317,6 +363,34 @@ export default function TeacherStudentsPage() {
 
   useEffect(() => {
     fetchPageData();
+
+    const channel = supabase
+      .channel("teacher-students-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "academic_reports" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        () => fetchPageData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const filteredStudents = useMemo(() => {
@@ -338,6 +412,29 @@ export default function TeacherStudentsPage() {
       return matchSearch && matchLevel && matchStatus;
     });
   }, [students, search, levelFilter, statusFilter]);
+
+  const teacherSubjectNames = useMemo(() => {
+    return (teacher?.subjects || [])
+      .map((subject) => normalizeText(subject))
+      .filter(Boolean);
+  }, [teacher]);
+
+  const reportSubjectOptions = useMemo(() => {
+    if (teacherSubjectNames.length === 0) return subjects;
+
+    const matchedSubjects = subjects.filter((subject) => {
+      const subjectName = normalizeText(subject.name);
+
+      return teacherSubjectNames.some((teacherSubject) => {
+        return (
+          teacherSubject.includes(subjectName) ||
+          subjectName.includes(teacherSubject)
+        );
+      });
+    });
+
+    return matchedSubjects.length > 0 ? matchedSubjects : subjects;
+  }, [subjects, teacherSubjectNames]);
 
   const activeStudents = students.filter(
     (student) => student.status === "active" || !student.status
@@ -400,7 +497,8 @@ export default function TeacherStudentsPage() {
       ...initialKbmForm,
       student_id: student?.id || "",
       class_level: student?.grade || "",
-      report_date: new Date().toISOString().slice(0, 10),
+      report_date: getTodayDate(),
+      status: "pending_review",
     });
 
     setIsReportModalOpen(true);
@@ -412,7 +510,8 @@ export default function TeacherStudentsPage() {
 
     setReportForm({
       ...initialKbmForm,
-      report_date: new Date().toISOString().slice(0, 10),
+      report_date: getTodayDate(),
+      status: "pending_review",
     });
   }
 
@@ -826,7 +925,8 @@ export default function TeacherStudentsPage() {
                     <span className="font-bold text-[#2B1B18]">
                       kbm_reports
                     </span>
-                    . Setelah disimpan, laporan akan muncul di menu Laporan KBM.
+                    . Setelah disimpan, laporan akan muncul di menu Laporan KBM
+                    dan menunggu review Kepala Sekolah.
                   </p>
                 </div>
               </div>
@@ -837,8 +937,8 @@ export default function TeacherStudentsPage() {
 
       {isReportModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[460px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
               <h2 className="text-xl font-bold">Buat Laporan KBM</h2>
 
               <button
@@ -850,14 +950,20 @@ export default function TeacherStudentsPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
               {errorMessage && (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
               )}
 
-              <form onSubmit={handleSubmitKbmReport} className="space-y-4">
+              <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
+                Laporan dari menu ini bersifat input manual. Untuk laporan yang
+                otomatis membawa jadwal, Bab, Sub Bab, dan Materi Pokok,
+                gunakan menu Jadwal Mengajar atau Absensi KBM.
+              </div>
+
+              <form onSubmit={handleSubmitKbmReport} className="space-y-4 pb-2">
                 <div>
                   <label className="text-sm font-bold">Murid</label>
                   <select
@@ -889,9 +995,10 @@ export default function TeacherStudentsPage() {
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
                     <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
+                    {reportSubjectOptions.map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {subject.name}
+                        {subject.grade ? ` — ${subject.grade}` : ""}
                       </option>
                     ))}
                   </select>
@@ -1036,10 +1143,13 @@ export default function TeacherStudentsPage() {
                     }
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
-                    <option value="draft">draft</option>
                     <option value="pending_review">pending_review</option>
-                    <option value="published">published</option>
+                    <option value="draft">draft</option>
                   </select>
+                  <p className="mt-1 text-xs text-[#6B4A3A]">
+                    Default pending_review agar langsung masuk ke review Kepala
+                    Sekolah.
+                  </p>
                 </div>
 
                 <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">

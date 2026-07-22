@@ -1,109 +1,281 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Bell,
+  BookOpen,
+  CalendarDays,
+  CheckSquare,
+  FileText,
+  GalleryHorizontal,
+  LayoutGrid,
+  LogOut,
+  Search,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import AcademicFooter from "@/app/components/AcademicFooter";
 
 type ActiveMenu =
-  | "Dashboard Saya"
+  | "Dashboard"
   | "Jadwal Belajar"
+  | "Absensi"
   | "Materi"
-  | "Tugas & Hasil"
-  | "Progress Saya"
-  | "Laporan Saya"
+  | "Tugas"
+  | "Laporan Akademik"
   | "Gallery";
 
-type Props = {
+type StudentLayoutProps = {
+  children: React.ReactNode;
   activeMenu: ActiveMenu;
-  children: ReactNode;
+  studentName?: string;
+  studentClass?: string;
+  searchPlaceholder?: string;
+
+  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
+  buttonLabel?: string;
 };
 
-const menus = [
-  { name: "Dashboard Saya", icon: "▦", href: "/student" },
-  { name: "Jadwal Belajar", icon: "📅", href: "/student/schedule" },
-  { name: "Materi", icon: "📖", href: "/student/materi" },
-  { name: "Tugas & Hasil", icon: "📋", href: "/student/tugas" },
-  { name: "Progress Saya", icon: "⌁", href: "/student/progress" },
-  { name: "Laporan Saya", icon: "📄", href: "/student/laporan" },
-  { name: "Gallery", icon: "🖼️", href: "/student/gallery" },
-] as const;
+type MenuItem = {
+  name: ActiveMenu;
+  href: string;
+  icon: LucideIcon;
+};
 
-export default function StudentLayout({ activeMenu, children }: Props) {
+const menus: MenuItem[] = [
+  { name: "Dashboard", href: "/student", icon: LayoutGrid },
+  { name: "Jadwal Belajar", href: "/student/jadwal", icon: CalendarDays },
+  { name: "Absensi", href: "/student/absensi", icon: CheckSquare },
+  { name: "Materi", href: "/student/materials", icon: BookOpen },
+  { name: "Tugas", href: "/student/assignments", icon: FileText },
+  { name: "Laporan Akademik", href: "/student/reports", icon: BookOpen },
+  { name: "Gallery", href: "/student/gallery", icon: GalleryHorizontal },
+];
+
+function getInitials(name: string) {
+  if (!name) return "S";
+
+  const words = name.trim().split(" ").filter(Boolean);
+
+  if (words.length === 1) {
+    return words[0].charAt(0).toUpperCase();
+  }
+
+  return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
+}
+
+export default function StudentLayout({
+  activeMenu,
+  searchPlaceholder = "Cari jadwal, materi, atau tugas...",
+  studentName,
+  studentClass,
+  children,
+  buttonLabel,
+}: StudentLayoutProps) {
+  void buttonLabel;
+
+  const pathname = usePathname();
+  const router = useRouter();
+
+  const [displayName, setDisplayName] = useState(studentName || "Murid");
+  const [displayClass, setDisplayClass] = useState(studentClass || "Student Portal");
+
+  useEffect(() => {
+    async function loadStudentProfile() {
+      const cachedName = localStorage.getItem("hstkb_student_name");
+      const cachedClass = localStorage.getItem("hstkb_student_class");
+
+      if (cachedName) setDisplayName(cachedName);
+      if (cachedClass) setDisplayClass(cachedClass);
+
+      const { data: authData } = await supabase.auth.getUser();
+
+      const email =
+        authData.user?.email ||
+        localStorage.getItem("hstkb_demo_email") ||
+        localStorage.getItem("hstkb_email") ||
+        "";
+
+      if (!email) return;
+
+      const { data: student } = await supabase
+        .from("students")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+
+      if (student) {
+        const name = student.full_name || "Murid";
+        const classInfo = `${student.level || ""} ${student.grade || ""}`.trim();
+
+        setDisplayName(name);
+        setDisplayClass(classInfo || "Student Portal");
+
+        localStorage.setItem("hstkb_student_name", name);
+        localStorage.setItem("hstkb_student_class", classInfo || "Student Portal");
+      }
+    }
+
+    if (studentName && studentName !== "Murid") {
+      setDisplayName(studentName);
+      localStorage.setItem("hstkb_student_name", studentName);
+    }
+
+    if (studentClass && studentClass !== "Student Portal") {
+      setDisplayClass(studentClass);
+      localStorage.setItem("hstkb_student_class", studentClass);
+    }
+
+    loadStudentProfile();
+  }, [studentName, studentClass]);
+
+  async function handleLogout() {
+    localStorage.removeItem("hstkb_demo_role");
+    localStorage.removeItem("hstkb_demo_email");
+    localStorage.removeItem("hstkb_full_name");
+    localStorage.removeItem("hstkb_student_name");
+    localStorage.removeItem("hstkb_student_class");
+
+    await supabase.auth.signOut();
+
+    router.push("/");
+  }
+
+  const initials = useMemo(() => getInitials(displayName), [displayName]);
+
   return (
-    <main className="min-h-screen bg-[#FAF3EA] text-[#2B1B18]">
-      <header className="sticky top-0 z-20 border-b border-[#E8D6C1] bg-[#FAF3EA]">
-        <div className="mx-auto flex h-[82px] max-w-[1300px] items-center justify-between px-6">
-          <div className="flex items-center gap-3">
-            <div className="relative h-11 w-11 overflow-hidden rounded-full bg-white shadow-sm ring-1 ring-[#E8D6C1]">
-              <Image
-                src="/icon_hstkb_logo.png"
-                alt="Homeschooling Tunas Karya Bangsa"
-                width={160}
-                height={60}
-                className="absolute left-0 top-1/2 h-11 w-auto -translate-y-1/2"
-                priority
-              />
-            </div>
-
-            <div>
-              <p className="text-sm font-bold">HSTKB</p>
-              <p className="text-xs leading-tight text-[#6B4A3A]">
-                Management
-                <br />
-                Sekolah
-              </p>
-            </div>
-          </div>
-
-          <nav className="flex items-center gap-2">
-            {menus.map((menu) => {
-              const isActive = menu.name === activeMenu;
-
-              return (
-                <Link
-                  key={menu.name}
-                  href={menu.href}
-                  className={`rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                    isActive
-                      ? "bg-[#F1DFD5] text-[#7A1F2B]"
-                      : "text-[#6B4A3A] hover:bg-[#F1DFD5] hover:text-[#7A1F2B]"
-                  }`}
-                >
-                  <span className="mr-2">{menu.icon}</span>
-                  {menu.name}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="flex items-center gap-4">
-            <button
-              type="button"
-              className="relative text-[#7A1F2B] hover:text-[#54131D]"
-            >
-              🔔
-              <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-[#D96B2B]" />
-            </button>
-
-            <div className="flex items-center gap-3 rounded-full border border-[#E8D6C1] bg-white px-3 py-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FDE7D7] text-xs font-bold text-[#7A1F2B]">
-                JW
+    <main className="min-h-screen bg-[#F6EFE6] text-[#2C1A17]">
+      <div className="flex min-h-screen">
+        <aside className="fixed left-0 top-0 z-40 flex h-screen w-[266px] flex-col bg-[#7A0016] text-white">
+          <div className="flex h-[98px] items-center border-b border-white/10 px-5">
+            <Link href="/student" className="flex items-center gap-3">
+              <div className="h-12 w-12 overflow-hidden rounded-full bg-white/10">
+                <Image
+                  src="/icon_hstkb_logo.png"
+                  alt="HSTKB Logo"
+                  width={48}
+                  height={48}
+                  className="h-full w-full object-contain"
+                  priority
+                />
               </div>
 
               <div>
-                <p className="text-sm font-bold">Jonathan Wijaya</p>
-                <p className="text-xs text-[#6B4A3A]">Student</p>
+                <p className="text-[18px] font-bold leading-none">HSTKB</p>
+                <p className="mt-1 text-[13px] text-white/80">
+                  Student Portal
+                </p>
               </div>
+            </Link>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-3 py-4">
+            <nav className="space-y-1.5">
+              {menus.map((menu) => {
+                const Icon = menu.icon;
+
+                const isActive =
+                  menu.href === "/student"
+                    ? pathname === "/student"
+                    : pathname === menu.href ||
+                      pathname.startsWith(`${menu.href}/`);
+
+                return (
+                  <Link
+                    key={menu.name}
+                    href={menu.href}
+                    className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${
+                      isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      <Icon className="h-[18px] w-[18px]" />
+                      <span className="text-[15px] font-semibold">
+                        {menu.name}
+                      </span>
+                    </span>
+
+                    {isActive ? (
+                      <span className="h-2 w-2 rounded-full bg-[#F3A032]" />
+                    ) : null}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div className="border-t border-white/10 px-3 py-4">
+            <div className="flex items-center justify-between rounded-2xl bg-[#9E0A25] px-3 py-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#6B0012] text-xs font-bold">
+                  {initials}
+                </div>
+
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-bold">
+                    {displayName}
+                  </p>
+                  <p className="truncate text-[12px] text-white/75">
+                    {displayClass}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleLogout}
+                className="text-white/80 transition hover:text-white"
+                title="Logout"
+                type="button"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <section className="ml-[266px] min-h-screen flex-1">
+          <header className="sticky top-0 z-30 flex h-[98px] items-center justify-between border-b border-[#E8D7C5] bg-[#F6EFE6]/95 px-8 backdrop-blur">
+            <div className="relative w-full max-w-[470px]">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+              <input
+                placeholder={searchPlaceholder}
+                className="h-[46px] w-full rounded-2xl border border-[#DCC8B6] bg-[#F8F2EA] pl-12 pr-4 text-[15px] outline-none placeholder:text-[#A28070] focus:border-[#9C0824]"
+              />
             </div>
 
-            <button type="button" className="text-[#7A1F2B]">
-              ↪
-            </button>
-          </div>
-        </div>
-      </header>
+            <div className="ml-8 flex items-center gap-5">
+              <Bell className="h-5 w-5 text-[#8A4A32]" />
 
-      <section className="mx-auto max-w-[1200px] px-6 py-8">
-        {children}
-      </section>
+              <div className="h-10 w-px bg-[#DCC8B6]" />
+
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EEE5DA] text-[17px] font-bold text-[#8A2332]">
+                  {initials}
+                </div>
+
+                <div className="leading-tight">
+                  <p className="text-[16px] font-bold text-[#2C1A17]">
+                    {displayName}
+                  </p>
+                  <p className="mt-1 max-w-[340px] truncate text-[13px] text-[#7D5E50]">
+                    {displayClass}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div className="px-8 py-8">
+            {children}
+            <AcademicFooter />
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
