@@ -2,13 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
@@ -123,32 +117,27 @@ export default function KepalaSekolahStudentsPage() {
   async function fetchAllData() {
     setLoading(true);
 
-    const [
-      studentsRes,
-      parentsRes,
-      teachersRes,
-      reportsRes,
-      attendanceRes,
-    ] = await Promise.all([
-      supabase
-        .from("students")
-        .select("*")
-        .order("full_name", { ascending: true }),
+    const [studentsRes, parentsRes, teachersRes, reportsRes, attendanceRes] =
+      await Promise.all([
+        supabase
+          .from("students")
+          .select("*")
+          .order("full_name", { ascending: true }),
 
-      supabase
-        .from("parents")
-        .select("*")
-        .order("full_name", { ascending: true }),
+        supabase
+          .from("parents")
+          .select("*")
+          .order("full_name", { ascending: true }),
 
-      supabase
-        .from("teachers")
-        .select("*")
-        .order("full_name", { ascending: true }),
+        supabase
+          .from("teachers")
+          .select("*")
+          .order("full_name", { ascending: true }),
 
-      supabase.from("academic_reports").select("*"),
+        supabase.from("academic_reports").select("*"),
 
-      supabase.from("attendance").select("*"),
-    ]);
+        supabase.from("attendance").select("*"),
+      ]);
 
     const studentsData = studentsRes.data ?? [];
     const parentsData = parentsRes.data ?? [];
@@ -412,7 +401,7 @@ export default function KepalaSekolahStudentsPage() {
       activeMenu="Siswa"
       searchPlaceholder="Cari siswa, NIS, NISN, orang tua, atau guru..."
     >
-      <section className="space-y-7">
+      <section className="w-full max-w-full space-y-7 overflow-hidden">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-[28px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
@@ -445,7 +434,7 @@ export default function KepalaSekolahStudentsPage() {
         </div>
 
         <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-[0_4px_14px_rgba(77,31,9,0.05)]">
-          <div className="grid grid-cols-[2.2fr_2.4fr_1.8fr_1.3fr_0.9fr_1fr_0.6fr] gap-4 border-b border-[#EADACA] px-4 py-4 text-[13px] font-bold text-[#6F5549]">
+          <div className="grid grid-cols-[2.1fr_2.1fr_1.5fr_1.3fr_0.85fr_0.9fr_0.55fr] gap-3 border-b border-[#EADACA] px-4 py-4 text-[12px] font-bold text-[#6F5549]">
             <div>Murid</div>
             <div>Level / Program</div>
             <div>Orang Tua</div>
@@ -467,59 +456,76 @@ export default function KepalaSekolahStudentsPage() {
             filteredStudents.map((student) => (
               <div
                 key={student.id}
-                className="grid grid-cols-[2.2fr_2.4fr_1.8fr_1.3fr_0.9fr_1fr_0.6fr] gap-4 border-b border-[#F1E5DA] px-4 py-4 last:border-b-0"
+                className="grid grid-cols-[2.1fr_2.1fr_1.5fr_1.3fr_0.85fr_0.9fr_0.55fr] gap-3 border-b border-[#F1E5DA] px-4 py-4 last:border-b-0"
               >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#F3E1D6] text-[16px] font-bold text-[#8E2333]">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#F3E1D6] text-[14px] font-bold text-[#8E2333]">
                     {getInitials(student.full_name)}
                   </div>
 
                   <div className="min-w-0">
-                    <p className="truncate text-[16px] font-bold text-[#2C1A17]">
+                    <p
+                      className="max-w-[210px] truncate text-[14px] font-bold leading-5 text-[#2C1A17]"
+                      title={student.full_name}
+                    >
                       {student.full_name}
                     </p>
-                    <p className="mt-0.5 text-[13px] text-[#7A5E52]">
+                    <p className="mt-0.5 text-[12px] text-[#7A5E52]">
                       {formatBirthDate(student.birth_date)}
                     </p>
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-[16px] font-semibold text-[#2C1A17]">
+                <div className="min-w-0 self-center">
+                  <p
+                    className="max-w-[240px] truncate text-[14px] font-semibold leading-5 text-[#2C1A17]"
+                    title={levelLabel(student.level, student.grade)}
+                  >
                     {levelLabel(student.level, student.grade)}
                   </p>
-                  <p className="mt-1 text-[13px] text-[#7A5E52]">
+                  <p className="mt-1 truncate text-[12px] text-[#7A5E52]">
                     {student.level || "-"}
                   </p>
                 </div>
 
-                <div className="flex items-center text-[16px] text-[#2C1A17]">
-                  {student.parent_name}
+                <div className="flex min-w-0 items-center">
+                  <p
+                    className="max-w-[170px] truncate text-[14px] text-[#2C1A17]"
+                    title={student.parent_name}
+                  >
+                    {student.parent_name}
+                  </p>
                 </div>
 
-                <div className="flex items-center text-[16px] text-[#2C1A17]">
-                  {student.teacher_name}
+                <div className="flex min-w-0 items-center">
+                  <p
+                    className="max-w-[150px] truncate text-[14px] text-[#2C1A17]"
+                    title={student.teacher_name}
+                  >
+                    {student.teacher_name}
+                  </p>
                 </div>
 
                 <div className="flex items-center">
-                  <span className="rounded-full bg-[#C7F0DA] px-3 py-1 text-[14px] font-bold text-[#158A58]">
+                  <span className="rounded-full bg-[#C7F0DA] px-3 py-1 text-[12px] font-bold text-[#158A58]">
                     {student.progress}%
                   </span>
                 </div>
 
                 <div className="flex items-center">
-                  <span className="rounded-full bg-[#D7ECFA] px-3 py-1 text-[14px] font-bold text-[#1779B8]">
+                  <span className="rounded-full bg-[#D7ECFA] px-3 py-1 text-[12px] font-bold text-[#1779B8]">
                     {student.attendance}%
                   </span>
                 </div>
 
-                <div className="flex items-center justify-end gap-4">
+                <div className="flex items-center justify-end gap-3">
                   <button
                     onClick={() =>
                       router.push(`/kepalaSekolah/students/${student.id}/edit`)
                     }
                     className="text-[#4A2E28] transition hover:text-[#9C0824]"
                     title="Edit"
+                    type="button"
                   >
                     <Pencil className="h-4 w-4" />
                   </button>
@@ -530,6 +536,7 @@ export default function KepalaSekolahStudentsPage() {
                     }
                     className="text-[#D11A2A] transition hover:opacity-80"
                     title="Hapus"
+                    type="button"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -556,6 +563,7 @@ export default function KepalaSekolahStudentsPage() {
               <button
                 onClick={closeAddModal}
                 className="flex h-10 w-10 items-center justify-center rounded-full text-[#7D5E50] transition hover:bg-[#F0E2D4] hover:text-[#9C0824]"
+                type="button"
               >
                 <X className="h-5 w-5" />
               </button>

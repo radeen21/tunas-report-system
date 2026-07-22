@@ -3,10 +3,16 @@
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BookOpen, ShieldCheck, Sparkles, UsersRound, type LucideIcon } from "lucide-react";
+import {
+  BookOpen,
+  ShieldCheck,
+  Sparkles,
+  UsersRound,
+  type LucideIcon,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-type RoleKey = "kepala_sekolah" | "guru" | "orang_tua" | "murid";
+type RoleKey = "admin" | "kepala_sekolah" | "guru" | "murid_orang_tua";
 
 type RoleOption = {
   key: RoleKey;
@@ -20,15 +26,22 @@ type UserProfile = {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: RoleKey | string | null;
+  role: string | null;
   phone?: string | null;
 };
 
 const roleOptions: RoleOption[] = [
   {
+    key: "admin",
+    title: "Admin",
+    description: "Akses penuh dashboard sekolah",
+    emailPlaceholder: "admin@hstkb.sch.id",
+    route: "/kepalaSekolah",
+  },
+  {
     key: "kepala_sekolah",
     title: "Kepala Sekolah",
-    description: "Akses penuh, approval & analitik",
+    description: "Approval, monitoring & analitik",
     emailPlaceholder: "mulyadihstkb2006@gmail.com",
     route: "/kepalaSekolah",
   },
@@ -40,35 +53,48 @@ const roleOptions: RoleOption[] = [
     route: "/teacher",
   },
   {
-    key: "orang_tua",
-    title: "Orang Tua",
-    description: "Lihat & unduh laporan anak",
-    emailPlaceholder: "parent@hstkb.sch.id",
-    route: "/parent",
-  },
-  {
-    key: "murid",
-    title: "Murid",
-    description: "Lihat progress & jadwal pribadi",
+    key: "murid_orang_tua",
+    title: "Murid / Orang Tua",
+    description: "Lihat progress, jadwal & laporan",
     emailPlaceholder: "student@hstkb.sch.id",
     route: "/student",
   },
 ];
 
 const routeByRole: Record<RoleKey, string> = {
+  admin: "/kepalaSekolah",
   kepala_sekolah: "/kepalaSekolah",
   guru: "/teacher",
-  orang_tua: "/parent",
-  murid: "/student",
+  murid_orang_tua: "/student",
 };
 
-function isRoleKey(role: string | null | undefined): role is RoleKey {
-  return (
-    role === "kepala_sekolah" ||
-    role === "guru" ||
-    role === "orang_tua" ||
-    role === "murid"
-  );
+function normalizeRole(role: string | null | undefined): RoleKey | null {
+  if (!role) return null;
+
+  const normalizedRole = role.trim().toLowerCase();
+
+  if (normalizedRole === "admin") return "admin";
+  if (normalizedRole === "super_admin") return "admin";
+
+  if (normalizedRole === "kepala_sekolah") return "kepala_sekolah";
+  if (normalizedRole === "kepala sekolah") return "kepala_sekolah";
+
+  if (normalizedRole === "guru") return "guru";
+  if (normalizedRole === "teacher") return "guru";
+
+  if (normalizedRole === "murid_orang_tua") return "murid_orang_tua";
+  if (normalizedRole === "murid") return "murid_orang_tua";
+  if (normalizedRole === "siswa") return "murid_orang_tua";
+  if (normalizedRole === "student") return "murid_orang_tua";
+  if (normalizedRole === "orang_tua") return "murid_orang_tua";
+  if (normalizedRole === "orang tua") return "murid_orang_tua";
+  if (normalizedRole === "parent") return "murid_orang_tua";
+
+  return null;
+}
+
+function getRoleTitle(roleKey: RoleKey) {
+  return roleOptions.find((role) => role.key === roleKey)?.title || roleKey;
 }
 
 export default function LoginPage() {
@@ -153,9 +179,11 @@ export default function LoginPage() {
         return;
       }
 
-      if (!isRoleKey(profile.role)) {
+      const normalizedProfileRole = normalizeRole(profile.role);
+
+      if (!normalizedProfileRole) {
         setErrorMessage(
-          "Role user belum valid. Role harus kepala_sekolah, guru, orang_tua, atau murid."
+          "Role user belum valid. Role harus admin, kepala_sekolah, guru, atau murid_orang_tua."
         );
         await supabase.auth.signOut();
         return;
@@ -164,12 +192,14 @@ export default function LoginPage() {
       localStorage.setItem("hstkb_user_id", profile.id);
       localStorage.setItem("hstkb_full_name", profile.full_name || "");
       localStorage.setItem("hstkb_email", profile.email || loggedInEmail);
-      localStorage.setItem("hstkb_role", profile.role);
+      localStorage.setItem("hstkb_role", normalizedProfileRole);
       localStorage.setItem(
         "hstkb_role_name",
-        roleOptions.find((role) => role.key === profile.role)?.title ||
-        profile.role
+        getRoleTitle(normalizedProfileRole)
       );
+
+      localStorage.setItem("hstkb_demo_email", profile.email || loggedInEmail);
+      localStorage.setItem("hstkb_demo_role", normalizedProfileRole);
 
       if (rememberMe) {
         localStorage.setItem("hstkb_remember_me", "true");
@@ -177,7 +207,7 @@ export default function LoginPage() {
         localStorage.removeItem("hstkb_remember_me");
       }
 
-      router.push(routeByRole[profile.role]);
+      router.push(routeByRole[normalizedProfileRole]);
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -221,7 +251,8 @@ export default function LoginPage() {
 
               <p className="mt-5 max-w-[560px] text-[14px] leading-7 text-white/80 xl:text-[15px]">
                 Homeschooling Tunas Karya Bangsa Kelapa Gading menghadirkan
-                sistem laporan modern untuk orang tua, guru, dan kepala sekolah.
+                sistem laporan modern untuk orang tua, guru, murid, dan kepala
+                sekolah.
               </p>
 
               <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -239,7 +270,7 @@ export default function LoginPage() {
             </div>
 
             <p className="text-[11px] text-white/60 xl:text-xs">
-              © 2026 HSTKB. Academic Year 2025/2026
+              © 2026 HSTKB. Academic Year 2026/2027
             </p>
           </div>
 
@@ -296,14 +327,16 @@ export default function LoginPage() {
                         key={role.key}
                         type="button"
                         onClick={() => handleSelectRole(role)}
-                        className={`rounded-[18px] border px-4 py-4 text-left transition ${isActive
-                          ? "border-[#7A1F2B] bg-[#F8EBDD] shadow-sm ring-1 ring-[#7A1F2B]"
-                          : "border-[#E8D6C1] bg-[#FFF8EF] hover:border-[#7A1F2B]"
-                          }`}
+                        className={`rounded-[18px] border px-4 py-4 text-left transition ${
+                          isActive
+                            ? "border-[#7A1F2B] bg-[#F8EBDD] shadow-sm ring-1 ring-[#7A1F2B]"
+                            : "border-[#E8D6C1] bg-[#FFF8EF] hover:border-[#7A1F2B]"
+                        }`}
                       >
                         <p
-                          className={`text-[15px] font-extrabold ${isActive ? "text-[#7A1F2B]" : "text-[#2B1B18]"
-                            }`}
+                          className={`text-[15px] font-extrabold ${
+                            isActive ? "text-[#7A1F2B]" : "text-[#2B1B18]"
+                          }`}
                         >
                           {role.title}
                         </p>
@@ -393,13 +426,6 @@ export default function LoginPage() {
                 {loading ? "Memproses login..." : "Masuk ke Sistem"}
               </button>
 
-              <div className="mt-5 rounded-xl border border-dashed border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-[11px] leading-5 text-[#6B4A3A] shadow-sm">
-                <span className="font-extrabold text-[#2B1B18]">
-                  Login real:
-                </span>{" "}
-                masuk menggunakan akun yang sudah dibuat di Supabase
-                Authentication.
-              </div>
             </form>
           </div>
         </section>

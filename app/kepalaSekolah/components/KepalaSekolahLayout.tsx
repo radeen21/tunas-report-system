@@ -97,6 +97,20 @@ function getInitials(name: string) {
     .toUpperCase();
 }
 
+function getDisplayRole(role?: string | null) {
+  if (!role) return "Kepala Sekolah";
+
+  const normalizedRole = role.trim().toLowerCase();
+
+  if (normalizedRole === "admin") return "Admin";
+  if (normalizedRole === "super_admin") return "Admin";
+
+  if (normalizedRole === "kepala_sekolah") return "Kepala Sekolah";
+  if (normalizedRole === "kepala sekolah") return "Kepala Sekolah";
+
+  return "Kepala Sekolah";
+}
+
 export default function KepalaSekolahLayout({
   activeMenu,
   searchPlaceholder = "Cari murid, guru, atau report...",
@@ -106,13 +120,17 @@ export default function KepalaSekolahLayout({
   void buttonLabel;
 
   const [principalName, setPrincipalName] = useState("Kepala Sekolah");
+  const [displayRole, setDisplayRole] = useState("Kepala Sekolah");
 
   useEffect(() => {
     const storedName = localStorage.getItem("hstkb_full_name");
+    const storedRole = localStorage.getItem("hstkb_role");
 
     if (storedName && storedName.trim()) {
       setPrincipalName(storedName);
     }
+
+    setDisplayRole(getDisplayRole(storedRole));
   }, []);
 
   const initials = useMemo(() => getInitials(principalName), [principalName]);
@@ -135,7 +153,7 @@ export default function KepalaSekolahLayout({
           <div className="min-w-0">
             <p className="text-[17px] font-extrabold leading-tight">HSTKB</p>
             <p className="mt-0.5 text-[13px] leading-tight text-white/75">
-              Kepala Sekolah
+              {displayRole}
             </p>
           </div>
         </div>
@@ -194,7 +212,7 @@ export default function KepalaSekolahLayout({
                 {principalName}
               </p>
               <p className="truncate text-[11px] text-white/65">
-                Kepala Sekolah
+                {displayRole}
               </p>
             </div>
 
@@ -242,7 +260,7 @@ export default function KepalaSekolahLayout({
                     {principalName}
                   </p>
                   <p className="mt-0.5 text-[12px] text-[#6B4A3A]">
-                    Kepala Sekolah
+                    {displayRole}
                   </p>
                 </div>
               </div>
