@@ -39,46 +39,50 @@ const tasks = [
 
 export default function StudentTugasPage() {
   return (
-    <StudentLayout activeMenu="Tugas & Hasil">
-      <div>
-        <h1 className="text-[28px] font-bold tracking-tight">
-          Tugas & Hasil
-        </h1>
-        <p className="mt-1 text-sm text-[#6B4A3A]">
-          Tugas yang perlu kamu kerjakan dan hasilnya.
-        </p>
-      </div>
+    <StudentLayout activeMenu={"Tugas & Hasil" as any}>
+      <div className="w-full max-w-full overflow-hidden">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight">
+            Tugas & Hasil
+          </h1>
+          <p className="mt-1 text-sm text-[#6B4A3A]">
+            Tugas yang perlu kamu kerjakan dan hasilnya.
+          </p>
+        </div>
 
-      <div className="mt-7 overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-        <table className="w-full text-left">
-          <thead className="bg-[#FFF8EF] text-sm text-[#6B4A3A]">
-            <tr>
-              <th className="px-5 py-4">Judul Tugas</th>
-              <th className="px-5 py-4">Mata Pelajaran</th>
-              <th className="px-5 py-4">Deadline</th>
-              <th className="px-5 py-4">Status</th>
-              <th className="px-5 py-4">Nilai</th>
-            </tr>
-          </thead>
+        <div className="mt-7 overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-left">
+              <thead className="bg-[#FFF8EF] text-sm text-[#6B4A3A]">
+                <tr>
+                  <th className="px-5 py-4">Judul Tugas</th>
+                  <th className="px-5 py-4">Mata Pelajaran</th>
+                  <th className="px-5 py-4">Deadline</th>
+                  <th className="px-5 py-4">Status</th>
+                  <th className="px-5 py-4">Nilai</th>
+                </tr>
+              </thead>
 
-          <tbody className="divide-y divide-[#E8D6C1]">
-            {tasks.map((task) => (
-              <tr key={task.title} className="hover:bg-[#FFF8EF]">
-                <td className="px-5 py-4 font-medium">{task.title}</td>
-                <td className="px-5 py-4">{task.subject}</td>
-                <td className="px-5 py-4">{task.deadline}</td>
-                <td className="px-5 py-4">
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-bold ${task.color}`}
-                  >
-                    {task.status}
-                  </span>
-                </td>
-                <td className="px-5 py-4">{task.score}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              <tbody className="divide-y divide-[#E8D6C1]">
+                {tasks.map((task) => (
+                  <tr key={task.title} className="hover:bg-[#FFF8EF]">
+                    <td className="px-5 py-4 font-medium">{task.title}</td>
+                    <td className="px-5 py-4">{task.subject}</td>
+                    <td className="px-5 py-4">{task.deadline}</td>
+                    <td className="px-5 py-4">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-bold ${task.color}`}
+                      >
+                        {task.status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">{task.score}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </StudentLayout>
   );
