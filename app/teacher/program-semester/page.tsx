@@ -223,6 +223,17 @@ function isPdfUrl(url?: string | null) {
   return url.toLowerCase().split("?")[0].endsWith(".pdf");
 }
 
+function isTargetPlanCell(
+  subChapter: CurriculumSubChapter,
+  month: string,
+  weekValue: string
+) {
+  return (
+    normalizeText(subChapter.target_month) === normalizeText(month) &&
+    String(subChapter.planned_week || "") === weekValue
+  );
+}
+
 export default function TeacherProgramSemesterPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [programs, setPrograms] = useState<ProgramWithChildren[]>([]);
@@ -301,7 +312,8 @@ export default function TeacherProgramSemesterPage() {
 
     const programsData = (programsRes.data || []) as CurriculumProgram[];
     const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
-    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
+    const subChaptersData = (subChaptersRes.data ||
+      []) as CurriculumSubChapter[];
 
     const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
 
@@ -431,36 +443,36 @@ export default function TeacherProgramSemesterPage() {
       chapters:
         program.chapters.length > 0
           ? program.chapters.map((chapter) => ({
-              id: chapter.id,
-              chapter_title: chapter.chapter_title || "",
-              sub_chapters:
-                chapter.sub_chapters.length > 0
-                  ? chapter.sub_chapters.map((subChapter) => ({
-                      id: subChapter.id,
-                      sub_chapter_title: subChapter.sub_chapter_title || "",
-                      target_month: subChapter.target_month || "Juli",
-                      planned_week: String(subChapter.planned_week || 1),
-                    }))
-                  : [
-                      {
-                        sub_chapter_title: "",
-                        target_month: "Juli",
-                        planned_week: "1",
-                      },
-                    ],
-            }))
-          : [
-              {
-                chapter_title: "",
-                sub_chapters: [
+            id: chapter.id,
+            chapter_title: chapter.chapter_title || "",
+            sub_chapters:
+              chapter.sub_chapters.length > 0
+                ? chapter.sub_chapters.map((subChapter) => ({
+                  id: subChapter.id,
+                  sub_chapter_title: subChapter.sub_chapter_title || "",
+                  target_month: subChapter.target_month || "Juli",
+                  planned_week: String(subChapter.planned_week || 1),
+                }))
+                : [
                   {
                     sub_chapter_title: "",
                     target_month: "Juli",
                     planned_week: "1",
                   },
                 ],
-              },
-            ],
+          }))
+          : [
+            {
+              chapter_title: "",
+              sub_chapters: [
+                {
+                  sub_chapter_title: "",
+                  target_month: "Juli",
+                  planned_week: "1",
+                },
+              ],
+            },
+          ],
     });
 
     setSelectedFile(null);
@@ -613,7 +625,8 @@ export default function TeacherProgramSemesterPage() {
 
       if (form.id) {
         const currentProgram = programs.find((program) => program.id === form.id);
-        const oldChapterIds = currentProgram?.chapters.map((chapter) => chapter.id) || [];
+        const oldChapterIds =
+          currentProgram?.chapters.map((chapter) => chapter.id) || [];
         const deletedChapterIds = oldChapterIds.filter(
           (chapterId) => !existingChapterIds.includes(chapterId)
         );
@@ -628,7 +641,11 @@ export default function TeacherProgramSemesterPage() {
         }
       }
 
-      for (let chapterIndex = 0; chapterIndex < form.chapters.length; chapterIndex++) {
+      for (
+        let chapterIndex = 0;
+        chapterIndex < form.chapters.length;
+        chapterIndex++
+      ) {
         const chapter = form.chapters[chapterIndex];
 
         if (!chapter.chapter_title.trim()) continue;
@@ -671,7 +688,8 @@ export default function TeacherProgramSemesterPage() {
           );
 
           const oldSubChapterIds =
-            currentChapter?.sub_chapters.map((subChapter) => subChapter.id) || [];
+            currentChapter?.sub_chapters.map((subChapter) => subChapter.id) ||
+            [];
 
           const deletedSubChapterIds = oldSubChapterIds.filter(
             (subChapterId) => !existingSubChapterIds.includes(subChapterId)
@@ -734,8 +752,7 @@ export default function TeacherProgramSemesterPage() {
     } catch (error) {
       setSaving(false);
       alert(
-        `Gagal simpan Program Semester: ${
-          error instanceof Error ? error.message : "Terjadi kesalahan"
+        `Gagal simpan Program Semester: ${error instanceof Error ? error.message : "Terjadi kesalahan"
         }`
       );
     }
@@ -743,8 +760,7 @@ export default function TeacherProgramSemesterPage() {
 
   async function handleDelete(program: ProgramWithChildren) {
     const confirmDelete = confirm(
-      `Hapus Program Semester ${program.subject_name || ""} ${
-        program.level || ""
+      `Hapus Program Semester ${program.subject_name || ""} ${program.level || ""
       } ${program.grade || ""}?`
     );
 
@@ -811,16 +827,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: [
-                ...chapter.sub_chapters,
-                {
-                  sub_chapter_title: "",
-                  target_month: "Juli",
-                  planned_week: "1",
-                },
-              ],
-            }
+            ...chapter,
+            sub_chapters: [
+              ...chapter.sub_chapters,
+              {
+                sub_chapter_title: "",
+                target_month: "Juli",
+                planned_week: "1",
+              },
+            ],
+          }
           : chapter
       ),
     }));
@@ -832,11 +848,11 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: chapter.sub_chapters.filter(
-                (_, itemIndex) => itemIndex !== subIndex
-              ),
-            }
+            ...chapter,
+            sub_chapters: chapter.sub_chapters.filter(
+              (_, itemIndex) => itemIndex !== subIndex
+            ),
+          }
           : chapter
       ),
     }));
@@ -853,16 +869,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
-                itemIndex === subIndex
-                  ? {
-                      ...subChapter,
-                      [field]: value,
-                    }
-                  : subChapter
-              ),
-            }
+            ...chapter,
+            sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
+              itemIndex === subIndex
+                ? {
+                  ...subChapter,
+                  [field]: value,
+                }
+                : subChapter
+            ),
+          }
           : chapter
       ),
     }));
@@ -1472,9 +1488,8 @@ function ProgramDetailModal({
   return (
     <ModalShell
       title="Detail Program Semester"
-      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${
-        program.grade || ""
-      }`}
+      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${program.grade || ""
+        }`}
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -1536,6 +1551,8 @@ function ProgramDetailModal({
           <InfoBlock label="Catatan Revisi" value={program.rejection_note} />
         ) : null}
 
+        <ProgramPlanTable program={program} />
+
         <div className="space-y-4">
           {program.chapters.map((chapter) => (
             <div
@@ -1568,6 +1585,134 @@ function ProgramDetailModal({
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+function ProgramPlanTable({ program }: { program: ProgramWithChildren }) {
+  const totalColumns = monthOptions.length * weekOptions.length + 1;
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
+      <div className="flex flex-wrap items-center gap-4 border-b border-[#E1CFBE] bg-[#FFF8EF] px-5 py-4">
+        <div className="flex items-center gap-2">
+          <span className="h-3 w-3 rounded-sm border border-[#EF4444] bg-[#FCA5A5]" />
+          <span className="text-[12px] font-bold text-[#7F1D1D]">
+            Target Rencana
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#C7F0DA] text-[10px] font-bold text-[#158A58]">
+            ✓
+          </span>
+          <span className="text-[12px] font-bold text-[#158A58]">
+            Sudah Terealisasi dari Absensi KBM
+          </span>
+        </div>
+      </div>
+
+      <div className="max-h-[58vh] overflow-auto">
+        <table className="w-full min-w-[1800px] border-collapse text-left">
+          <thead>
+            <tr className="bg-[#FFF8EF]">
+              <th className="w-[280px] border-b border-r border-[#E1CFBE] px-3 py-3 text-[12px] font-extrabold text-[#6F5549]">
+                Bab / Sub Bab
+              </th>
+
+              {monthOptions.map((month) => (
+                <th
+                  key={month}
+                  colSpan={5}
+                  className="border-b border-r border-[#E1CFBE] px-3 py-3 text-center text-[12px] font-extrabold text-[#6F5549]"
+                >
+                  {month}
+                </th>
+              ))}
+            </tr>
+
+            <tr className="bg-[#FFF8EF]">
+              <th className="border-b border-r border-[#E1CFBE] px-3 py-2 text-[11px] font-bold text-[#8A5A48]">
+                Target per minggu
+              </th>
+
+              {monthOptions.map((month) =>
+                weekOptions.map((week) => (
+                  <th
+                    key={`${month}-${week.value}`}
+                    className="h-9 w-[36px] border-b border-r border-[#E1CFBE] text-center text-[11px] font-extrabold text-[#6F5549]"
+                  >
+                    {week.label}
+                  </th>
+                ))
+              )}
+            </tr>
+          </thead>
+
+          {program.chapters.map((chapter) => (
+            <tbody key={chapter.id}>
+              <tr>
+                <td
+                  colSpan={totalColumns}
+                  className="border-b border-[#E1CFBE] bg-[#FFF8EF] px-3 py-3 text-[13px] font-extrabold text-[#2B1B18]"
+                >
+                  Bab {chapter.chapter_order}. {chapter.chapter_title}
+                  <span className="ml-2 text-[11px] font-bold text-[#8A5A48]">
+                    {chapter.sub_chapters.length} Sub Bab
+                  </span>
+                </td>
+              </tr>
+
+              {chapter.sub_chapters.map((subChapter) => (
+                <tr key={subChapter.id} className="hover:bg-[#FFFCF8]">
+                  <td className="min-w-[280px] border-b border-r border-[#E1CFBE] px-3 py-3 align-top">
+                    <p className="text-[13px] font-bold text-[#2B1B18]">
+                      {subChapter.sub_chapter_order}.{" "}
+                      {subChapter.sub_chapter_title}
+                    </p>
+
+                    <p className="mt-1 text-[11px] text-[#8A5A48]">
+                      Target: {subChapter.target_month || "-"} Minggu{" "}
+                      {subChapter.planned_week || "-"}
+                    </p>
+                  </td>
+
+                  {monthOptions.map((month) =>
+                    weekOptions.map((week) => {
+                      const isTarget = isTargetPlanCell(
+                        subChapter,
+                        month,
+                        week.value
+                      );
+
+                      return (
+                        <td
+                          key={`${subChapter.id}-${month}-${week.value}`}
+                          title={
+                            isTarget
+                              ? `Target Rencana: ${month} ${week.label}`
+                              : undefined
+                          }
+                          className={`h-10 w-[36px] border-b border-r border-[#E1CFBE] text-center ${isTarget
+                              ? "bg-[#FCA5A5]"
+                              : "bg-white"
+                            }`}
+                        >
+                          {!isTarget ? (
+                            <span className="text-[11px] text-[#E8D6C1]">
+                              -
+                            </span>
+                          ) : null}
+                        </td>
+                      );
+                    })
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -1635,9 +1780,9 @@ function ModalShell({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
-      <div className="max-h-[92vh] w-full max-w-[1080px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/55 px-4 py-6">
+      <div className="mx-auto w-full max-w-[1280px] rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
           <div>
             <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
               {title}
@@ -1655,7 +1800,9 @@ function ModalShell({
           </button>
         </div>
 
-        <div className="px-6 py-6">{children}</div>
+        <div className="max-h-[calc(90vh-90px)] overflow-y-auto px-6 py-6">
+          {children}
+        </div>
       </div>
     </div>
   );
