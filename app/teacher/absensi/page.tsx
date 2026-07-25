@@ -24,6 +24,8 @@ type StudentRow = {
   full_name: string | null;
   level: string | null;
   grade: string | null;
+  nis?: string | null;
+  nisn?: string | null;
 };
 
 type SubjectRow = {
@@ -124,8 +126,15 @@ type ProgramWithChildren = CurriculumProgram & {
   >;
 };
 
-const attendanceOptions = ["Hadir", "Tidak Hadir", "Izin", "Sakit"];
 const understandingOptions = ["Paham", "Cukup Paham", "Belum Paham"];
+
+function normalizeAttendanceStatus(status?: string | null) {
+  if (status === "Tidak Hadir") return "Alpa";
+  if (status === "Sakit") return "Izin";
+  if (status === "Izin") return "Izin";
+  if (status === "Alpa") return "Alpa";
+  return "Hadir";
+}
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
@@ -471,7 +480,9 @@ export default function TeacherAbsensiPage() {
         normalizeText(rombel.session_name).includes(q) ||
         normalizeText(rombel.material_topic).includes(q) ||
         rombel.students.some((student) =>
-          normalizeText(student.full_name).includes(q)
+          normalizeText(student.full_name).includes(q) ||
+          normalizeText(student.nis).includes(q) ||
+          normalizeText(student.nisn).includes(q)
         )
       );
     });
@@ -583,7 +594,7 @@ export default function TeacherAbsensiPage() {
 
       return {
         ...student,
-        attendanceStatus: existing?.attendance_status || "Hadir",
+        attendanceStatus: normalizeAttendanceStatus(existing?.attendance_status),
         understandingStatus: existing?.understanding_status || "Paham",
         note: existing?.note || "",
       };
@@ -651,7 +662,7 @@ export default function TeacherAbsensiPage() {
     }
 
     if (rombelStudents.length === 0) {
-      alert("Tidak ada murid di rombel ini.");
+      alert("Tidak ada siswa di rombel ini.");
       return false;
     }
 
@@ -661,7 +672,7 @@ export default function TeacherAbsensiPage() {
 
     if (missingNote) {
       alert(
-        `Keterangan wajib diisi untuk murid yang tidak hadir: ${missingNote.full_name}`
+        `Keterangan wajib diisi untuk siswa yang tidak hadir: ${missingNote.full_name}`
       );
       return false;
     }
@@ -827,7 +838,7 @@ export default function TeacherAbsensiPage() {
 
           <SummaryCard
             icon={<Users className="h-5 w-5" />}
-            label="Total Murid"
+            label="Total Siswa"
             value={summary.totalStudents}
             info="Rombel"
             tone="blue"
@@ -857,7 +868,7 @@ export default function TeacherAbsensiPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari mapel, sesi, materi, atau nama murid..."
+                placeholder="Cari mapel, sesi, materi, nama siswa, NIPD, atau NISN..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -947,7 +958,7 @@ export default function TeacherAbsensiPage() {
                     )}
 
                     <p className="mt-2 text-[12px] font-bold text-[#8A5A48]">
-                      {rombel.students.length} murid
+                      {rombel.students.length} siswa
                     </p>
                   </button>
                 ))
@@ -1051,7 +1062,7 @@ export default function TeacherAbsensiPage() {
               <div className="flex flex-col justify-between gap-3 border-b border-[#EADACA] px-5 py-4 md:flex-row md:items-center">
                 <div>
                   <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
-                    Input Absensi Murid
+                    Input Absensi Siswa
                   </h2>
 
                   <p className="mt-1 text-[13px] text-[#6F5549]">
@@ -1074,12 +1085,14 @@ export default function TeacherAbsensiPage() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] border-collapse">
+                <table className="w-full min-w-[1080px] border-collapse">
                   <thead>
                     <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
-                      <th className="px-5 py-4">Murid</th>
+                      <th className="px-5 py-4">Nama</th>
                       <th className="px-5 py-4">Kelas</th>
-                      <th className="px-5 py-4">Kehadiran</th>
+                      <th className="px-5 py-4 text-center">Hadir</th>
+                      <th className="px-5 py-4 text-center">Izin</th>
+                      <th className="px-5 py-4 text-center">Alpa</th>
                       <th className="px-5 py-4">Pemahaman</th>
                       <th className="px-5 py-4">Keterangan</th>
                     </tr>
@@ -1089,7 +1102,7 @@ export default function TeacherAbsensiPage() {
                     {rombelStudents.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={5}
+                          colSpan={7}
                           className="px-5 py-12 text-center text-[#6F5549]"
                         >
                           Belum ada rombel dipilih.
@@ -1101,30 +1114,57 @@ export default function TeacherAbsensiPage() {
                           key={student.id}
                           className="border-b border-[#F0E1D4] text-[14px]"
                         >
-                          <td className="px-5 py-4 font-extrabold text-[#2B1B18]">
-                            {student.full_name}
+                          <td className="px-5 py-4">
+                            <p className="font-extrabold text-[#2B1B18]">
+                              {student.full_name}
+                            </p>
+                            <p className="mt-1 text-[12px] text-[#6F5549]">
+                              NIPD: {student.nis || "-"}
+                              {student.nisn ? ` • NISN: ${student.nisn}` : ""}
+                            </p>
                           </td>
 
                           <td className="px-5 py-4 text-[#6F5549]">
                             {student.level} — {student.grade}
                           </td>
 
-                          <td className="px-5 py-4">
-                            <select
-                              value={student.attendanceStatus}
-                              onChange={(event) =>
+                          <td className="px-5 py-4 text-center">
+                            <ChecklistButton
+                              checked={student.attendanceStatus === "Hadir"}
+                              onClick={() =>
                                 updateStudentAttendance(
                                   student.id,
                                   "attendanceStatus",
-                                  event.target.value
+                                  "Hadir"
                                 )
                               }
-                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none focus:border-[#9C0824]"
-                            >
-                              {attendanceOptions.map((option) => (
-                                <option key={option}>{option}</option>
-                              ))}
-                            </select>
+                            />
+                          </td>
+
+                          <td className="px-5 py-4 text-center">
+                            <ChecklistButton
+                              checked={student.attendanceStatus === "Izin"}
+                              onClick={() =>
+                                updateStudentAttendance(
+                                  student.id,
+                                  "attendanceStatus",
+                                  "Izin"
+                                )
+                              }
+                            />
+                          </td>
+
+                          <td className="px-5 py-4 text-center">
+                            <ChecklistButton
+                              checked={student.attendanceStatus === "Alpa"}
+                              onClick={() =>
+                                updateStudentAttendance(
+                                  student.id,
+                                  "attendanceStatus",
+                                  "Alpa"
+                                )
+                              }
+                            />
                           </td>
 
                           <td className="px-5 py-4">
@@ -1234,6 +1274,29 @@ function SummaryCard({
 
       <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
     </div>
+  );
+}
+
+function ChecklistButton({
+  checked,
+  onClick,
+}: {
+  checked: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`mx-auto flex h-7 w-12 items-center justify-center rounded-[5px] border text-[14px] font-extrabold transition ${
+        checked
+          ? "border-[#2F66C9] bg-[#3F73C8] text-white"
+          : "border-[#C9D3E6] bg-white text-transparent hover:border-[#3F73C8]"
+      }`}
+      aria-pressed={checked}
+    >
+      ✓
+    </button>
   );
 }
 

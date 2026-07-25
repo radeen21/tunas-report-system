@@ -10,6 +10,7 @@ type StudentOption = {
   level: string | null;
   grade: string | null;
   nis: string | null;
+  nisn: string | null;
 };
 
 type TeacherOption = {
@@ -170,7 +171,7 @@ export default function KepalaSekolahLaporanKBMPage() {
   async function fetchStudents() {
     const { data, error } = await supabase
       .from("students")
-      .select("id, full_name, level, grade, nis")
+      .select("id, full_name, level, grade, nis, nisn")
       .order("full_name", { ascending: true });
 
     if (error) {
@@ -235,7 +236,8 @@ export default function KepalaSekolahLaporanKBMPage() {
           full_name,
           level,
           grade,
-          nis
+          nis,
+          nisn
         ),
         teachers (
           id,
@@ -316,6 +318,8 @@ export default function KepalaSekolahLaporanKBMPage() {
     return reports.filter((report) => {
       const matchSearch =
         report.students?.full_name?.toLowerCase().includes(keyword) ||
+        report.students?.nis?.toLowerCase().includes(keyword) ||
+        report.students?.nisn?.toLowerCase().includes(keyword) ||
         report.teachers?.full_name?.toLowerCase().includes(keyword) ||
         report.subjects?.name?.toLowerCase().includes(keyword) ||
         report.material_topic?.toLowerCase().includes(keyword) ||
@@ -495,7 +499,8 @@ export default function KepalaSekolahLaporanKBMPage() {
       No: index + 1,
       "Tanggal Laporan": formatDate(report.report_date),
       "Nama Siswa": report.students?.full_name || "-",
-      NIS: report.students?.nis || "-",
+      NIPD: report.students?.nis || "-",
+      NISN: report.students?.nisn || "-",
       Guru: report.teachers?.full_name || "-",
       "Email Guru": report.teachers?.email || "-",
       "Mata Pelajaran": report.subjects?.name || "-",
@@ -742,7 +747,8 @@ export default function KepalaSekolahLaporanKBMPage() {
                   <p className="mt-1 text-sm text-[#6B4A3A]">
                     {report.class_level || "-"} •{" "}
                     {report.subjects?.name || "-"} •{" "}
-                    {formatDate(report.report_date)}
+                    {formatDate(report.report_date)} • NIPD:{" "}
+                    {report.students?.nis || "-"}
                   </p>
                 </div>
 
@@ -859,7 +865,7 @@ export default function KepalaSekolahLaporanKBMPage() {
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
                         {student.full_name}
-                        {student.grade ? ` — ${student.grade}` : ""}
+                        {student.grade ? ` — ${student.grade}` : ""} — NIPD: {student.nis || "-"}
                       </option>
                     ))}
                   </select>
@@ -1097,7 +1103,8 @@ function ReportDetailModal({
 
         <div className="grid gap-3 md:grid-cols-2">
           <InfoBox label="Nama Siswa" value={report.students?.full_name || "-"} />
-          <InfoBox label="NIS" value={report.students?.nis || "-"} />
+          <InfoBox label="NIPD" value={report.students?.nis || "-"} />
+          <InfoBox label="NISN" value={report.students?.nisn || "-"} />
           <InfoBox label="Guru" value={report.teachers?.full_name || "-"} />
           <InfoBox label="Email Guru" value={report.teachers?.email || "-"} />
           <InfoBox label="Mata Pelajaran" value={report.subjects?.name || "-"} />

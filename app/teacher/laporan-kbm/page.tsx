@@ -84,7 +84,43 @@ type Subject = {
   grade: string | null;
 };
 
+type ScheduleOptionRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  schedule_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  day_name: string | null;
+  session_name: string | null;
+  material_topic: string | null;
+  semester: string | null;
+  curriculum_chapter_id?: string | null;
+  curriculum_sub_chapter_id?: string | null;
+  students: StudentRelation | StudentRelation[] | null;
+  subjects: SubjectRelation | SubjectRelation[] | null;
+};
+
+type ScheduleOption = {
+  id: string;
+  student_id: string | null;
+  subject_id: string | null;
+  schedule_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  day_name: string | null;
+  session_name: string | null;
+  material_topic: string | null;
+  semester: string | null;
+  chapter_title: string;
+  sub_chapter_title: string;
+  students: StudentRelation | null;
+  subjects: SubjectRelation | null;
+};
+
 type KbmForm = {
+  schedule_id: string;
   student_id: string;
   subject_id: string;
   report_date: string;
@@ -99,6 +135,7 @@ type KbmForm = {
 };
 
 const initialForm: KbmForm = {
+  schedule_id: "",
   student_id: "",
   subject_id: "",
   report_date: new Date().toISOString().slice(0, 10),
@@ -131,6 +168,20 @@ function formatDate(date: string | null) {
     month: "short",
     year: "numeric",
   });
+}
+
+function formatTime(time?: string | null) {
+  if (!time) return "-";
+  return time.slice(0, 5);
+}
+
+function getScheduleLabel(schedule: ScheduleOption) {
+  return [
+    formatDate(schedule.schedule_date),
+    `${formatTime(schedule.start_time)}-${formatTime(schedule.end_time)}`,
+    schedule.students?.full_name || "-",
+    schedule.subjects?.name || "-",
+  ].join(" • ");
 }
 
 function getTodayDate() {
@@ -170,6 +221,7 @@ export default function TeacherLaporanKbmPage() {
   const [reports, setReports] = useState<KbmReport[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleOption[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -177,7 +229,7 @@ export default function TeacherLaporanKbmPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
-  const [studentFilter, setStudentFilter] = useState("Semua Murid");
+  const [studentFilter, setStudentFilter] = useState("Semua Siswa");
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<KbmForm>(initialForm);
@@ -265,6 +317,68 @@ export default function TeacherLaporanKbmPage() {
     setSubjects(data || []);
   }
 
+async function fetchSchedules(teacherId: string) {
+    const { data, error } = await supabase
+      .from("schedules")
+      .select(
+        `
+        id,
+        student_id,
+        teacher_id,
+        subject_id,
+        schedule_date,
+        start_time,
+        end_time,
+        day_name,
+        session_name,
+        material_topic,
+        semester,
+        curriculum_chapter_id,
+        curriculum_sub_chapter_id,
+        students (
+          id,
+          full_name,
+          grade,
+          level,
+          nis,
+          nisn
+        ),
+        subjects (
+          id,
+          name,
+          level,
+          grade
+        )
+      `
+      )
+      .eq("teacher_id", teacherId)
+      .order("schedule_date", { ascending: false })
+      .order("start_time", { ascending: true });
+
+    if (error) throw new Error(error.message);
+
+    const rows = (data || []) as ScheduleOptionRow[];
+
+    const normalizedSchedules: ScheduleOption[] = rows.map((item) => ({
+      id: item.id,
+      student_id: item.student_id,
+      subject_id: item.subject_id,
+      schedule_date: item.schedule_date,
+      start_time: item.start_time,
+      end_time: item.end_time,
+      day_name: item.day_name,
+      session_name: item.session_name,
+      material_topic: item.material_topic,
+      semester: item.semester,
+      chapter_title: item.curriculum_chapter_id || "",
+      sub_chapter_title: item.curriculum_sub_chapter_id || "",
+      students: normalizeRelation(item.students),
+      subjects: normalizeRelation(item.subjects),
+    }));
+
+    setSchedules(normalizedSchedules);
+  }
+
   async function fetchReports(teacherId: string) {
     const { data, error } = await supabase
       .from("kbm_reports")
@@ -346,6 +460,7 @@ export default function TeacherLaporanKbmPage() {
       await Promise.all([
         fetchStudents(activeTeacher.id),
         fetchSubjects(),
+        fetchSchedules(activeTeacher.id),
         fetchReports(activeTeacher.id),
       ]);
     } catch (error) {
@@ -416,6 +531,8 @@ export default function TeacherLaporanKbmPage() {
       const matchSearch =
         !keyword ||
         report.students?.full_name?.toLowerCase().includes(keyword) ||
+        report.students?.nis?.toLowerCase().includes(keyword) ||
+        report.students?.nisn?.toLowerCase().includes(keyword) ||
         report.students?.grade?.toLowerCase().includes(keyword) ||
         report.subjects?.name?.toLowerCase().includes(keyword) ||
         report.chapter?.toLowerCase().includes(keyword) ||
@@ -428,7 +545,7 @@ export default function TeacherLaporanKbmPage() {
         statusFilter === "Semua Status" || report.status === statusFilter;
 
       const matchStudent =
-        studentFilter === "Semua Murid" || report.student_id === studentFilter;
+        studentFilter === "Semua Siswa" || report.student_id === studentFilter;
 
       return matchSearch && matchStatus && matchStudent;
     });
@@ -449,6 +566,7 @@ export default function TeacherLaporanKbmPage() {
 
     setForm({
       ...initialForm,
+      schedule_id: "",
       student_id: student?.id || "",
       class_level: student?.grade || "",
       report_date: getTodayDate(),
@@ -458,11 +576,41 @@ export default function TeacherLaporanKbmPage() {
     setIsModalOpen(true);
   }
 
+  function handleScheduleChange(scheduleId: string) {
+    const selectedSchedule = schedules.find((schedule) => schedule.id === scheduleId);
+
+    if (!selectedSchedule) {
+      setForm({
+        ...form,
+        schedule_id: "",
+        student_id: "",
+        subject_id: "",
+        class_level: "",
+        chapter: "",
+        material_topic: "",
+      });
+      return;
+    }
+
+    setForm({
+      ...form,
+      schedule_id: selectedSchedule.id,
+      student_id: selectedSchedule.student_id || "",
+      subject_id: selectedSchedule.subject_id || "",
+      report_date: selectedSchedule.schedule_date || getTodayDate(),
+      class_level: selectedSchedule.students?.grade || "",
+      semester: selectedSchedule.semester || form.semester || "Genap",
+      chapter: selectedSchedule.session_name || "",
+      material_topic: selectedSchedule.material_topic || "",
+    });
+  }
+
   function handleStudentChange(studentId: string) {
     const selectedStudent = students.find((student) => student.id === studentId);
 
     setForm({
       ...form,
+      schedule_id: "",
       student_id: studentId,
       class_level: selectedStudent?.grade || "",
     });
@@ -478,7 +626,7 @@ export default function TeacherLaporanKbmPage() {
     }
 
     if (!form.student_id) {
-      setErrorMessage("Murid wajib dipilih.");
+      setErrorMessage("Siswa wajib dipilih.");
       return;
     }
 
@@ -623,7 +771,7 @@ export default function TeacherLaporanKbmPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari murid, mapel, bab, materi, masalah, solusi..."
+                  placeholder="Cari siswa, mapel, bab, materi, masalah, solusi..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -645,7 +793,7 @@ export default function TeacherLaporanKbmPage() {
                   onChange={(event) => setStudentFilter(event.target.value)}
                   className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 >
-                  <option>Semua Murid</option>
+                  <option>Semua Siswa</option>
                   {students.map((student) => (
                     <option key={student.id} value={student.id}>
                       {student.full_name}
@@ -671,7 +819,7 @@ export default function TeacherLaporanKbmPage() {
                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                       <div className="flex items-start gap-4">
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                          {getInitials(report.students?.full_name || "Murid")}
+                          {getInitials(report.students?.full_name || "Siswa")}
                         </div>
 
                         <div>
@@ -683,7 +831,8 @@ export default function TeacherLaporanKbmPage() {
                           <p className="mt-1 text-sm text-[#6B4A3A]">
                             {report.class_level || "-"} /{" "}
                             {report.semester || "-"} •{" "}
-                            {formatDate(report.report_date)}
+                            {formatDate(report.report_date)} • NIPD:{" "}
+                            {report.students?.nis || "-"}
                           </p>
                         </div>
                       </div>
@@ -792,12 +941,12 @@ export default function TeacherLaporanKbmPage() {
                 </div>
 
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Murid Terhubung</h2>
+                  <h2 className="text-lg font-bold">Siswa Terhubung</h2>
 
                   <div className="mt-5 space-y-3">
                     {students.length === 0 && (
                       <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
-                        Belum ada murid untuk guru ini.
+                        Belum ada siswa untuk guru ini.
                       </div>
                     )}
 
@@ -814,7 +963,7 @@ export default function TeacherLaporanKbmPage() {
                           <div>
                             <p className="font-bold">{student.full_name}</p>
                             <p className="text-sm text-[#6B4A3A]">
-                              {student.grade || "-"} • {student.nis || "-"}
+                              {student.grade || "-"} • NIPD: {student.nis || "-"}
                             </p>
                           </div>
                         </div>
@@ -942,16 +1091,35 @@ export default function TeacherLaporanKbmPage() {
 
               <form onSubmit={handleSubmitReport} className="space-y-4 pb-2">
                 <div>
-                  <label className="text-sm font-bold">Murid</label>
+                  <label className="text-sm font-bold">Ambil dari Jadwal</label>
+                  <select
+                    value={form.schedule_id}
+                    onChange={(event) => handleScheduleChange(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    <option value="">Input manual / pilih jadwal</option>
+                    {schedules.map((schedule) => (
+                      <option key={schedule.id} value={schedule.id}>
+                        {getScheduleLabel(schedule)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs leading-5 text-[#6B4A3A]">
+                    Pilih jadwal agar siswa, mapel, tanggal, kelas, dan materi otomatis terisi.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Siswa</label>
                   <select
                     value={form.student_id}
                     onChange={(event) => handleStudentChange(event.target.value)}
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
-                    <option value="">Pilih murid</option>
+                    <option value="">Pilih siswa</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.grade || "-"}
+                        {student.full_name} — {student.grade || "-"} — NIPD: {student.nis || "-"}
                       </option>
                     ))}
                   </select>

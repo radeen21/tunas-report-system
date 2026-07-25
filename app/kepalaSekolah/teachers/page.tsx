@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { FileText, UploadCloud } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
+
+const TEACHER_DOCUMENT_BUCKET = "teacher-documents";
+
+type TeacherDocumentKey =
+  | "ktp_url"
+  | "family_card_url"
+  | "diploma_url"
+  | "photo_url"
+  | "certificate_url";
 
 type Teacher = {
   id: string;
@@ -13,6 +23,19 @@ type Teacher = {
   phone: string | null;
   subjects: string[] | null;
   status: string | null;
+  birth_place: string | null;
+  birth_date: string | null;
+  gender: string | null;
+  religion: string | null;
+  education_level: string | null;
+  start_date: string | null;
+  graduation: string | null;
+  employment_status: string | null;
+  ktp_url: string | null;
+  family_card_url: string | null;
+  diploma_url: string | null;
+  photo_url: string | null;
+  certificate_url: string | null;
 };
 
 type StudentTeacher = {
@@ -101,6 +124,19 @@ type TeacherForm = {
   teacher_code: string;
   subjects: string;
   status: string;
+  birth_place: string;
+  birth_date: string;
+  gender: string;
+  religion: string;
+  education_level: string;
+  start_date: string;
+  graduation: string;
+  employment_status: string;
+  ktp_url: string;
+  family_card_url: string;
+  diploma_url: string;
+  photo_url: string;
+  certificate_url: string;
 };
 
 const initialForm: TeacherForm = {
@@ -110,7 +146,74 @@ const initialForm: TeacherForm = {
   teacher_code: "",
   subjects: "",
   status: "active",
+  birth_place: "",
+  birth_date: "",
+  gender: "",
+  religion: "",
+  education_level: "",
+  start_date: "",
+  graduation: "",
+  employment_status: "Honor",
+  ktp_url: "",
+  family_card_url: "",
+  diploma_url: "",
+  photo_url: "",
+  certificate_url: "",
 };
+
+const genderOptions = ["", "L", "P"];
+
+const religionOptions = [
+  "",
+  "Kristen",
+  "Katolik",
+  "Islam",
+  "Hindu",
+  "Buddha",
+  "Konghucu",
+  "Lainnya",
+];
+
+const educationOptions = [
+  "",
+  "SD",
+  "SMP",
+  "SMA/SMK",
+  "D1",
+  "D2",
+  "D3",
+  "D4",
+  "S1",
+  "S2",
+  "S3",
+  "Lainnya",
+];
+
+const employmentStatusOptions = ["Honor", "Tetap"];
+
+const teacherDocumentFields: Array<{
+  key: TeacherDocumentKey;
+  label: string;
+  accept: string;
+}> = [
+  { key: "ktp_url", label: "KTP", accept: ".pdf,.jpg,.jpeg,.png" },
+  {
+    key: "family_card_url",
+    label: "KK",
+    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+  },
+  {
+    key: "diploma_url",
+    label: "Ijazah",
+    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+  },
+  { key: "photo_url", label: "Foto", accept: ".jpg,.jpeg,.png,.webp" },
+  {
+    key: "certificate_url",
+    label: "Sertifikat",
+    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+  },
+];
 
 function getInitials(name: string) {
   return name
@@ -137,6 +240,8 @@ function formatDate(date: string | null) {
   if (!date) return "-";
 
   const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
 
   return parsedDate.toLocaleDateString("id-ID", {
     day: "2-digit",
@@ -172,6 +277,46 @@ function getTeacherStatusLabel(status: string | null) {
   return "Active";
 }
 
+function genderLabel(gender?: string | null) {
+  if (gender === "L") return "Laki-laki";
+  if (gender === "P") return "Perempuan";
+  return "-";
+}
+
+function cleanFileName(fileName: string) {
+  return fileName
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "");
+}
+
+async function uploadTeacherDocument(
+  file: File,
+  teacherName: string,
+  fieldKey: TeacherDocumentKey
+) {
+  const safeTeacherName = cleanFileName(teacherName || "teacher");
+  const safeFileName = cleanFileName(file.name);
+  const filePath = `${safeTeacherName}/${fieldKey}-${Date.now()}-${safeFileName}`;
+
+  const { error } = await supabase.storage
+    .from(TEACHER_DOCUMENT_BUCKET)
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const { data } = supabase.storage
+    .from(TEACHER_DOCUMENT_BUCKET)
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
+
 export default function KepalaSekolahTeachersPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -185,6 +330,9 @@ export default function KepalaSekolahTeachersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [form, setForm] = useState<TeacherForm>(initialForm);
+  const [documentFiles, setDocumentFiles] = useState<
+    Partial<Record<TeacherDocumentKey, File>>
+  >({});
   const [errorMessage, setErrorMessage] = useState("");
 
   const [viewReportsTeacher, setViewReportsTeacher] = useState<Teacher | null>(
@@ -196,7 +344,31 @@ export default function KepalaSekolahTeachersPage() {
   async function fetchTeachers() {
     const { data, error } = await supabase
       .from("teachers")
-      .select("id, user_id, teacher_code, full_name, email, phone, subjects, status")
+      .select(
+        `
+        id,
+        user_id,
+        teacher_code,
+        full_name,
+        email,
+        phone,
+        subjects,
+        status,
+        birth_place,
+        birth_date,
+        gender,
+        religion,
+        education_level,
+        start_date,
+        graduation,
+        employment_status,
+        ktp_url,
+        family_card_url,
+        diploma_url,
+        photo_url,
+        certificate_url
+      `
+      )
       .order("full_name", { ascending: true });
 
     if (error) {
@@ -205,7 +377,7 @@ export default function KepalaSekolahTeachersPage() {
       return;
     }
 
-    setTeachers(data || []);
+    setTeachers((data || []) as Teacher[]);
   }
 
   async function fetchStudents() {
@@ -358,7 +530,7 @@ export default function KepalaSekolahTeachersPage() {
   }, []);
 
   const filteredTeachers = useMemo(() => {
-    const keyword = search.toLowerCase();
+    const keyword = search.toLowerCase().trim();
 
     return teachers.filter((teacher) => {
       const subjectText = normalizeSubjects(teacher.subjects)
@@ -368,7 +540,13 @@ export default function KepalaSekolahTeachersPage() {
       return (
         teacher.full_name.toLowerCase().includes(keyword) ||
         teacher.email?.toLowerCase().includes(keyword) ||
+        teacher.phone?.toLowerCase().includes(keyword) ||
         teacher.teacher_code?.toLowerCase().includes(keyword) ||
+        teacher.birth_place?.toLowerCase().includes(keyword) ||
+        teacher.religion?.toLowerCase().includes(keyword) ||
+        teacher.education_level?.toLowerCase().includes(keyword) ||
+        teacher.graduation?.toLowerCase().includes(keyword) ||
+        teacher.employment_status?.toLowerCase().includes(keyword) ||
         subjectText.includes(keyword)
       );
     });
@@ -392,6 +570,7 @@ export default function KepalaSekolahTeachersPage() {
   function openCreateTeacherModal() {
     setEditingTeacher(null);
     setForm(initialForm);
+    setDocumentFiles({});
     setErrorMessage("");
     setIsModalOpen(true);
   }
@@ -405,7 +584,21 @@ export default function KepalaSekolahTeachersPage() {
       teacher_code: teacher.teacher_code || "",
       subjects: normalizeSubjects(teacher.subjects).join(", "),
       status: teacher.status || "active",
+      birth_place: teacher.birth_place || "",
+      birth_date: teacher.birth_date || "",
+      gender: teacher.gender || "",
+      religion: teacher.religion || "",
+      education_level: teacher.education_level || "",
+      start_date: teacher.start_date || "",
+      graduation: teacher.graduation || "",
+      employment_status: teacher.employment_status || "Honor",
+      ktp_url: teacher.ktp_url || "",
+      family_card_url: teacher.family_card_url || "",
+      diploma_url: teacher.diploma_url || "",
+      photo_url: teacher.photo_url || "",
+      certificate_url: teacher.certificate_url || "",
     });
+    setDocumentFiles({});
     setErrorMessage("");
     setIsModalOpen(true);
   }
@@ -540,7 +733,7 @@ export default function KepalaSekolahTeachersPage() {
     }
   }
 
-  async function handleSubmitTeacher(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmitTeacher(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage("");
 
@@ -572,19 +765,51 @@ export default function KepalaSekolahTeachersPage() {
         .map((subject) => subject.trim())
         .filter(Boolean);
 
+      const uploadedUrls: Partial<Record<TeacherDocumentKey, string>> = {};
+
+      for (const field of teacherDocumentFields) {
+        const file = documentFiles[field.key];
+
+        if (file) {
+          uploadedUrls[field.key] = await uploadTeacherDocument(
+            file,
+            form.full_name,
+            field.key
+          );
+        }
+      }
+
+      const teacherPayload = {
+        teacher_code: form.teacher_code.trim(),
+        full_name: form.full_name.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim() || null,
+        subjects: subjectList,
+        status: form.status,
+        birth_place: form.birth_place.trim() || null,
+        birth_date: form.birth_date || null,
+        gender: form.gender || null,
+        religion: form.religion || null,
+        education_level: form.education_level || null,
+        start_date: form.start_date || null,
+        graduation: form.graduation.trim() || null,
+        employment_status: form.employment_status || null,
+        ktp_url: uploadedUrls.ktp_url || form.ktp_url || null,
+        family_card_url:
+          uploadedUrls.family_card_url || form.family_card_url || null,
+        diploma_url: uploadedUrls.diploma_url || form.diploma_url || null,
+        photo_url: uploadedUrls.photo_url || form.photo_url || null,
+        certificate_url:
+          uploadedUrls.certificate_url || form.certificate_url || null,
+        updated_at: new Date().toISOString(),
+      };
+
       if (editingTeacher) {
         await updateTeacherUserProfile(editingTeacher);
 
         const { error } = await supabase
           .from("teachers")
-          .update({
-            teacher_code: form.teacher_code.trim(),
-            full_name: form.full_name.trim(),
-            email: form.email.trim().toLowerCase(),
-            phone: form.phone.trim() || null,
-            subjects: subjectList,
-            status: form.status,
-          })
+          .update(teacherPayload)
           .eq("id", editingTeacher.id);
 
         if (error) {
@@ -594,13 +819,8 @@ export default function KepalaSekolahTeachersPage() {
         const userId = await findOrCreateTeacherUser();
 
         const { error } = await supabase.from("teachers").insert({
+          ...teacherPayload,
           user_id: userId,
-          teacher_code: form.teacher_code.trim(),
-          full_name: form.full_name.trim(),
-          email: form.email.trim().toLowerCase(),
-          phone: form.phone.trim() || null,
-          subjects: subjectList,
-          status: form.status,
         });
 
         if (error) {
@@ -609,6 +829,7 @@ export default function KepalaSekolahTeachersPage() {
       }
 
       setForm(initialForm);
+      setDocumentFiles({});
       setEditingTeacher(null);
       setIsModalOpen(false);
       await fetchAllData();
@@ -628,21 +849,22 @@ export default function KepalaSekolahTeachersPage() {
     setErrorMessage("");
     setEditingTeacher(null);
     setForm(initialForm);
+    setDocumentFiles({});
   }
 
   return (
     <KepalaSekolahLayout
       activeMenu="Guru"
-      searchPlaceholder="Cari murid, guru, atau report..."
+      searchPlaceholder="Cari guru, kode, email, mapel, agama, atau status..."
       buttonLabel="+ Tambah Guru"
     >
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-[30px] font-bold tracking-tight">
             Teacher Management
           </h1>
           <p className="mt-1 text-sm text-[#6B4A3A]">
-            Kelola guru dan assign ke murid.
+            Kelola data guru, dokumen guru, dan assign ke murid.
           </p>
         </div>
 
@@ -659,7 +881,7 @@ export default function KepalaSekolahTeachersPage() {
         <input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Cari nama guru, kode guru, email, atau mata pelajaran..."
+          placeholder="Cari nama guru, kode guru, email, agama, status, atau mata pelajaran..."
           className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
         />
       </div>
@@ -683,11 +905,14 @@ export default function KepalaSekolahTeachersPage() {
       )}
 
       {!loading && filteredTeachers.length > 0 && (
-        <div className="mt-7 grid grid-cols-3 gap-5">
+        <div className="mt-7 grid gap-5 xl:grid-cols-3 md:grid-cols-2 grid-cols-1">
           {filteredTeachers.map((teacher) => {
             const subjects = normalizeSubjects(teacher.subjects);
             const studentCount = getStudentCountByTeacher(teacher.id);
             const reportCount = getReportCountByTeacher(teacher.id);
+            const documentCount = teacherDocumentFields.filter(
+              (field) => teacher[field.key]
+            ).length;
 
             return (
               <div
@@ -702,24 +927,46 @@ export default function KepalaSekolahTeachersPage() {
                   </div>
 
                   <div className="mt-4 flex items-start justify-between gap-3">
-                    <div>
-                      <h2 className="text-xl font-bold">{teacher.full_name}</h2>
-                      <p className="mt-1 text-sm text-[#6B4A3A]">
+                    <div className="min-w-0">
+                      <h2
+                        className="truncate text-xl font-bold"
+                        title={teacher.full_name}
+                      >
+                        {teacher.full_name}
+                      </h2>
+                      <p className="mt-1 truncate text-sm text-[#6B4A3A]">
                         {teacher.email || "-"}
                       </p>
                       <p className="mt-1 text-xs text-[#9B8175]">
-                        {teacher.teacher_code || "-"} •{" "}
-                        {teacher.status || "active"}
+                        {teacher.teacher_code || "-"} • {teacher.phone || "-"}
                       </p>
                     </div>
 
                     <span
-                      className={`rounded-full px-3 py-1 text-xs font-bold ${getTeacherStatusBadge(
+                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${getTeacherStatusBadge(
                         teacher.status
                       )}`}
                     >
                       {getTeacherStatusLabel(teacher.status)}
                     </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 rounded-2xl bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
+                    <InfoLine label="JK" value={genderLabel(teacher.gender)} />
+                    <InfoLine label="Agama" value={teacher.religion || "-"} />
+                    <InfoLine
+                      label="Pendidikan"
+                      value={teacher.education_level || "-"}
+                    />
+                    <InfoLine
+                      label="Status Guru"
+                      value={teacher.employment_status || "-"}
+                    />
+                    <InfoLine
+                      label="Mulai Masuk"
+                      value={formatDate(teacher.start_date)}
+                    />
+                    <InfoLine label="Lulusan" value={teacher.graduation || "-"} />
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
@@ -739,15 +986,20 @@ export default function KepalaSekolahTeachersPage() {
                     )}
                   </div>
 
-                  <div className="mt-6 grid grid-cols-2 gap-3">
+                  <div className="mt-6 grid grid-cols-3 gap-3">
                     <div className="rounded-xl bg-[#FFF8EF] p-4">
-                      <p className="text-sm text-[#6B4A3A]">👥 Murid</p>
+                      <p className="text-xs text-[#6B4A3A]">Murid</p>
                       <p className="mt-2 text-2xl font-bold">{studentCount}</p>
                     </div>
 
                     <div className="rounded-xl bg-[#FFF8EF] p-4">
-                      <p className="text-sm text-[#6B4A3A]">📖 Reports</p>
+                      <p className="text-xs text-[#6B4A3A]">Reports</p>
                       <p className="mt-2 text-2xl font-bold">{reportCount}</p>
+                    </div>
+
+                    <div className="rounded-xl bg-[#FFF8EF] p-4">
+                      <p className="text-xs text-[#6B4A3A]">Dokumen</p>
+                      <p className="mt-2 text-2xl font-bold">{documentCount}/5</p>
                     </div>
                   </div>
 
@@ -795,7 +1047,7 @@ export default function KepalaSekolahTeachersPage() {
               <tr>
                 <th className="px-5 py-4">Murid</th>
                 <th className="px-5 py-4">Level</th>
-                <th className="px-5 py-4">NIS</th>
+                <th className="px-5 py-4">NIPD</th>
                 <th className="px-5 py-4">Guru Pendamping</th>
               </tr>
             </thead>
@@ -844,11 +1096,16 @@ export default function KepalaSekolahTeachersPage() {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[88vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+          <div className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">
-                {editingTeacher ? "Edit Profile Guru" : "Tambah Guru Baru"}
-              </h2>
+              <div>
+                <h2 className="text-xl font-bold">
+                  {editingTeacher ? "Edit Profile Guru" : "Tambah Guru Baru"}
+                </h2>
+                <p className="mt-1 text-sm text-[#6B4A3A]">
+                  Lengkapi data guru sesuai format HSTKB.
+                </p>
+              </div>
 
               <button
                 type="button"
@@ -866,86 +1123,250 @@ export default function KepalaSekolahTeachersPage() {
                 </div>
               )}
 
-              <form onSubmit={handleSubmitTeacher} className="space-y-4">
-                <div>
-                  <label className="text-sm font-bold">Nama Guru</label>
-                  <input
-                    value={form.full_name}
-                    onChange={(event) =>
-                      setForm({ ...form, full_name: event.target.value })
-                    }
-                    placeholder="Contoh: Ms. Clara"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
+              <form onSubmit={handleSubmitTeacher} className="space-y-5">
+                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
+                  <h3 className="font-bold text-[#2B1B18]">Data Utama Guru</h3>
 
-                <div>
-                  <label className="text-sm font-bold">Email</label>
-                  <input
-                    type="email"
-                    value={form.email}
-                    onChange={(event) =>
-                      setForm({ ...form, email: event.target.value })
-                    }
-                    placeholder="clara@hstkb.id"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Nomor HP</label>
-                  <input
-                    value={form.phone}
-                    onChange={(event) =>
-                      setForm({ ...form, phone: event.target.value })
-                    }
-                    placeholder="0812xxxx"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Kode Guru</label>
-                    <input
-                      value={form.teacher_code}
-                      onChange={(event) =>
-                        setForm({ ...form, teacher_code: event.target.value })
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <FormInput
+                      label="Nama Guru"
+                      value={form.full_name}
+                      placeholder="Contoh: Ms. Clara"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, full_name: value }))
                       }
-                      placeholder="TCH-003"
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                     />
-                  </div>
 
-                  <div>
-                    <label className="text-sm font-bold">Status</label>
-                    <select
-                      value={form.status}
-                      onChange={(event) =>
-                        setForm({ ...form, status: event.target.value })
+                    <FormInput
+                      label="Email"
+                      value={form.email}
+                      placeholder="clara@hstkb.id"
+                      type="email"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, email: value }))
                       }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
+                    />
+
+                    <FormInput
+                      label="Nomor HP"
+                      value={form.phone}
+                      placeholder="0812xxxx"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, phone: value }))
+                      }
+                    />
+
+                    <FormInput
+                      label="Kode Guru"
+                      value={form.teacher_code}
+                      placeholder="TCH-003"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, teacher_code: value }))
+                      }
+                    />
+
+                    <FormInput
+                      label="Tempat Lahir"
+                      value={form.birth_place}
+                      placeholder="Contoh: Jakarta"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, birth_place: value }))
+                      }
+                    />
+
+                    <div>
+                      <label className="text-sm font-bold">Tanggal Lahir</label>
+                      <input
+                        type="date"
+                        value={form.birth_date}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            birth_date: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-bold">Jenis Kelamin</label>
+                      <select
+                        value={form.gender}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            gender: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      >
+                        <option value="">Pilih jenis kelamin</option>
+                        {genderOptions
+                          .filter((gender) => gender !== "")
+                          .map((gender) => (
+                            <option key={gender} value={gender}>
+                              {gender === "L" ? "Laki-laki" : "Perempuan"}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-bold">Agama</label>
+                      <select
+                        value={form.religion}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            religion: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      >
+                        <option value="">Pilih agama</option>
+                        {religionOptions
+                          .filter((religion) => religion !== "")
+                          .map((religion) => (
+                            <option key={religion} value={religion}>
+                              {religion}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-bold">Pendidikan</label>
+                      <select
+                        value={form.education_level}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            education_level: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      >
+                        <option value="">Pilih pendidikan</option>
+                        {educationOptions
+                          .filter((education) => education !== "")
+                          .map((education) => (
+                            <option key={education} value={education}>
+                              {education}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <FormInput
+                      label="Lulusan"
+                      value={form.graduation}
+                      placeholder="Contoh: Universitas Terbuka"
+                      onChange={(value) =>
+                        setForm((prev) => ({ ...prev, graduation: value }))
+                      }
+                    />
+
+                    <div>
+                      <label className="text-sm font-bold">
+                        Mulai Masuk HSTKB
+                      </label>
+                      <input
+                        type="date"
+                        value={form.start_date}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            start_date: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-bold">Status Guru</label>
+                      <select
+                        value={form.employment_status}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            employment_status: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      >
+                        {employmentStatusOptions.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-bold">Status Akun</label>
+                      <select
+                        value={form.status}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            status: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="text-sm font-bold">
+                        Bidang Studi yang Diampu
+                      </label>
+                      <textarea
+                        value={form.subjects}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            subjects: event.target.value,
+                          }))
+                        }
+                        placeholder="Contoh: MTK kelas 1, 2, 3, Bahasa Indonesia kelas 1, 2, 3"
+                        rows={4}
+                        className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                      />
+                      <p className="mt-1 text-xs text-[#6B4A3A]">
+                        Pisahkan dengan koma, contoh: Math, Science, Reading
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <textarea
-                    value={form.subjects}
-                    onChange={(event) =>
-                      setForm({ ...form, subjects: event.target.value })
-                    }
-                    placeholder="Contoh: MTK kelas 1, 2, 3, Bahasa Indonesia kelas 1, 2, 3"
-                    rows={4}
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                  <p className="mt-1 text-xs text-[#6B4A3A]">
-                    Pisahkan dengan koma, contoh: Math, Science, Reading
+                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
+                  <h3 className="font-bold text-[#2B1B18]">Dokumen Guru</h3>
+                  <p className="mt-1 text-sm text-[#6B4A3A]">
+                    Upload KTP, KK, Ijazah, Foto, dan Sertifikat guru.
                   </p>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {teacherDocumentFields.map((field) => (
+                      <TeacherDocumentUploadBox
+                        key={field.key}
+                        label={field.label}
+                        accept={field.accept}
+                        currentUrl={form[field.key]}
+                        fileName={documentFiles[field.key]?.name || ""}
+                        onChange={(file) =>
+                          setDocumentFiles((prev) => ({
+                            ...prev,
+                            [field.key]: file || undefined,
+                          }))
+                        }
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
@@ -1143,7 +1564,7 @@ function AssignModal({
                         </p>
                         <p className="mt-1 text-xs text-[#6B4A3A]">
                           {student.level || "-"}
-                          {student.grade ? ` — ${student.grade}` : ""} • NIS:{" "}
+                          {student.grade ? ` — ${student.grade}` : ""} • NIPD:{" "}
                           {student.nis || "-"}
                         </p>
                       </div>
@@ -1238,6 +1659,97 @@ function ReportInfo({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-[#FFF8EF] p-3 text-sm">
       <p className="text-[#6B4A3A]">{label}</p>
       <p className="mt-1 font-bold text-[#2B1B18]">{value}</p>
+    </div>
+  );
+}
+
+function InfoLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs font-bold text-[#6B4A3A]">{label}</span>
+      <span className="truncate text-right text-xs font-bold text-[#2B1B18]">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function FormInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+  type = "text",
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  type?: string;
+}) {
+  return (
+    <div>
+      <label className="text-sm font-bold">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+      />
+    </div>
+  );
+}
+
+function TeacherDocumentUploadBox({
+  label,
+  accept,
+  currentUrl,
+  fileName,
+  onChange,
+}: {
+  label: string;
+  accept: string;
+  currentUrl: string;
+  fileName: string;
+  onChange: (file: File | null) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[13px] font-bold text-[#6F5549]">{label}</p>
+
+          {currentUrl ? (
+            <a
+              href={currentUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-[12px] font-bold text-[#158A58] underline"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Lihat file saat ini
+            </a>
+          ) : (
+            <p className="mt-1 text-[12px] text-[#D11A2A]">Belum ada file</p>
+          )}
+        </div>
+      </div>
+
+      <label className="mt-3 flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[13px] font-bold text-[#7A1F2B] transition hover:bg-[#F7EDE2]">
+        <UploadCloud className="h-4 w-4" />
+        Ganti / Upload File
+        <input
+          type="file"
+          accept={accept}
+          className="hidden"
+          onChange={(event) => onChange(event.target.files?.[0] || null)}
+        />
+      </label>
+
+      <p className="mt-2 truncate text-[12px] text-[#7D5E50]">
+        {fileName || "Belum pilih file baru"}
+      </p>
     </div>
   );
 }

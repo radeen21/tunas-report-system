@@ -47,6 +47,7 @@ type StudentForm = {
   birth_date: string;
   birth_place: string;
   gender: string;
+  religion: string;
   parent_id: string;
   homeroom_teacher_id: string;
   progress: string;
@@ -74,6 +75,7 @@ const initialForm: StudentForm = {
   birth_date: "",
   birth_place: "",
   gender: "",
+  religion: "",
   parent_id: "",
   homeroom_teacher_id: "",
   progress: "0",
@@ -95,6 +97,17 @@ const levelOptions = [
   "Primary Level",
   "Secondary Level",
   "High School",
+];
+
+const religionOptions = [
+  "",
+  "Kristen",
+  "Katolik",
+  "Islam",
+  "Hindu",
+  "Buddha",
+  "Konghucu",
+  "Lainnya",
 ];
 
 const statusOptions = ["active", "inactive"];
@@ -239,6 +252,7 @@ export default function KepalaSekolahStudentEditPage() {
             birth_date,
             birth_place,
             gender,
+            religion,
             parent_id,
             homeroom_teacher_id,
             progress,
@@ -292,6 +306,7 @@ export default function KepalaSekolahStudentEditPage() {
         birth_date: student.birth_date || "",
         birth_place: student.birth_place || "",
         gender: student.gender || "",
+        religion: student.religion || "",
         parent_id: student.parent_id || "",
         homeroom_teacher_id: student.homeroom_teacher_id || "",
         progress: String(student.progress ?? 0),
@@ -405,6 +420,7 @@ export default function KepalaSekolahStudentEditPage() {
           birth_date: form.birth_date || null,
           birth_place: form.birth_place.trim() || null,
           gender: form.gender || null,
+          religion: form.religion || null,
           parent_id: form.parent_id || null,
           homeroom_teacher_id: form.homeroom_teacher_id || null,
           progress: progressValue,
@@ -555,6 +571,28 @@ export default function KepalaSekolahStudentEditPage() {
                       <option value="">Pilih JK</option>
                       <option value="L">Laki-laki</option>
                       <option value="P">Perempuan</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-sm font-bold text-[#2B1B18]">
+                      Agama
+                    </label>
+                    <select
+                      value={form.religion}
+                      onChange={(event) =>
+                        updateForm("religion", event.target.value)
+                      }
+                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    >
+                      <option value="">Pilih agama</option>
+                      {religionOptions
+                        .filter((religion) => religion !== "")
+                        .map((religion) => (
+                          <option key={religion} value={religion}>
+                            {religion}
+                          </option>
+                        ))}
                     </select>
                   </div>
 
@@ -785,6 +823,7 @@ export default function KepalaSekolahStudentEditPage() {
                   <InfoBox label="Nama" value={form.full_name || "-"} />
                   <InfoBox label="NIPD" value={form.nis || "-"} />
                   <InfoBox label="JK" value={genderLabel(form.gender)} />
+                  <InfoBox label="Agama" value={form.religion || "-"} />
                   <InfoBox label="Kelas" value={form.grade || "-"} />
                   <InfoBox label="Level" value={form.level || "-"} />
                   <InfoBox label="Status" value={form.status || "-"} />

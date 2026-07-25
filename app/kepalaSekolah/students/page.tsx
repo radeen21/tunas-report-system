@@ -30,6 +30,7 @@ type StudentRow = {
   birth_date: string;
   birth_place: string;
   gender: string;
+  religion: string;
   parent_id?: string | null;
   homeroom_teacher_id?: string | null;
   parent_name: string;
@@ -62,6 +63,7 @@ type StudentForm = {
   birth_date: string;
   birth_place: string;
   gender: string;
+  religion: string;
   parent_id: string;
   homeroom_teacher_id: string;
   description: string;
@@ -77,6 +79,7 @@ const initialForm: StudentForm = {
   birth_date: "",
   birth_place: "",
   gender: "",
+  religion: "",
   parent_id: "",
   homeroom_teacher_id: "",
   description: "",
@@ -132,6 +135,17 @@ const documentFields: Array<{
     label: "Akte",
     accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
   },
+];
+
+const religionOptions = [
+  "",
+  "Kristen",
+  "Katolik",
+  "Islam",
+  "Hindu",
+  "Buddha",
+  "Konghucu",
+  "Lainnya",
 ];
 
 function getInitials(name: string) {
@@ -359,6 +373,7 @@ export default function KepalaSekolahStudentsPage() {
           "",
         birth_place: student.birth_place ?? "",
         gender: student.gender ?? "",
+        religion: student.religion ?? "",
         parent_id: student.parent_id ?? null,
         homeroom_teacher_id: student.homeroom_teacher_id ?? null,
         parent_name: parent?.full_name ?? parent?.name ?? "-",
@@ -424,7 +439,8 @@ export default function KepalaSekolahStudentsPage() {
         student.level.toLowerCase().includes(query) ||
         student.grade.toLowerCase().includes(query) ||
         student.birth_place.toLowerCase().includes(query) ||
-        student.gender.toLowerCase().includes(query)
+        student.gender.toLowerCase().includes(query) ||
+        student.religion.toLowerCase().includes(query)
       );
     });
   }, [students, search]);
@@ -497,6 +513,7 @@ export default function KepalaSekolahStudentsPage() {
         birth_date: form.birth_date || null,
         birth_place: form.birth_place.trim() || null,
         gender: form.gender || null,
+        religion: form.religion || null,
         parent_id: form.parent_id,
         homeroom_teacher_id: form.homeroom_teacher_id,
         description: form.description.trim() || null,
@@ -632,8 +649,8 @@ export default function KepalaSekolahStudentsPage() {
                       {student.birth_place ? ` • ${student.birth_place}` : ""}
                     </p>
                     <p className="mt-0.5 text-[12px] text-[#7A5E52]">
-                      NIPD: {student.nis || "-"} • JK:{" "}
-                      {genderLabel(student.gender)}
+                      NIPD: {student.nis || "-"} • JK: {genderLabel(student.gender)} • Agama:{" "}
+                      {student.religion || "-"}
                     </p>
                   </div>
                 </div>
@@ -790,6 +807,31 @@ export default function KepalaSekolahStudentsPage() {
                       <option value="">Pilih JK</option>
                       <option value="L">Laki-laki</option>
                       <option value="P">Perempuan</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[13px] font-bold text-[#6F5549]">
+                      Agama
+                    </label>
+                    <select
+                      value={form.religion}
+                      onChange={(event) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          religion: event.target.value,
+                        }))
+                      }
+                      className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                    >
+                      <option value="">Pilih agama</option>
+                      {religionOptions
+                        .filter((religion) => religion !== "")
+                        .map((religion) => (
+                          <option key={religion} value={religion}>
+                            {religion}
+                          </option>
+                        ))}
                     </select>
                   </div>
 

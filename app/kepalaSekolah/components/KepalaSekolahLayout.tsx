@@ -20,6 +20,7 @@ import {
   PlusCircle,
   Search,
   Settings,
+  UserRound,
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import AcademicFooter from "@/app/components/AcademicFooter";
 type ActiveMenu =
   | "Dashboard"
   | "Siswa"
+  | "Orang Tua"
   | "Guru"
   | "Jadwal Guru"
   | "Absensi KBM"
@@ -58,6 +60,7 @@ type MenuItem = {
 const menus: MenuItem[] = [
   { name: "Dashboard", icon: LayoutDashboard, href: "/kepalaSekolah" },
   { name: "Siswa", icon: UsersRound, href: "/kepalaSekolah/students" },
+  { name: "Orang Tua", icon: UserRound, href: "/kepalaSekolah/parents" },
   { name: "Guru", icon: GraduationCap, href: "/kepalaSekolah/teachers" },
   { name: "Jadwal Guru", icon: CalendarDays, href: "/kepalaSekolah/jadwal" },
   { name: "Absensi KBM", icon: ClipboardCheck, href: "/kepalaSekolah/absensi" },
