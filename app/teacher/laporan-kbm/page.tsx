@@ -120,6 +120,7 @@ type ScheduleOption = {
 };
 
 type KbmForm = {
+  id: string;
   schedule_id: string;
   student_id: string;
   subject_id: string;
@@ -135,6 +136,7 @@ type KbmForm = {
 };
 
 const initialForm: KbmForm = {
+  id: "",
   schedule_id: "",
   student_id: "",
   subject_id: "",
@@ -214,6 +216,10 @@ function getStatusBadge(status: string | null) {
   if (status === "revision") return "bg-red-100 text-red-700";
 
   return "bg-slate-200 text-slate-700";
+}
+
+function canEditReport(status: string | null) {
+  return !status || status === "draft" || status === "revision";
 }
 
 export default function TeacherLaporanKbmPage() {
@@ -317,7 +323,7 @@ export default function TeacherLaporanKbmPage() {
     setSubjects(data || []);
   }
 
-async function fetchSchedules(teacherId: string) {
+  async function fetchSchedules(teacherId: string) {
     const { data, error } = await supabase
       .from("schedules")
       .select(
@@ -566,11 +572,39 @@ async function fetchSchedules(teacherId: string) {
 
     setForm({
       ...initialForm,
+      id: "",
       schedule_id: "",
       student_id: student?.id || "",
       class_level: student?.grade || "",
       report_date: getTodayDate(),
       status: "pending_review",
+    });
+
+    setIsModalOpen(true);
+  }
+
+  function openEditModal(report: KbmReport) {
+    if (!canEditReport(report.status)) {
+      alert("Laporan ini sudah dikirim/review, jadi tidak bisa diedit.");
+      return;
+    }
+
+    setErrorMessage("");
+
+    setForm({
+      id: report.id,
+      schedule_id: "",
+      student_id: report.student_id || "",
+      subject_id: report.subject_id || "",
+      report_date: report.report_date || getTodayDate(),
+      class_level: report.class_level || "",
+      semester: report.semester || "Genap",
+      chapter: report.chapter || "",
+      material_topic: report.material_topic || "",
+      learning_issue: report.learning_issue || "",
+      solution: report.solution || "",
+      teacher_note: report.teacher_note || "",
+      status: report.status || "draft",
     });
 
     setIsModalOpen(true);
@@ -648,7 +682,7 @@ async function fetchSchedules(teacherId: string) {
     setSaving(true);
 
     try {
-      const { error } = await supabase.from("kbm_reports").insert({
+      const payload = {
         student_id: form.student_id,
         teacher_id: teacher.id,
         subject_id: form.subject_id,
@@ -661,14 +695,31 @@ async function fetchSchedules(teacherId: string) {
         solution: form.solution.trim() || null,
         teacher_note: form.teacher_note.trim() || null,
         status: form.status,
-      });
+      };
 
-      if (error) {
-        throw new Error(error.message);
+      if (form.id) {
+        const existingReport = reports.find((report) => report.id === form.id);
+
+        if (existingReport && !canEditReport(existingReport.status)) {
+          throw new Error("Laporan ini sudah dikirim/review, jadi tidak bisa diedit.");
+        }
+
+        const { error } = await supabase
+          .from("kbm_reports")
+          .update(payload)
+          .eq("id", form.id)
+          .eq("teacher_id", teacher.id);
+
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase.from("kbm_reports").insert(payload);
+
+        if (error) throw new Error(error.message);
       }
 
       setForm({
         ...initialForm,
+        id: "",
         report_date: getTodayDate(),
         status: "pending_review",
       });
@@ -685,11 +736,42 @@ async function fetchSchedules(teacherId: string) {
     }
   }
 
+  async function handleSubmitDraft(report: KbmReport) {
+    if (!teacher?.id) return;
+
+    if (!canEditReport(report.status)) {
+      alert("Laporan ini sudah dikirim/review.");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Kirim laporan "${report.students?.full_name || "-"} — ${
+        report.subjects?.name || "-"
+      }" ke Kepala Sekolah?`
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("kbm_reports")
+      .update({ status: "pending_review" })
+      .eq("id", report.id)
+      .eq("teacher_id", teacher.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await fetchReports(teacher.id);
+  }
+
   function closeModal() {
     setIsModalOpen(false);
     setErrorMessage("");
     setForm({
       ...initialForm,
+      id: "",
       report_date: getTodayDate(),
       status: "pending_review",
     });
@@ -851,9 +933,7 @@ async function fetchSchedules(teacherId: string) {
                         <p className="text-xs font-bold uppercase tracking-wide text-[#6B4A3A]">
                           Bab
                         </p>
-                        <p className="mt-2 font-bold">
-                          {report.chapter || "-"}
-                        </p>
+                        <p className="mt-2 font-bold">{report.chapter || "-"}</p>
                       </div>
 
                       <div className="rounded-2xl bg-[#FFF8EF] p-4">
@@ -901,6 +981,31 @@ async function fetchSchedules(teacherId: string) {
                         </p>
                       </div>
                     </div>
+
+                    {canEditReport(report.status) ? (
+                      <div className="mt-5 flex flex-wrap gap-3 border-t border-[#E8D6C1] pt-4">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(report)}
+                          className="rounded-xl border border-[#DCC8B6] bg-white px-4 py-2 text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF]"
+                        >
+                          Edit Draft
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleSubmitDraft(report)}
+                          className="rounded-xl bg-[#7A1F2B] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#54131D]"
+                        >
+                          Kirim Review
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-xs font-semibold text-[#8A5A48]">
+                        Laporan yang sudah dikirim/review tidak bisa diedit dari
+                        halaman guru.
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1043,16 +1148,9 @@ async function fetchSchedules(teacherId: string) {
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Tombol{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      + Buat Laporan
-                    </span>{" "}
-                    akan menyimpan data baru ke table{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      kbm_reports
-                    </span>
-                    . Default status laporan adalah pending_review agar masuk ke
-                    review Kepala Sekolah.
+                    Laporan status draft/revision bisa diedit oleh guru. Jika
+                    sudah pending_review, approved, atau published, laporan tidak
+                    bisa diedit dari halaman guru.
                   </p>
                 </div>
               </div>
@@ -1065,7 +1163,9 @@ async function fetchSchedules(teacherId: string) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
           <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Buat Laporan KBM</h2>
+              <h2 className="text-xl font-bold">
+                {form.id ? "Edit Laporan KBM" : "Buat Laporan KBM"}
+              </h2>
 
               <button
                 type="button"
@@ -1084,9 +1184,8 @@ async function fetchSchedules(teacherId: string) {
               )}
 
               <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
-                Laporan dari menu ini bersifat input manual. Untuk laporan yang
-                otomatis membawa jadwal, Bab, Sub Bab, dan Materi Pokok,
-                gunakan menu Jadwal Mengajar atau Absensi KBM.
+                Laporan draft bisa disimpan ulang atau dikirim ke Kepala
+                Sekolah dengan status pending_review.
               </div>
 
               <form onSubmit={handleSubmitReport} className="space-y-4 pb-2">
@@ -1105,7 +1204,8 @@ async function fetchSchedules(teacherId: string) {
                     ))}
                   </select>
                   <p className="mt-1 text-xs leading-5 text-[#6B4A3A]">
-                    Pilih jadwal agar siswa, mapel, tanggal, kelas, dan materi otomatis terisi.
+                    Pilih jadwal agar siswa, mapel, tanggal, kelas, dan materi
+                    otomatis terisi.
                   </p>
                 </div>
 
@@ -1119,7 +1219,8 @@ async function fetchSchedules(teacherId: string) {
                     <option value="">Pilih siswa</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.grade || "-"} — NIPD: {student.nis || "-"}
+                        {student.full_name} — {student.grade || "-"} — NIPD:{" "}
+                        {student.nis || "-"}
                       </option>
                     ))}
                   </select>
@@ -1260,8 +1361,8 @@ async function fetchSchedules(teacherId: string) {
                     <option value="draft">draft</option>
                   </select>
                   <p className="mt-1 text-xs text-[#6B4A3A]">
-                    Default pending_review agar langsung masuk ke review Kepala
-                    Sekolah.
+                    Pilih draft jika belum selesai. Pilih pending_review jika
+                    siap dikirim ke Kepala Sekolah.
                   </p>
                 </div>
 
@@ -1271,7 +1372,11 @@ async function fetchSchedules(teacherId: string) {
                     disabled={saving}
                     className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {saving ? "Menyimpan..." : "Simpan Laporan KBM"}
+                    {saving
+                      ? "Menyimpan..."
+                      : form.id
+                      ? "Simpan Perubahan"
+                      : "Simpan Laporan KBM"}
                   </button>
                 </div>
               </form>

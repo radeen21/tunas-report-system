@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
 const RPP_BUCKET = "rpp-documents";
+const ACADEMIC_YEAR = "2026/2027";
 
 type TeacherRow = {
   id: string;
@@ -75,7 +76,6 @@ type RppRow = {
   semester: string | null;
   academic_year: string | null;
 
-  // Field lama tetap ada untuk compatibility data lama, tapi tidak dipakai di UI baru
   meeting_date: string | null;
   meeting_number: number | null;
   opening_activity: string | null;
@@ -140,9 +140,45 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeSubjects(subjects: TeacherRow["subjects"]) {
+  if (!subjects) return [];
+
+  if (Array.isArray(subjects)) {
+    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
+  }
+
+  return subjects
+    .split(",")
+    .map((subject) => normalizeText(subject))
+    .filter(Boolean);
+}
+
+function isTeacherSubjectMatch(
+  teacherSubjects: string[],
+  programSubject?: string | null
+) {
+  if (teacherSubjects.length === 0) return true;
+
+  const subjectName = normalizeText(programSubject);
+
+  if (!subjectName) return false;
+
+  return teacherSubjects.some((teacherSubject) => {
+    return (
+      teacherSubject === subjectName ||
+      teacherSubject.includes(subjectName) ||
+      subjectName.includes(teacherSubject)
+    );
+  });
+}
+
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
-  if (Array.isArray(subjects)) return `Guru — ${subjects.slice(0, 4).join(", ")}`;
+
+  if (Array.isArray(subjects)) {
+    return `Guru — ${subjects.slice(0, 4).join(", ")}`;
+  }
+
   return `Guru — ${subjects}`;
 }
 
@@ -174,6 +210,14 @@ function getStatusClass(status?: string | null) {
   if (status === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
   if (status === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
   return "bg-[#F1F5F9] text-[#64748B]";
+}
+
+function canEditRpp(status?: string | null) {
+  return !status || status === "draft" || status === "rejected";
+}
+
+function canDeleteRpp(status?: string | null) {
+  return !status || status === "draft" || status === "rejected";
 }
 
 function cleanFileName(fileName: string) {
@@ -258,6 +302,8 @@ export default function TeacherRppPage() {
       return;
     }
 
+    const teacherSubjects = normalizeSubjects(currentTeacher.subjects);
+
     const [programsRes, chaptersRes, subChaptersRes, rppRes] =
       await Promise.all([
         supabase
@@ -283,14 +329,72 @@ export default function TeacherRppPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-    const programsData = (programsRes.data || []) as CurriculumProgram[];
+    if (programsRes.error) {
+      alert(`Gagal mengambil Program Semester: ${programsRes.error.message}`);
+    }
+
+    if (chaptersRes.error) {
+      alert(`Gagal mengambil Bab: ${chaptersRes.error.message}`);
+    }
+
+    if (subChaptersRes.error) {
+      alert(`Gagal mengambil Sub Bab: ${subChaptersRes.error.message}`);
+    }
+
+    if (rppRes.error) {
+      alert(`Gagal mengambil RPP: ${rppRes.error.message}`);
+    }
+
+    const rawProgramsData = (programsRes.data || []) as CurriculumProgram[];
+
+    const programsData = rawProgramsData.filter((program) => {
+      const matchTeacher = program.teacher_id === currentTeacher.id;
+
+      const matchSubject = isTeacherSubjectMatch(
+        teacherSubjects,
+        program.subject_name
+      );
+
+      const matchAcademicYear =
+        !program.academic_year || program.academic_year === ACADEMIC_YEAR;
+
+      return matchTeacher && matchSubject && matchAcademicYear;
+    });
+
     const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
     const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
     const rppData = (rppRes.data || []) as RppRow[];
 
+    const allowedProgramIds = new Set(programsData.map((program) => program.id));
+
+    const allowedChapterIds = new Set(
+      chaptersData
+        .filter((chapter) => {
+          return (
+            chapter.curriculum_program_id &&
+            allowedProgramIds.has(chapter.curriculum_program_id)
+          );
+        })
+        .map((chapter) => chapter.id)
+    );
+
+    const filteredChaptersData = chaptersData.filter((chapter) => {
+      return (
+        chapter.curriculum_program_id &&
+        allowedProgramIds.has(chapter.curriculum_program_id)
+      );
+    });
+
+    const filteredSubChaptersData = subChaptersData.filter((subChapter) => {
+      return (
+        subChapter.curriculum_chapter_id &&
+        allowedChapterIds.has(subChapter.curriculum_chapter_id)
+      );
+    });
+
     const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
 
-    subChaptersData.forEach((subChapter) => {
+    filteredSubChaptersData.forEach((subChapter) => {
       if (!subChapter.curriculum_chapter_id) return;
 
       const current =
@@ -305,7 +409,7 @@ export default function TeacherRppPage() {
       Array<CurriculumChapter & { sub_chapters: CurriculumSubChapter[] }>
     >();
 
-    chaptersData.forEach((chapter) => {
+    filteredChaptersData.forEach((chapter) => {
       if (!chapter.curriculum_program_id) return;
 
       const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
@@ -428,6 +532,11 @@ export default function TeacherRppPage() {
   }
 
   function openEditModal(rpp: RppRow) {
+    if (!canEditRpp(rpp.status)) {
+      alert("RPP yang sudah submitted atau approved tidak bisa diedit.");
+      return;
+    }
+
     setForm({
       id: rpp.id,
       curriculum_program_id: rpp.curriculum_program_id || "",
@@ -460,13 +569,33 @@ export default function TeacherRppPage() {
       return false;
     }
 
+    if (selectedProgram.teacher_id !== teacher.id) {
+      alert("Program Semester ini bukan milik guru aktif.");
+      return false;
+    }
+
+    if (!isTeacherSubjectMatch(normalizeSubjects(teacher.subjects), selectedProgram.subject_name)) {
+      alert("Mapel Program Semester tidak sesuai dengan mapel guru aktif.");
+      return false;
+    }
+
     if (!selectedChapter) {
       alert("Pilih Bab terlebih dahulu.");
       return false;
     }
 
+    if (selectedChapter.curriculum_program_id !== selectedProgram.id) {
+      alert("Bab tidak sesuai dengan Program Semester yang dipilih.");
+      return false;
+    }
+
     if (!selectedSubChapter) {
       alert("Pilih Sub Bab terlebih dahulu.");
+      return false;
+    }
+
+    if (selectedSubChapter.curriculum_chapter_id !== selectedChapter.id) {
+      alert("Sub Bab tidak sesuai dengan Bab yang dipilih.");
       return false;
     }
 
@@ -534,6 +663,15 @@ export default function TeacherRppPage() {
       return;
     }
 
+    if (form.id) {
+      const existingRpp = rpps.find((rpp) => rpp.id === form.id);
+
+      if (existingRpp && !canEditRpp(existingRpp.status)) {
+        alert("RPP yang sudah submitted atau approved tidak bisa diedit.");
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -551,9 +689,8 @@ export default function TeacherRppPage() {
         level: selectedProgram.level,
         grade: selectedProgram.grade,
         semester: selectedProgram.semester,
-        academic_year: selectedProgram.academic_year,
+        academic_year: selectedProgram.academic_year || ACADEMIC_YEAR,
 
-        // Field lama sengaja dikirim null supaya UI baru tidak pakai tanggal/pertemuan/kegiatan
         meeting_date: null,
         meeting_number: null,
         opening_activity: null,
@@ -580,7 +717,8 @@ export default function TeacherRppPage() {
         const { error } = await supabase
           .from("rpp")
           .update(payload)
-          .eq("id", form.id);
+          .eq("id", form.id)
+          .eq("teacher_id", teacher.id);
 
         if (error) {
           throw new Error(error.message);
@@ -616,11 +754,25 @@ export default function TeacherRppPage() {
   }
 
   async function handleDelete(rpp: RppRow) {
+    if (!teacher?.id) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
+
+    if (!canDeleteRpp(rpp.status)) {
+      alert("RPP yang sudah submitted atau approved tidak bisa dihapus.");
+      return;
+    }
+
     const confirmDelete = confirm(`Hapus RPP "${getRppTitle(rpp)}"?`);
 
     if (!confirmDelete) return;
 
-    const { error } = await supabase.from("rpp").delete().eq("id", rpp.id);
+    const { error } = await supabase
+      .from("rpp")
+      .delete()
+      .eq("id", rpp.id)
+      .eq("teacher_id", teacher.id);
 
     if (error) {
       alert(`Gagal hapus RPP: ${error.message}`);
@@ -649,8 +801,8 @@ export default function TeacherRppPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Buat RPP berdasarkan Program Semester, Bab, dan Sub Bab. Format
-              baru menggunakan Indikator dan Materi Pelajaran.
+              Buat RPP berdasarkan Program Semester, Bab, dan Sub Bab milik guru
+              aktif. Format baru menggunakan Indikator dan Materi Pelajaran.
             </p>
           </div>
 
@@ -807,28 +959,35 @@ export default function TeacherRppPage() {
                       </a>
                     ) : null}
 
-                    {rpp.status !== "approved" ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(rpp)}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                        >
-                          <Edit3 className="h-4 w-4" />
-                          Edit
-                        </button>
+                    {canEditRpp(rpp.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(rpp)}
+                        className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                      >
+                        <Edit3 className="h-4 w-4" />
+                        Edit
+                      </button>
+                    ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(rpp)}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Hapus
-                        </button>
-                      </>
+                    {canDeleteRpp(rpp.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(rpp)}
+                        className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Hapus
+                      </button>
                     ) : null}
                   </div>
+
+                  {!canEditRpp(rpp.status) ? (
+                    <p className="pt-1 text-[12px] font-semibold text-[#8A5A48]">
+                      RPP yang sudah submitted/approved tidak bisa diedit. Jika
+                      perlu revisi, tunggu status rejected dari Kepala Sekolah.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ))
@@ -907,7 +1066,8 @@ function RppModal({
               <option value="">Pilih Program</option>
               {programs.map((program) => (
                 <option key={program.id} value={program.id}>
-                  {program.subject_name} — {program.level} {program.grade}
+                  {program.subject_name} — {program.level} {program.grade} —
+                  Semester {program.semester || "-"}
                 </option>
               ))}
             </select>
@@ -951,6 +1111,14 @@ function RppModal({
             </select>
           </FormGroup>
         </div>
+
+        {programs.length === 0 ? (
+          <div className="rounded-2xl border border-[#FDE68A] bg-[#FFFBEB] px-5 py-4 text-[13px] leading-6 text-[#92400E]">
+            Belum ada Program Semester yang cocok dengan guru/mapel aktif.
+            Pastikan Program Semester dibuat menggunakan guru dan mapel yang
+            sesuai.
+          </div>
+        ) : null}
 
         <FormGroup label="Judul RPP">
           <input

@@ -150,6 +150,28 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function formatDate(date: string | null) {
   if (!date) return "-";
 
@@ -212,7 +234,10 @@ function getChapterDisplay(
   return "-";
 }
 
-function calculateDurationMinutes(startTime?: string | null, endTime?: string | null) {
+function calculateDurationMinutes(
+  startTime?: string | null,
+  endTime?: string | null
+) {
   if (!startTime || !endTime) return null;
 
   const [startHour, startMinute] = startTime.split(":").map(Number);
@@ -234,7 +259,11 @@ function calculateDurationMinutes(startTime?: string | null, endTime?: string | 
   return diff > 0 ? diff : null;
 }
 
-function formatDuration(minutes?: number | null, startTime?: string | null, endTime?: string | null) {
+function formatDuration(
+  minutes?: number | null,
+  startTime?: string | null,
+  endTime?: string | null
+) {
   const duration = minutes || calculateDurationMinutes(startTime, endTime);
 
   if (!duration) return "-";
@@ -244,6 +273,7 @@ function formatDuration(minutes?: number | null, startTime?: string | null, endT
 
   if (hour > 0 && minute > 0) return `${hour} jam ${minute} menit`;
   if (hour > 0) return `${hour} jam`;
+
   return `${minute} menit`;
 }
 
@@ -472,6 +502,7 @@ export default function TeacherJadwalPage() {
         !keyword ||
         normalizeText(schedule.students?.full_name).includes(keyword) ||
         normalizeText(schedule.students?.grade).includes(keyword) ||
+        normalizeText(schedule.students?.level).includes(keyword) ||
         normalizeText(schedule.students?.nis).includes(keyword) ||
         normalizeText(schedule.students?.nisn).includes(keyword) ||
         normalizeText(schedule.subjects?.name).includes(keyword) ||
@@ -496,6 +527,12 @@ export default function TeacherJadwalPage() {
 
   const sortedSchedules = useMemo(() => {
     return [...filteredSchedules].sort((a, b) => {
+      const dateCompare = (a.schedule_date || "").localeCompare(
+        b.schedule_date || ""
+      );
+
+      if (dateCompare !== 0) return dateCompare;
+
       const dayDiff = getDayOrder(a.day_name) - getDayOrder(b.day_name);
 
       if (dayDiff !== 0) return dayDiff;
@@ -516,10 +553,6 @@ export default function TeacherJadwalPage() {
       .filter(Boolean) as string[];
 
     return new Set(studentIds).size;
-  }, [schedules]);
-
-  const totalLinkedCurriculum = useMemo(() => {
-    return schedules.filter((schedule) => schedule.curriculum_sub_chapter_id).length;
   }, [schedules]);
 
   const totalTemporaryFiles = useMemo(() => {
@@ -791,7 +824,7 @@ export default function TeacherJadwalPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, NIPD, kelas, mapel, materi, keterangan, program, bab, sub bab..."
+                  placeholder="Cari siswa, NIPD, NISN, kelas, mapel, materi, keterangan..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -828,24 +861,30 @@ export default function TeacherJadwalPage() {
                 <div className="border-b border-[#E8D6C1] px-6 py-5">
                   <h2 className="text-lg font-bold">Daftar Jadwal</h2>
                   <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Jadwal mengajar tersinkron dari data Kepala Sekolah.
+                    Format mengikuti template jadwal sekolah: hari, tanggal,
+                    datang, pulang, jam, sesi, kelas, mapel, materi, siswa, dan
+                    keterangan.
                   </p>
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1500px] text-left">
+                  <table className="w-full min-w-[1680px] text-left">
                     <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
                       <tr>
+                        <th className="px-4 py-4">No</th>
                         <th className="px-4 py-4">Hari</th>
                         <th className="px-4 py-4">Tanggal</th>
-                        <th className="px-4 py-4">Jam</th>
+                        <th className="px-4 py-4">Nama Guru</th>
+                        <th className="px-4 py-4">Datang</th>
+                        <th className="px-4 py-4">Pulang</th>
                         <th className="px-4 py-4">Durasi</th>
+                        <th className="px-4 py-4">Jam</th>
                         <th className="px-4 py-4">Sesi</th>
+                        <th className="px-4 py-4">Kls</th>
+                        <th className="px-4 py-4">Mapel</th>
+                        <th className="px-4 py-4">Materi</th>
                         <th className="px-4 py-4">Siswa</th>
                         <th className="px-4 py-4">NIPD</th>
-                        <th className="px-4 py-4">Kelas</th>
-                        <th className="px-4 py-4">Mata Pelajaran</th>
-                        <th className="px-4 py-4">Materi</th>
                         <th className="px-4 py-4">Keterangan</th>
                         <th className="px-4 py-4">File</th>
                         <th className="px-4 py-4">Aksi</th>
@@ -856,7 +895,7 @@ export default function TeacherJadwalPage() {
                       {sortedSchedules.length === 0 && (
                         <tr>
                           <td
-                            colSpan={13}
+                            colSpan={17}
                             className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
                           >
                             Belum ada jadwal mengajar untuk guru ini pada
@@ -865,22 +904,31 @@ export default function TeacherJadwalPage() {
                         </tr>
                       )}
 
-                      {sortedSchedules.map((schedule) => (
+                      {sortedSchedules.map((schedule, index) => (
                         <tr key={schedule.id} className="hover:bg-[#FFF8EF]">
+                          <td className="px-4 py-4 font-bold">{index + 1}</td>
+
                           <td className="px-4 py-4 font-semibold">
                             {schedule.day_name || "-"}
                           </td>
 
-                          <td className="px-4 py-4">
+                          <td className="whitespace-nowrap px-4 py-4">
                             {formatDate(schedule.schedule_date)}
                           </td>
 
-                          <td className="px-4 py-4 whitespace-nowrap">
-                            {formatTime(schedule.start_time)} -{" "}
+                          <td className="px-4 py-4 font-semibold">
+                            {teacher?.full_name || "-"}
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-4">
+                            {formatTime(schedule.start_time)}
+                          </td>
+
+                          <td className="whitespace-nowrap px-4 py-4">
                             {formatTime(schedule.end_time)}
                           </td>
 
-                          <td className="px-4 py-4 whitespace-nowrap">
+                          <td className="whitespace-nowrap px-4 py-4">
                             {formatDuration(
                               schedule.duration_minutes,
                               schedule.start_time,
@@ -888,14 +936,43 @@ export default function TeacherJadwalPage() {
                             )}
                           </td>
 
+                          <td className="whitespace-nowrap px-4 py-4">
+                            {formatTime(schedule.start_time)}-
+                            {formatTime(schedule.end_time)}
+                          </td>
+
                           <td className="px-4 py-4">
                             <span
-                              className={`rounded-full px-3 py-1 text-xs font-bold ${getSessionBadge(
+                              className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold ${getSessionBadge(
                                 schedule.session_name
                               )}`}
                             >
                               {schedule.session_name || "-"}
                             </span>
+                          </td>
+
+                          <td className="px-4 py-4">
+                            {formatClass(
+                              schedule.students?.level,
+                              schedule.students?.grade
+                            )}
+                          </td>
+
+                          <td className="px-4 py-4">
+                            {schedule.subjects?.name || "-"}
+                          </td>
+
+                          <td className="max-w-[260px] px-4 py-4">
+                            <p className="line-clamp-2 font-semibold text-[#2B1B18]">
+                              {schedule.material_topic || "-"}
+                            </p>
+
+                            {schedule.curriculum_sub_chapter_title !== "-" ? (
+                              <p className="mt-1 text-xs text-[#6B4A3A]">
+                                {schedule.curriculum_chapter_title} •{" "}
+                                {schedule.curriculum_sub_chapter_title}
+                              </p>
+                            ) : null}
                           </td>
 
                           <td className="px-4 py-4 font-semibold">
@@ -906,27 +983,7 @@ export default function TeacherJadwalPage() {
                             {schedule.students?.nis || "-"}
                           </td>
 
-                          <td className="px-4 py-4">
-                            {schedule.students?.grade || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            {schedule.subjects?.name || "-"}
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <p className="font-semibold text-[#2B1B18]">
-                              {schedule.material_topic || "-"}
-                            </p>
-
-                            {schedule.curriculum_sub_chapter_title !== "-" ? (
-                              <p className="mt-1 text-xs text-[#6B4A3A]">
-                                Sub Bab: {schedule.curriculum_sub_chapter_title}
-                              </p>
-                            ) : null}
-                          </td>
-
-                          <td className="max-w-[220px] px-4 py-4">
+                          <td className="max-w-[240px] px-4 py-4">
                             <p className="line-clamp-2 text-sm text-[#6B4A3A]">
                               {schedule.notes || "-"}
                             </p>
@@ -938,9 +995,9 @@ export default function TeacherJadwalPage() {
                                 href={schedule.temporary_schedule_url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700 underline"
+                                className="inline-flex whitespace-nowrap rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700 underline"
                               >
-                                Lihat
+                                Lihat File
                               </a>
                             ) : (
                               <span className="text-sm text-[#6B4A3A]">-</span>
@@ -951,7 +1008,7 @@ export default function TeacherJadwalPage() {
                             <button
                               type="button"
                               onClick={() => openReportModal(schedule)}
-                              className="rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
+                              className="whitespace-nowrap rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
                             >
                               + Laporan
                             </button>
@@ -1038,13 +1095,6 @@ export default function TeacherJadwalPage() {
                           </p>
                         ) : null}
 
-                        {schedule.curriculum_sub_chapter_title !== "-" ? (
-                          <p className="mt-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-xs font-semibold text-[#7A1F2B]">
-                            {schedule.curriculum_chapter_title} •{" "}
-                            {schedule.curriculum_sub_chapter_title}
-                          </p>
-                        ) : null}
-
                         <button
                           type="button"
                           onClick={() => openReportModal(schedule)}
@@ -1058,46 +1108,12 @@ export default function TeacherJadwalPage() {
                 </div>
 
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Ringkasan Hari</h2>
-
-                  <div className="mt-5 space-y-4">
-                    {["Senin", "Selasa", "Rabu", "Kamis", "Jumat"].map(
-                      (day) => {
-                        const total = schedules.filter(
-                          (schedule) => schedule.day_name === day
-                        ).length;
-
-                        return (
-                          <div key={day}>
-                            <div className="mb-2 flex items-center justify-between text-sm">
-                              <span>{day}</span>
-                              <span className="font-bold">{total} jadwal</span>
-                            </div>
-
-                            <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                              <div
-                                className="h-full rounded-full bg-[#7A1F2B]"
-                                style={{
-                                  width:
-                                    totalSessions > 0
-                                      ? `${(total / totalSessions) * 100}%`
-                                      : "0%",
-                                }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      }
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Jadwal guru mengikuti data dari menu Kepala Sekolah → Jadwal
-                    Guru. Jika ada file jadwal sementara, guru bisa membukanya
-                    dari kolom file pada tabel.
+                    Jadwal guru hanya bersifat lihat data. Untuk membuat atau
+                    mengubah jadwal, gunakan menu Kepala Sekolah → Jadwal Guru.
+                    Tombol + Laporan dipakai guru untuk membuat Laporan KBM dari
+                    jadwal yang sudah ada.
                   </p>
                 </div>
               </div>
@@ -1155,7 +1171,8 @@ export default function TeacherJadwalPage() {
                       <option key={schedule.id} value={schedule.id}>
                         {schedule.students?.full_name || "-"} —{" "}
                         {schedule.subjects?.name || "-"} —{" "}
-                        {schedule.day_name || "-"} {formatTime(schedule.start_time)}
+                        {schedule.day_name || "-"}{" "}
+                        {formatTime(schedule.start_time)}
                       </option>
                     ))}
                   </select>

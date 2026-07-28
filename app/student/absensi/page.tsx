@@ -3,13 +3,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
-  BookOpen,
-  CalendarDays,
+  CalendarCheck,
+  CheckCircle2,
   Clock,
-  FileText,
-  GraduationCap,
   Search,
   UserRound,
+  XCircle,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import StudentLayout from "../components/StudentLayout";
@@ -40,51 +39,46 @@ type SubjectRelation = {
   grade?: string | null;
 };
 
-type ScheduleRow = {
+type AttendanceRow = {
   id: string;
   student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
-  day_name: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  session_name: string | null;
-  material_topic: string | null;
-  duration_minutes?: number | null;
+  attendance_date: string | null;
+  day_name?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  attendance_status?: string | null;
+  understanding_status?: string | null;
+  material_topic?: string | null;
+  note?: string | null;
   notes?: string | null;
-  temporary_schedule_url?: string | null;
-  academic_year?: string | null;
-  semester?: string | null;
   created_at?: string | null;
   teachers?: TeacherRelation | TeacherRelation[] | null;
   subjects?: SubjectRelation | SubjectRelation[] | null;
 };
 
-type ScheduleItem = {
+type AttendanceItem = {
   id: string;
   student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
+  attendance_date: string | null;
   day_name: string | null;
-  schedule_date: string | null;
   start_time: string | null;
   end_time: string | null;
-  session_name: string | null;
+  attendance_status: string;
+  understanding_status: string | null;
   material_topic: string | null;
-  duration_minutes: number | null;
-  notes: string | null;
-  temporary_schedule_url: string | null;
-  academic_year: string | null;
-  semester: string | null;
+  note: string | null;
   teacher_name: string;
   subject_name: string;
 };
 
-type DayScheduleGroup = {
+type DayAttendanceGroup = {
   day: string;
   isToday: boolean;
-  schedules: ScheduleItem[];
+  attendances: AttendanceItem[];
 };
 
 const ACADEMIC_YEAR = "2026/2027";
@@ -100,6 +94,8 @@ const dayOrder = [
   "Sabtu",
   "Minggu",
 ];
+
+const statusOptions = ["Semua Status", "Hadir", "Izin", "Alpa", "Sakit"];
 
 function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] || null;
@@ -167,6 +163,11 @@ function getDayNameFromDate(value?: string | null) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function getDayIndex(dayName?: string | null) {
+  const index = dayOrder.findIndex((day) => day === dayName);
+  return index === -1 ? 99 : index;
+}
+
 function getInitials(name?: string | null) {
   if (!name) return "M";
 
@@ -179,101 +180,93 @@ function getInitials(name?: string | null) {
     .toUpperCase();
 }
 
-function calculateDurationMinutes(
-  startTime?: string | null,
-  endTime?: string | null
-) {
-  if (!startTime || !endTime) return null;
+function normalizeAttendanceStatus(status?: string | null) {
+  const safe = normalizeText(status);
 
-  const [startHour, startMinute] = startTime.split(":").map(Number);
-  const [endHour, endMinute] = endTime.split(":").map(Number);
-
+  if (safe === "hadir" || safe === "present") return "Hadir";
+  if (safe === "izin") return "Izin";
+  if (safe === "sakit") return "Sakit";
   if (
-    Number.isNaN(startHour) ||
-    Number.isNaN(startMinute) ||
-    Number.isNaN(endHour) ||
-    Number.isNaN(endMinute)
+    safe === "alpa" ||
+    safe === "alpha" ||
+    safe === "tidak hadir" ||
+    safe === "absent"
   ) {
-    return null;
+    return "Alpa";
   }
 
-  const startTotal = startHour * 60 + startMinute;
-  const endTotal = endHour * 60 + endMinute;
-  const duration = endTotal - startTotal;
-
-  return duration > 0 ? duration : null;
+  return status || "-";
 }
 
-function formatDuration(
-  minutes?: number | null,
-  startTime?: string | null,
-  endTime?: string | null
-) {
-  const duration = minutes || calculateDurationMinutes(startTime, endTime);
+function getAttendanceNote(item: AttendanceRow | AttendanceItem) {
+  if ("notes" in item) {
+    return item.note || item.notes || "-";
+  }
 
-  if (!duration) return "-";
-
-  if (duration < 60) return `${duration} menit`;
-
-  const hour = Math.floor(duration / 60);
-  const minute = duration % 60;
-
-  if (minute === 0) return `${hour} jam`;
-
-  return `${hour} jam ${minute} menit`;
+  return item.note || "-";
 }
 
-function getDayIndex(dayName?: string | null) {
-  const index = dayOrder.findIndex((day) => day === dayName);
-  return index === -1 ? 99 : index;
+function isHadir(status?: string | null) {
+  return normalizeAttendanceStatus(status) === "Hadir";
 }
 
-function getSessionBadge(session?: string | null) {
-  if (session === "Sesi 1") return "bg-emerald-100 text-emerald-700";
-  if (session === "Sesi 2") return "bg-blue-100 text-blue-700";
-  if (session === "Sesi 3") return "bg-purple-100 text-purple-700";
-
-  return "bg-slate-100 text-slate-700";
+function isIzin(status?: string | null) {
+  return normalizeAttendanceStatus(status) === "Izin";
 }
 
-function isAcademicYearSchedule(schedule: ScheduleRow) {
-  if (!schedule.schedule_date) return false;
-
-  const matchDate =
-    schedule.schedule_date >= ACADEMIC_YEAR_START &&
-    schedule.schedule_date <= ACADEMIC_YEAR_END;
-
-  const matchYear =
-    !schedule.academic_year || schedule.academic_year === ACADEMIC_YEAR;
-
-  return matchDate && matchYear;
+function isAlpa(status?: string | null) {
+  return normalizeAttendanceStatus(status) === "Alpa";
 }
 
-function getScheduleSearchText(schedule: ScheduleItem) {
+function isSakit(status?: string | null) {
+  return normalizeAttendanceStatus(status) === "Sakit";
+}
+
+function getStatusBadgeClass(status?: string | null) {
+  const normalized = normalizeAttendanceStatus(status);
+
+  if (normalized === "Hadir") return "bg-[#C7F0DA] text-[#158A58]";
+  if (normalized === "Izin") return "bg-[#FFF2B8] text-[#B26A00]";
+  if (normalized === "Sakit") return "bg-[#E0F2FE] text-[#0369A1]";
+  if (normalized === "Alpa") return "bg-[#FFE4E6] text-[#BE123C]";
+
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
+function getUnderstandingBadgeClass(status?: string | null) {
+  if (status === "Paham") return "bg-[#C7F0DA] text-[#158A58]";
+  if (status === "Cukup Paham") return "bg-[#FFF2B8] text-[#B26A00]";
+  if (status === "Belum Paham") return "bg-[#FFE4E6] text-[#BE123C]";
+
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
+function getAttendanceSearchText(attendance: AttendanceItem) {
   return [
-    schedule.day_name,
-    schedule.schedule_date,
-    schedule.start_time,
-    schedule.end_time,
-    schedule.session_name,
-    schedule.material_topic,
-    schedule.teacher_name,
-    schedule.subject_name,
-    schedule.notes,
-    schedule.semester,
+    attendance.day_name,
+    attendance.attendance_date,
+    attendance.start_time,
+    attendance.end_time,
+    attendance.attendance_status,
+    attendance.understanding_status,
+    attendance.material_topic,
+    attendance.note,
+    attendance.teacher_name,
+    attendance.subject_name,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-export default function StudentSchedulePage() {
+export default function StudentAbsensiPage() {
   const [student, setStudent] = useState<StudentRow | null>(null);
-  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [attendances, setAttendances] = useState<AttendanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState("Semua Hari");
+  const [statusFilter, setStatusFilter] = useState("Semua Status");
   const [subjectFilter, setSubjectFilter] = useState("Semua Mapel");
   const [dateFilter, setDateFilter] = useState("");
 
@@ -338,26 +331,24 @@ export default function StudentSchedulePage() {
     return null;
   }
 
-  async function fetchSchedules(studentId: string) {
+  async function fetchAttendances(studentId: string) {
     const { data, error } = await supabase
-      .from("schedules")
+      .from("attendance")
       .select(
         `
         id,
         student_id,
         teacher_id,
         subject_id,
+        attendance_date,
         day_name,
-        schedule_date,
         start_time,
         end_time,
-        session_name,
+        attendance_status,
+        understanding_status,
         material_topic,
-        duration_minutes,
+        note,
         notes,
-        temporary_schedule_url,
-        academic_year,
-        semester,
         created_at,
         teachers (
           id,
@@ -374,16 +365,16 @@ export default function StudentSchedulePage() {
       `
       )
       .eq("student_id", studentId)
-      .gte("schedule_date", ACADEMIC_YEAR_START)
-      .lte("schedule_date", ACADEMIC_YEAR_END)
-      .order("schedule_date", { ascending: true })
+      .gte("attendance_date", ACADEMIC_YEAR_START)
+      .lte("attendance_date", ACADEMIC_YEAR_END)
+      .order("attendance_date", { ascending: false })
       .order("start_time", { ascending: true });
 
     if (error) throw new Error(error.message);
 
-    const rows = (data || []) as ScheduleRow[];
+    const rows = (data || []) as AttendanceRow[];
 
-    const normalized = rows.filter(isAcademicYearSchedule).map((item) => {
+    const normalized: AttendanceItem[] = rows.map((item) => {
       const teacher = normalizeRelation(item.teachers);
       const subject = normalizeRelation(item.subjects);
 
@@ -392,25 +383,20 @@ export default function StudentSchedulePage() {
         student_id: item.student_id,
         teacher_id: item.teacher_id,
         subject_id: item.subject_id,
-        day_name: item.day_name || getDayNameFromDate(item.schedule_date),
-        schedule_date: item.schedule_date,
-        start_time: item.start_time,
-        end_time: item.end_time,
-        session_name: item.session_name,
-        material_topic: item.material_topic,
-        duration_minutes:
-          item.duration_minutes ||
-          calculateDurationMinutes(item.start_time, item.end_time),
-        notes: item.notes || null,
-        temporary_schedule_url: item.temporary_schedule_url || null,
-        academic_year: item.academic_year || null,
-        semester: item.semester || null,
+        attendance_date: item.attendance_date,
+        day_name: item.day_name || getDayNameFromDate(item.attendance_date),
+        start_time: item.start_time || null,
+        end_time: item.end_time || null,
+        attendance_status: normalizeAttendanceStatus(item.attendance_status),
+        understanding_status: item.understanding_status || null,
+        material_topic: item.material_topic || null,
+        note: getAttendanceNote(item),
         teacher_name: teacher?.full_name || "-",
         subject_name: subject?.name || "-",
       };
     });
 
-    setSchedules(normalized);
+    setAttendances(normalized);
   }
 
   async function fetchPageData() {
@@ -422,7 +408,7 @@ export default function StudentSchedulePage() {
 
       if (!activeStudent) {
         setStudent(null);
-        setSchedules([]);
+        setAttendances([]);
         setErrorMessage(
           "Data murid belum terhubung dengan akun login ini. Hubungkan email/user_id murid atau parent_id orang tua di Supabase."
         );
@@ -430,12 +416,12 @@ export default function StudentSchedulePage() {
       }
 
       setStudent(activeStudent);
-      await fetchSchedules(activeStudent.id);
+      await fetchAttendances(activeStudent.id);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
       } else {
-        setErrorMessage("Gagal mengambil jadwal belajar murid.");
+        setErrorMessage("Gagal mengambil data absensi murid.");
       }
     } finally {
       setLoading(false);
@@ -446,7 +432,7 @@ export default function StudentSchedulePage() {
     fetchPageData();
 
     const channel = supabase
-      .channel("student-schedule-realtime")
+      .channel("student-attendance-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
@@ -459,7 +445,7 @@ export default function StudentSchedulePage() {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "schedules" },
+        { event: "*", schema: "public", table: "attendance" },
         () => fetchPageData()
       )
       .subscribe();
@@ -470,53 +456,58 @@ export default function StudentSchedulePage() {
   }, []);
 
   const subjectOptions = useMemo(() => {
-    const subjects = schedules
-      .map((schedule) => schedule.subject_name)
+    const subjects = attendances
+      .map((attendance) => attendance.subject_name)
       .filter(Boolean);
 
     return Array.from(new Set(subjects)).sort();
-  }, [schedules]);
+  }, [attendances]);
 
-  const filteredSchedules = useMemo(() => {
+  const filteredAttendances = useMemo(() => {
     const q = normalizeText(search);
 
-    return schedules.filter((schedule) => {
+    return attendances.filter((attendance) => {
       const matchSearch =
-        !q || normalizeText(getScheduleSearchText(schedule)).includes(q);
+        !q || normalizeText(getAttendanceSearchText(attendance)).includes(q);
 
       const matchDay =
-        dayFilter === "Semua Hari" || schedule.day_name === dayFilter;
+        dayFilter === "Semua Hari" || attendance.day_name === dayFilter;
+
+      const matchStatus =
+        statusFilter === "Semua Status" ||
+        attendance.attendance_status === statusFilter;
 
       const matchSubject =
         subjectFilter === "Semua Mapel" ||
-        schedule.subject_name === subjectFilter;
+        attendance.subject_name === subjectFilter;
 
-      const matchDate = !dateFilter || schedule.schedule_date === dateFilter;
+      const matchDate =
+        !dateFilter || attendance.attendance_date === dateFilter;
 
-      return matchSearch && matchDay && matchSubject && matchDate;
+      return matchSearch && matchDay && matchStatus && matchSubject && matchDate;
     });
-  }, [schedules, search, dayFilter, subjectFilter, dateFilter]);
+  }, [attendances, search, dayFilter, statusFilter, subjectFilter, dateFilter]);
 
-  const groupedSchedules = useMemo(() => {
-    const map = new Map<string, ScheduleItem[]>();
+  const groupedAttendances = useMemo(() => {
+    const map = new Map<string, AttendanceItem[]>();
 
-    filteredSchedules.forEach((schedule) => {
-      const day = schedule.day_name || "-";
+    filteredAttendances.forEach((attendance) => {
+      const day = attendance.day_name || "-";
       const current = map.get(day) || [];
 
-      current.push(schedule);
+      current.push(attendance);
       map.set(day, current);
     });
 
     const today = todayYMD();
 
-    const groups: DayScheduleGroup[] = Array.from(map.entries()).map(
+    const groups: DayAttendanceGroup[] = Array.from(map.entries()).map(
       ([day, items]) => ({
         day,
-        isToday: items.some((item) => item.schedule_date === today),
-        schedules: items.sort((a, b) => {
-          const dateDiff = (a.schedule_date || "").localeCompare(
-            b.schedule_date || ""
+        isToday: items.some((item) => item.attendance_date === today),
+        attendances: items.sort((a, b) => {
+          const dateDiff = (b.attendance_date || "").localeCompare(
+            a.attendance_date || ""
           );
 
           if (dateDiff !== 0) return dateDiff;
@@ -527,32 +518,46 @@ export default function StudentSchedulePage() {
     );
 
     return groups.sort((a, b) => getDayIndex(a.day) - getDayIndex(b.day));
-  }, [filteredSchedules]);
+  }, [filteredAttendances]);
 
-  const todaySchedules = useMemo(() => {
+  const todayAttendances = useMemo(() => {
     const today = todayYMD();
-    return schedules.filter((schedule) => schedule.schedule_date === today);
-  }, [schedules]);
+    return attendances.filter((attendance) => attendance.attendance_date === today);
+  }, [attendances]);
 
   const summary = useMemo(() => {
-    const teachers = new Set(
-      schedules.map((schedule) => schedule.teacher_id).filter(Boolean)
-    );
+    const total = attendances.length;
+    const hadir = attendances.filter((attendance) =>
+      isHadir(attendance.attendance_status)
+    ).length;
 
-    const subjects = new Set(
-      schedules.map((schedule) => schedule.subject_id).filter(Boolean)
-    );
+    const izin = attendances.filter((attendance) =>
+      isIzin(attendance.attendance_status)
+    ).length;
+
+    const alpa = attendances.filter((attendance) =>
+      isAlpa(attendance.attendance_status)
+    ).length;
+
+    const sakit = attendances.filter((attendance) =>
+      isSakit(attendance.attendance_status)
+    ).length;
+
+    const percentage = total > 0 ? Math.round((hadir / total) * 100) : 0;
 
     return {
-      totalSchedules: schedules.length,
-      today: todaySchedules.length,
-      teachers: teachers.size,
-      subjects: subjects.size,
+      total,
+      hadir,
+      izin,
+      alpa,
+      sakit,
+      today: todayAttendances.length,
+      percentage,
     };
-  }, [schedules, todaySchedules]);
+  }, [attendances, todayAttendances]);
 
   return (
-    <StudentLayout activeMenu="Jadwal Belajar">
+    <StudentLayout activeMenu="Absensi">
       <section className="space-y-7">
         <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
           <div>
@@ -561,13 +566,13 @@ export default function StudentSchedulePage() {
             </p>
 
             <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-              Jadwal Belajar
+              Absensi
             </h1>
 
             <p className="mt-2 text-[15px] leading-6 text-[#6F5549]">
               {student ? (
                 <>
-                  Jadwal pembelajaran untuk{" "}
+                  Rekap absensi untuk{" "}
                   <span className="font-extrabold text-[#2B1B18]">
                     {student.full_name || "-"}
                   </span>{" "}
@@ -575,7 +580,7 @@ export default function StudentSchedulePage() {
                   {student.nis || "-"} • NISN: {student.nisn || "-"}
                 </>
               ) : (
-                "Jadwal pembelajaran murid."
+                "Rekap absensi murid."
               )}
             </p>
 
@@ -603,46 +608,46 @@ export default function StudentSchedulePage() {
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
-            icon={<CalendarDays className="h-5 w-5" />}
-            label="Total Jadwal"
-            value={summary.totalSchedules}
-            info="Sesi"
+            icon={<CalendarCheck className="h-5 w-5" />}
+            label="Total Absensi"
+            value={summary.total}
+            info="Data"
             tone="pink"
           />
 
           <SummaryCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="Hadir"
+            value={summary.hadir}
+            info={`${summary.percentage}%`}
+            tone="green"
+          />
+
+          <SummaryCard
             icon={<Clock className="h-5 w-5" />}
-            label="Jadwal Hari Ini"
+            label="Hari Ini"
             value={summary.today}
             info={formatDate(todayYMD())}
             tone="orange"
           />
 
           <SummaryCard
-            icon={<BookOpen className="h-5 w-5" />}
-            label="Mata Pelajaran"
-            value={summary.subjects}
-            info="Mapel"
+            icon={<XCircle className="h-5 w-5" />}
+            label="Izin / Alpa / Sakit"
+            value={summary.izin + summary.alpa + summary.sakit}
+            info="Tidak hadir"
             tone="blue"
-          />
-
-          <SummaryCard
-            icon={<UserRound className="h-5 w-5" />}
-            label="Guru Mapel"
-            value={summary.teachers}
-            info="Guru"
-            tone="green"
           />
         </div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[1.4fr_190px_220px_180px]">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_180px_180px_220px_180px]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari jadwal, mapel, guru, materi, atau keterangan..."
+                placeholder="Cari absensi, guru, mapel, materi, atau keterangan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -655,6 +660,16 @@ export default function StudentSchedulePage() {
               <option>Semua Hari</option>
               {dayOrder.map((day) => (
                 <option key={day}>{day}</option>
+              ))}
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              {statusOptions.map((status) => (
+                <option key={status}>{status}</option>
               ))}
             </select>
 
@@ -682,14 +697,14 @@ export default function StudentSchedulePage() {
           <div className="space-y-5">
             {loading ? (
               <div className="rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
-                Memuat jadwal belajar...
+                Memuat data absensi...
               </div>
-            ) : groupedSchedules.length === 0 ? (
+            ) : groupedAttendances.length === 0 ? (
               <div className="rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
-                Belum ada jadwal belajar untuk murid ini.
+                Belum ada data absensi untuk murid ini.
               </div>
             ) : (
-              groupedSchedules.map((group) => (
+              groupedAttendances.map((group) => (
                 <div
                   key={group.day}
                   className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm"
@@ -700,7 +715,7 @@ export default function StudentSchedulePage() {
                         {group.day}
                       </h2>
                       <p className="mt-1 text-[13px] text-[#6F5549]">
-                        {group.schedules.length} jadwal
+                        {group.attendances.length} data absensi
                       </p>
                     </div>
 
@@ -712,98 +727,91 @@ export default function StudentSchedulePage() {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1180px] border-collapse">
+                    <table className="w-full min-w-[1280px] border-collapse">
                       <thead>
                         <tr className="border-b border-[#EADACA] bg-white text-left text-[13px] font-extrabold text-[#6F5549]">
                           <th className="px-5 py-4">No</th>
                           <th className="px-5 py-4">Hari</th>
                           <th className="px-5 py-4">Tanggal</th>
                           <th className="px-5 py-4">Jam</th>
-                          <th className="px-5 py-4">Durasi</th>
-                          <th className="px-5 py-4">Sesi</th>
                           <th className="px-5 py-4">Guru Mapel</th>
                           <th className="px-5 py-4">Mapel</th>
                           <th className="px-5 py-4">Materi</th>
+                          <th className="px-5 py-4 text-center">Hadir</th>
+                          <th className="px-5 py-4 text-center">Izin</th>
+                          <th className="px-5 py-4 text-center">Alpa</th>
+                          <th className="px-5 py-4">Pemahaman</th>
                           <th className="px-5 py-4">Keterangan</th>
-                          <th className="px-5 py-4">File</th>
                         </tr>
                       </thead>
 
                       <tbody>
-                        {group.schedules.map((schedule, index) => (
+                        {group.attendances.map((attendance, index) => (
                           <tr
-                            key={schedule.id}
+                            key={attendance.id}
                             className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18]"
                           >
-                            <td className="px-5 py-4 font-bold">
-                              {index + 1}
-                            </td>
+                            <td className="px-5 py-4 font-bold">{index + 1}</td>
 
                             <td className="px-5 py-4 font-extrabold">
-                              {schedule.day_name || "-"}
+                              {attendance.day_name || "-"}
                             </td>
 
                             <td className="whitespace-nowrap px-5 py-4">
-                              {formatDate(schedule.schedule_date)}
+                              {formatDate(attendance.attendance_date)}
                             </td>
 
                             <td className="whitespace-nowrap px-5 py-4 font-bold text-[#8C0F2D]">
-                              {formatTime(schedule.start_time)}-
-                              {formatTime(schedule.end_time)}
+                              {formatTime(attendance.start_time)}-
+                              {formatTime(attendance.end_time)}
                             </td>
 
-                            <td className="whitespace-nowrap px-5 py-4">
-                              {formatDuration(
-                                schedule.duration_minutes,
-                                schedule.start_time,
-                                schedule.end_time
-                              )}
+                            <td className="px-5 py-4 font-extrabold">
+                              {attendance.teacher_name}
+                            </td>
+
+                            <td className="px-5 py-4">
+                              {attendance.subject_name}
+                            </td>
+
+                            <td className="max-w-[240px] px-5 py-4">
+                              <p className="line-clamp-2 font-bold">
+                                {attendance.material_topic || "-"}
+                              </p>
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <ChecklistBox
+                                checked={isHadir(attendance.attendance_status)}
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <ChecklistBox
+                                checked={isIzin(attendance.attendance_status)}
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <ChecklistBox
+                                checked={isAlpa(attendance.attendance_status)}
+                              />
                             </td>
 
                             <td className="px-5 py-4">
                               <span
-                                className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold ${getSessionBadge(
-                                  schedule.session_name
+                                className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-[12px] font-extrabold ${getUnderstandingBadgeClass(
+                                  attendance.understanding_status
                                 )}`}
                               >
-                                {schedule.session_name || "-"}
+                                {attendance.understanding_status || "-"}
                               </span>
-                            </td>
-
-                            <td className="px-5 py-4 font-extrabold">
-                              {schedule.teacher_name}
-                            </td>
-
-                            <td className="px-5 py-4">
-                              {schedule.subject_name}
-                            </td>
-
-                            <td className="max-w-[260px] px-5 py-4">
-                              <p className="line-clamp-2 font-bold">
-                                {schedule.material_topic || "-"}
-                              </p>
                             </td>
 
                             <td className="max-w-[260px] px-5 py-4 text-[#6F5549]">
                               <p className="line-clamp-2">
-                                {schedule.notes || "-"}
+                                {attendance.note || "-"}
                               </p>
-                            </td>
-
-                            <td className="px-5 py-4">
-                              {schedule.temporary_schedule_url ? (
-                                <a
-                                  href={schedule.temporary_schedule_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] bg-white px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                                >
-                                  <FileText className="h-4 w-4" />
-                                  Lihat
-                                </a>
-                              ) : (
-                                <span className="text-[#6F5549]">-</span>
-                              )}
                             </td>
                           </tr>
                         ))}
@@ -857,41 +865,54 @@ export default function StudentSchedulePage() {
 
             <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
               <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
-                Jadwal Hari Ini
+                Absensi Hari Ini
               </h2>
 
               <div className="mt-5 space-y-3">
-                {todaySchedules.length === 0 ? (
+                {todayAttendances.length === 0 ? (
                   <div className="rounded-xl border border-[#E1CFBE] bg-[#FFF8EF] px-4 py-4 text-[13px] text-[#6F5549]">
-                    Tidak ada jadwal hari ini.
+                    Belum ada absensi hari ini.
                   </div>
                 ) : (
-                  todaySchedules.map((schedule) => (
+                  todayAttendances.map((attendance) => (
                     <div
-                      key={schedule.id}
+                      key={attendance.id}
                       className="rounded-xl border border-[#E1CFBE] bg-[#FFFCF8] p-4"
                     >
-                      <p className="font-extrabold text-[#2B1B18]">
-                        {schedule.subject_name}
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-extrabold text-[#2B1B18]">
+                            {attendance.subject_name}
+                          </p>
+
+                          <p className="mt-1 text-[13px] text-[#6F5549]">
+                            {formatTime(attendance.start_time)}-
+                            {formatTime(attendance.end_time)}
+                          </p>
+                        </div>
+
+                        <span
+                          className={`whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
+                            attendance.attendance_status
+                          )}`}
+                        >
+                          {attendance.attendance_status}
+                        </span>
+                      </div>
+
+                      <p className="mt-2 text-[13px] text-[#6F5549]">
+                        Guru Mapel: {attendance.teacher_name}
                       </p>
 
                       <p className="mt-1 text-[13px] text-[#6F5549]">
-                        {formatTime(schedule.start_time)}-
-                        {formatTime(schedule.end_time)} •{" "}
-                        {formatDuration(
-                          schedule.duration_minutes,
-                          schedule.start_time,
-                          schedule.end_time
-                        )}
+                        Materi: {attendance.material_topic || "-"}
                       </p>
 
-                      <p className="mt-1 text-[13px] text-[#6F5549]">
-                        Guru Mapel: {schedule.teacher_name}
-                      </p>
-
-                      <p className="mt-1 text-[13px] text-[#6F5549]">
-                        Materi: {schedule.material_topic || "-"}
-                      </p>
+                      {attendance.note && attendance.note !== "-" ? (
+                        <p className="mt-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-[12px] text-[#6F5549]">
+                          {attendance.note}
+                        </p>
+                      ) : null}
                     </div>
                   ))
                 )}
@@ -904,9 +925,9 @@ export default function StudentSchedulePage() {
               </h2>
 
               <p className="mt-3 text-[14px] leading-6 text-[#6F5549]">
-                Jadwal ini diambil dari menu Jadwal Guru di dashboard Kepala
-                Sekolah. Jika data belum tampil, pastikan akun murid/orang tua
-                sudah terhubung ke data siswa yang benar.
+                Data absensi ini berasal dari input guru di menu Absensi KBM.
+                Murid/orang tua hanya dapat melihat hasil absensi dan tidak dapat
+                mengubah checklist.
               </p>
             </div>
           </aside>
@@ -956,5 +977,19 @@ function SummaryCard({
 
       <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
     </div>
+  );
+}
+
+function ChecklistBox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`mx-auto flex h-6 w-12 items-center justify-center rounded-[5px] border text-[13px] font-extrabold ${
+        checked
+          ? "border-[#2F66C9] bg-[#3F73C8] text-white"
+          : "border-[#C9D3E6] bg-white text-transparent"
+      }`}
+    >
+      ✓
+    </span>
   );
 }

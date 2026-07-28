@@ -10,10 +10,13 @@ import {
   GraduationCap,
   Search,
   Send,
+  UploadCloud,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
+
+const ACADEMIC_REPORT_BUCKET = "academic-report-documents";
 
 type TeacherRow = {
   id: string;
@@ -76,6 +79,8 @@ type AcademicReportRow = {
   final_grade?: number | null;
   predicate?: string | null;
 
+  report_file_url?: string | null;
+
   approval_status?: "draft" | "pending" | "approved" | "rejected" | string | null;
   submitted_at?: string | null;
   approved_at?: string | null;
@@ -88,6 +93,8 @@ type EnrichedReport = AcademicReportRow & {
   student_name: string;
   student_grade: string;
   student_level: string;
+  student_nipd: string;
+  student_nisn: string;
   subject_name: string;
 };
 
@@ -114,6 +121,7 @@ type ReportForm = {
   process_score: string;
 
   teacher_comment: string;
+  report_file_url: string;
 };
 
 const reportTypeOptions = [
@@ -155,11 +163,25 @@ function emptyForm(): ReportForm {
     process_score: "",
 
     teacher_comment: "",
+    report_file_url: "",
   };
 }
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
+}
+
+function normalizeSubjects(subjects: TeacherRow["subjects"]) {
+  if (!subjects) return [];
+
+  if (Array.isArray(subjects)) {
+    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
+  }
+
+  return subjects
+    .split(",")
+    .map((subject) => normalizeText(subject))
+    .filter(Boolean);
 }
 
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
@@ -222,6 +244,32 @@ function getInitials(name?: string | null) {
     .toUpperCase();
 }
 
+function getGradeNumber(value?: string | null) {
+  const match = (value || "").match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function isAllGrade(value?: string | null) {
+  const safe = normalizeText(value);
+
+  return (
+    !safe ||
+    safe === "all" ||
+    safe === "all grade" ||
+    safe === "semua" ||
+    safe === "semua kelas"
+  );
+}
+
+function isMathSubject(subject?: SubjectRow | null) {
+  return normalizeText(subject?.name).includes("math");
+}
+
+function getSubjectLabel(subject: SubjectRow) {
+  const grade = subject.grade || "All Grade";
+  return `${subject.name || "-"}${subject.grade || subject.level ? ` — ${subject.level || "-"} ${grade}` : ""}`;
+}
+
 function calculateFromForm(form: ReportForm) {
   const uh1 = toNumber(form.uh_1);
   const uh2 = toNumber(form.uh_2);
@@ -278,6 +326,47 @@ function getStatusLabel(status?: string | null) {
   return "Draft";
 }
 
+function canEditReport(status?: string | null) {
+  const safe = status || "draft";
+  return safe === "draft" || safe === "rejected";
+}
+
+function cleanFileName(fileName: string) {
+  return fileName
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "");
+}
+
+function isAllowedReportFile(file: File) {
+  const allowedExtensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png"];
+  const lowerName = file.name.toLowerCase();
+
+  return allowedExtensions.some((extension) => lowerName.endsWith(extension));
+}
+
+async function uploadAcademicReportFile(file: File, teacherId: string) {
+  const safeFileName = cleanFileName(file.name);
+  const filePath = `${teacherId}/${Date.now()}-${safeFileName}`;
+
+  const { error } = await supabase.storage
+    .from(ACADEMIC_REPORT_BUCKET)
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: true,
+    });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const { data } = supabase.storage
+    .from(ACADEMIC_REPORT_BUCKET)
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+}
+
 export default function TeacherAcademicReportsPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -289,6 +378,7 @@ export default function TeacherAcademicReportsPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<ReportForm>(emptyForm());
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
@@ -338,19 +428,55 @@ export default function TeacherAcademicReportsPage() {
       return;
     }
 
-    const [studentsRes, subjectsRes, reportsRes] = await Promise.all([
-      supabase.from("students").select("*").order("full_name"),
+    const [subjectsRes, reportsRes, schedulesRes] = await Promise.all([
       supabase.from("subjects").select("*").order("name"),
       supabase
         .from("academic_reports")
         .select("*")
         .eq("teacher_id", currentTeacher.id)
         .order("report_period", { ascending: false }),
+      supabase
+        .from("schedules")
+        .select("student_id")
+        .eq("teacher_id", currentTeacher.id),
     ]);
 
-    const studentsData = (studentsRes.data || []) as StudentRow[];
     const subjectsData = (subjectsRes.data || []) as SubjectRow[];
     const reportsData = (reportsRes.data || []) as AcademicReportRow[];
+    const scheduleStudentIds = Array.from(
+      new Set(
+        (schedulesRes.data || [])
+          .map((item) => item.student_id)
+          .filter(Boolean) as string[]
+      )
+    );
+    const reportStudentIds = Array.from(
+      new Set(
+        reportsData
+          .map((report) => report.student_id)
+          .filter(Boolean) as string[]
+      )
+    );
+
+    const allowedStudentIds = Array.from(
+      new Set([...scheduleStudentIds, ...reportStudentIds])
+    );
+
+    let studentsData: StudentRow[] = [];
+
+    if (allowedStudentIds.length > 0) {
+      const { data: studentsResData, error: studentsError } = await supabase
+        .from("students")
+        .select("*")
+        .in("id", allowedStudentIds)
+        .order("full_name");
+
+      if (studentsError) {
+        alert(studentsError.message);
+      }
+
+      studentsData = (studentsResData || []) as StudentRow[];
+    }
 
     const studentMap = new Map(studentsData.map((student) => [student.id, student]));
     const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
@@ -364,7 +490,9 @@ export default function TeacherAcademicReportsPage() {
         student_name: student?.full_name || "-",
         student_grade: student?.grade || "-",
         student_level: student?.level || "-",
-        subject_name: subject?.name || "-",
+        student_nipd: student?.nis || "-",
+        student_nisn: student?.nisn || "-",
+        subject_name: subject ? getSubjectLabel(subject) : "-",
       };
     });
 
@@ -394,6 +522,11 @@ export default function TeacherAcademicReportsPage() {
         { event: "*", schema: "public", table: "subjects" },
         fetchData
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "schedules" },
+        fetchData
+      )
       .subscribe();
 
     return () => {
@@ -411,6 +544,59 @@ export default function TeacherAcademicReportsPage() {
     return ["Semua Periode", ...uniquePeriods];
   }, [reports]);
 
+  const selectedStudent = useMemo(() => {
+    return students.find((student) => student.id === form.student_id) || null;
+  }, [students, form.student_id]);
+
+  const teacherSubjectNames = useMemo(() => {
+    return normalizeSubjects(teacher?.subjects);
+  }, [teacher]);
+
+  const subjectOptionsForForm = useMemo(() => {
+    return subjects.filter((subject) => {
+      const subjectName = normalizeText(subject.name);
+
+      if (isMathSubject(subject) && isAllGrade(subject.grade)) {
+        return false;
+      }
+
+      const matchTeacherSubject =
+        teacherSubjectNames.length === 0 ||
+        teacherSubjectNames.some((teacherSubject) => {
+          return (
+            teacherSubject === subjectName ||
+            teacherSubject.includes(subjectName) ||
+            subjectName.includes(teacherSubject)
+          );
+        });
+
+      if (!matchTeacherSubject) return false;
+
+      const selectedGradeNumber = getGradeNumber(selectedStudent?.grade);
+      const subjectGradeNumber = getGradeNumber(subject.grade);
+
+      if (!selectedGradeNumber) return true;
+      if (!subjectGradeNumber) return true;
+
+      return selectedGradeNumber === subjectGradeNumber;
+    });
+  }, [subjects, teacherSubjectNames, selectedStudent]);
+
+  useEffect(() => {
+    if (!form.subject_id) return;
+
+    const stillAllowed = subjectOptionsForForm.some(
+      (subject) => subject.id === form.subject_id
+    );
+
+    if (!stillAllowed) {
+      setForm((prev) => ({
+        ...prev,
+        subject_id: "",
+      }));
+    }
+  }, [form.subject_id, subjectOptionsForForm]);
+
   const filteredReports = useMemo(() => {
     const q = normalizeText(search);
 
@@ -420,6 +606,8 @@ export default function TeacherAcademicReportsPage() {
       const matchSearch =
         !q ||
         normalizeText(report.student_name).includes(q) ||
+        normalizeText(report.student_nipd).includes(q) ||
+        normalizeText(report.student_nisn).includes(q) ||
         normalizeText(report.subject_name).includes(q) ||
         normalizeText(report.report_period).includes(q) ||
         normalizeText(report.teacher_comment).includes(q);
@@ -464,10 +652,18 @@ export default function TeacherAcademicReportsPage() {
 
   function openCreateModal() {
     setForm(emptyForm());
+    setSelectedFile(null);
     setShowModal(true);
   }
 
   function openEditModal(report: EnrichedReport) {
+    const approvalStatus = report.approval_status || report.status || "draft";
+
+    if (!canEditReport(approvalStatus)) {
+      alert("Laporan yang sudah pending/approved tidak bisa diedit oleh guru.");
+      return;
+    }
+
     setForm({
       id: report.id,
       student_id: report.student_id || "",
@@ -492,8 +688,10 @@ export default function TeacherAcademicReportsPage() {
       process_score: report.process_score?.toString() || "",
 
       teacher_comment: report.teacher_comment || "",
+      report_file_url: report.report_file_url || "",
     });
 
+    setSelectedFile(null);
     setShowModal(true);
   }
 
@@ -502,6 +700,10 @@ export default function TeacherAcademicReportsPage() {
       ...prev,
       [field]: value,
     }));
+  }
+
+  function hasUploadedFile() {
+    return Boolean(selectedFile || form.report_file_url);
   }
 
   function validateForm() {
@@ -525,16 +727,34 @@ export default function TeacherAcademicReportsPage() {
       return false;
     }
 
-    if (!calculated.finalGrade) {
-      alert("Isi minimal salah satu nilai agar nilai akhir bisa dihitung.");
+    if (!calculated.finalGrade && !hasUploadedFile()) {
+      alert(
+        "Isi minimal salah satu nilai atau upload file laporan akademik/raport."
+      );
+      return false;
+    }
+
+    if (selectedFile && !isAllowedReportFile(selectedFile)) {
+      alert("File harus PDF, Word, Excel, JPG, JPEG, atau PNG.");
+      return false;
+    }
+
+    if (selectedFile && selectedFile.size > 10 * 1024 * 1024) {
+      alert("Ukuran file maksimal 10MB.");
       return false;
     }
 
     return true;
   }
 
-  function buildPayload(nextStatus: "draft" | "pending") {
+  async function buildPayload(nextStatus: "draft" | "pending") {
     const now = new Date().toISOString();
+
+    let reportFileUrl = form.report_file_url || null;
+
+    if (selectedFile && teacher?.id) {
+      reportFileUrl = await uploadAcademicReportFile(selectedFile, teacher.id);
+    }
 
     return {
       student_id: form.student_id,
@@ -561,102 +781,89 @@ export default function TeacherAcademicReportsPage() {
       average_task: calculated.averageTask,
       process_score: calculated.processScore,
       final_grade: calculated.finalGrade,
-      predicate: calculated.predicate,
+      predicate: calculated.predicate === "-" ? null : calculated.predicate,
 
       teacher_comment: form.teacher_comment.trim() || null,
+      report_file_url: reportFileUrl,
 
       approval_status: nextStatus,
       submitted_at: nextStatus === "pending" ? now : null,
       updated_at: now,
 
-      // Kolom lama tetap diisi supaya halaman lama tidak rusak
       uh_score: calculated.averageUh,
       task_score: calculated.averageTask,
       uts_score: calculated.midScore,
       uas_score: calculated.finalExamScore,
       final_score: calculated.finalGrade,
-      description: calculated.predicate,
+      description: calculated.predicate === "-" ? null : calculated.predicate,
       status: nextStatus,
     };
   }
 
-  async function handleSaveDraft() {
+  async function saveReport(nextStatus: "draft" | "pending") {
     if (!validateForm()) return;
+
+    if (nextStatus === "pending") {
+      const confirmSubmit = confirm(
+        "Submit laporan ini ke Kepala Sekolah untuk approval?"
+      );
+
+      if (!confirmSubmit) return;
+    }
 
     setSaving(true);
 
-    const payload = buildPayload("draft");
+    try {
+      const payload = await buildPayload(nextStatus);
 
-    if (form.id) {
-      const { error } = await supabase
-        .from("academic_reports")
-        .update(payload)
-        .eq("id", form.id);
+      if (form.id) {
+        const existingReport = reports.find((report) => report.id === form.id);
+        const approvalStatus =
+          existingReport?.approval_status || existingReport?.status || "draft";
 
-      if (error) {
-        setSaving(false);
-        alert(`Gagal update draft: ${error.message}`);
-        return;
+        if (!canEditReport(approvalStatus)) {
+          throw new Error(
+            "Laporan yang sudah pending/approved tidak bisa diedit oleh guru."
+          );
+        }
+
+        const { error } = await supabase
+          .from("academic_reports")
+          .update(payload)
+          .eq("id", form.id)
+          .eq("teacher_id", teacher?.id);
+
+        if (error) throw new Error(error.message);
+      } else {
+        const { error } = await supabase.from("academic_reports").insert(payload);
+
+        if (error) throw new Error(error.message);
       }
-    } else {
-      const { error } = await supabase.from("academic_reports").insert(payload);
 
-      if (error) {
-        setSaving(false);
-        alert(`Gagal menyimpan draft: ${error.message}`);
-        return;
-      }
+      await fetchData();
+
+      setSaving(false);
+      setShowModal(false);
+      setForm(emptyForm());
+      setSelectedFile(null);
+    } catch (error) {
+      setSaving(false);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Gagal menyimpan laporan akademik."
+      );
     }
-
-    await fetchData();
-
-    setSaving(false);
-    setShowModal(false);
-    setForm(emptyForm());
-  }
-
-  async function handleSubmitApproval() {
-    if (!validateForm()) return;
-
-    const confirmSubmit = confirm(
-      "Submit laporan ini ke Kepala Sekolah untuk approval?"
-    );
-
-    if (!confirmSubmit) return;
-
-    setSaving(true);
-
-    const payload = buildPayload("pending");
-
-    if (form.id) {
-      const { error } = await supabase
-        .from("academic_reports")
-        .update(payload)
-        .eq("id", form.id);
-
-      if (error) {
-        setSaving(false);
-        alert(`Gagal submit approval: ${error.message}`);
-        return;
-      }
-    } else {
-      const { error } = await supabase.from("academic_reports").insert(payload);
-
-      if (error) {
-        setSaving(false);
-        alert(`Gagal submit approval: ${error.message}`);
-        return;
-      }
-    }
-
-    await fetchData();
-
-    setSaving(false);
-    setShowModal(false);
-    setForm(emptyForm());
   }
 
   async function quickSubmitReport(report: EnrichedReport) {
+    const approvalStatus = report.approval_status || report.status || "draft";
+
+    if (!canEditReport(approvalStatus)) {
+      alert("Laporan ini sudah masuk approval.");
+      return;
+    }
+
     const confirmSubmit = confirm(
       `Submit laporan ${report.student_name} - ${report.subject_name} ke approval?`
     );
@@ -673,7 +880,8 @@ export default function TeacherAcademicReportsPage() {
         submitted_at: now,
         updated_at: now,
       })
-      .eq("id", report.id);
+      .eq("id", report.id)
+      .eq("teacher_id", teacher?.id);
 
     if (error) {
       alert(`Gagal submit laporan: ${error.message}`);
@@ -702,8 +910,8 @@ export default function TeacherAcademicReportsPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Input nilai siswa berdasarkan UH, tugas, UTS, UAS, dan proses KBM.
-              Nilai akhir dan predikat akan dihitung otomatis.
+              Laporan akademik bisa diisi langsung di web atau upload file
+              raport/laporan akademik jika sekolah sudah memiliki format sendiri.
             </p>
           </div>
 
@@ -712,7 +920,7 @@ export default function TeacherAcademicReportsPage() {
             onClick={openCreateModal}
             className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D]"
           >
-            + Input Nilai
+            + Input / Upload Laporan
           </button>
         </div>
 
@@ -754,7 +962,7 @@ export default function TeacherAcademicReportsPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari siswa, mapel, periode, atau catatan..."
+                placeholder="Cari siswa, NIPD, NISN, mapel, periode, atau catatan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -788,13 +996,12 @@ export default function TeacherAcademicReportsPage() {
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Draft bisa diedit. Setelah submit, laporan masuk ke approval Kepala
-              Sekolah.
+              Draft/rejected bisa diedit. Pending dan approved hanya bisa dilihat.
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1250px] border-collapse">
+            <table className="w-full min-w-[1380px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="px-6 py-4">Siswa</th>
@@ -807,6 +1014,7 @@ export default function TeacherAcademicReportsPage() {
                   <th className="px-6 py-4">Proses</th>
                   <th className="px-6 py-4">Nilai Akhir</th>
                   <th className="px-6 py-4">Predikat</th>
+                  <th className="px-6 py-4">File</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Aksi</th>
                 </tr>
@@ -816,7 +1024,7 @@ export default function TeacherAcademicReportsPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat laporan akademik...
@@ -825,7 +1033,7 @@ export default function TeacherAcademicReportsPage() {
                 ) : filteredReports.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada laporan akademik.
@@ -852,6 +1060,12 @@ export default function TeacherAcademicReportsPage() {
                               <p className="mt-1 text-[12px] text-[#6F5549]">
                                 {report.student_level} — {report.student_grade}
                               </p>
+                              <p className="mt-1 text-[12px] text-[#6F5549]">
+                                NIPD: {report.student_nipd || "-"}
+                                {report.student_nisn
+                                  ? ` • NISN: ${report.student_nisn}`
+                                  : ""}
+                              </p>
                             </div>
                           </div>
                         </td>
@@ -866,20 +1080,20 @@ export default function TeacherAcademicReportsPage() {
                         </td>
 
                         <td className="px-6 py-4">
-                          {formatNumber(report.average_uh || report.uh_score)}
+                          {formatNumber(report.average_uh ?? report.uh_score)}
                         </td>
 
                         <td className="px-6 py-4">
-                          {formatNumber(report.average_task || report.task_score)}
+                          {formatNumber(report.average_task ?? report.task_score)}
                         </td>
 
                         <td className="px-6 py-4">
-                          {formatNumber(report.mid_score || report.uts_score)}
+                          {formatNumber(report.mid_score ?? report.uts_score)}
                         </td>
 
                         <td className="px-6 py-4">
                           {formatNumber(
-                            report.final_exam_score || report.uas_score
+                            report.final_exam_score ?? report.uas_score
                           )}
                         </td>
 
@@ -889,7 +1103,7 @@ export default function TeacherAcademicReportsPage() {
 
                         <td className="px-6 py-4">
                           <span className="font-extrabold">
-                            {formatNumber(report.final_grade || report.final_score)}
+                            {formatNumber(report.final_grade ?? report.final_score)}
                           </span>
                         </td>
 
@@ -900,22 +1114,39 @@ export default function TeacherAcademicReportsPage() {
                         </td>
 
                         <td className="px-6 py-4">
+                          {report.report_file_url ? (
+                            <a
+                              href={report.report_file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                            >
+                              <FileText className="h-4 w-4" />
+                              File
+                            </a>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+
+                        <td className="px-6 py-4">
                           <StatusBadge status={approvalStatus} />
                         </td>
 
                         <td className="px-6 py-4">
                           <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(report)}
-                              disabled={approvalStatus === "approved"}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <Edit3 className="h-4 w-4" />
-                              Edit
-                            </button>
+                            {canEditReport(approvalStatus) ? (
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(report)}
+                                className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                              >
+                                <Edit3 className="h-4 w-4" />
+                                Edit
+                              </button>
+                            ) : null}
 
-                            {approvalStatus === "draft" ? (
+                            {canEditReport(approvalStatus) ? (
                               <button
                                 type="button"
                                 onClick={() => quickSubmitReport(report)}
@@ -924,6 +1155,12 @@ export default function TeacherAcademicReportsPage() {
                                 <Send className="h-4 w-4" />
                                 Submit
                               </button>
+                            ) : null}
+
+                            {!canEditReport(approvalStatus) ? (
+                              <span className="text-[12px] font-semibold text-[#8A5A48]">
+                                Sudah dikirim/review
+                              </span>
                             ) : null}
                           </div>
                         </td>
@@ -943,11 +1180,11 @@ export default function TeacherAcademicReportsPage() {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
               <div>
                 <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
-                  {form.id ? "Edit Laporan Akademik" : "Input Laporan Akademik"}
+                  {form.id ? "Edit Laporan Akademik" : "Input / Upload Laporan Akademik"}
                 </h2>
 
                 <p className="mt-1 text-[14px] text-[#6F5549]">
-                  Nilai akhir dan predikat dihitung otomatis.
+                  Guru bisa input nilai di web atau upload file laporan akademik.
                 </p>
               </div>
 
@@ -961,17 +1198,32 @@ export default function TeacherAcademicReportsPage() {
             </div>
 
             <div className="space-y-5 px-6 py-6">
+              <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+                <p className="text-[14px] font-extrabold text-[#2B1B18]">
+                  Pilihan Pengisian
+                </p>
+                <p className="mt-2 text-[13px] leading-6 text-[#6F5549]">
+                  Jika nilai ingin dikelola di web, isi kolom nilai di bawah.
+                  Jika sekolah sudah punya file raport/laporan, upload file saja
+                  juga bisa.
+                </p>
+              </div>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <FormGroup label="Siswa">
                   <select
                     value={form.student_id}
-                    onChange={(event) => updateForm("student_id", event.target.value)}
+                    onChange={(event) => {
+                      updateForm("student_id", event.target.value);
+                      updateForm("subject_id", "");
+                    }}
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih siswa</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.level} {student.grade}
+                        {student.full_name} — {student.level} {student.grade} — NIPD:{" "}
+                        {student.nis || "-"}
                       </option>
                     ))}
                   </select>
@@ -984,9 +1236,9 @@ export default function TeacherAcademicReportsPage() {
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih mata pelajaran</option>
-                    {subjects.map((subject) => (
+                    {subjectOptionsForForm.map((subject) => (
                       <option key={subject.id} value={subject.id}>
-                        {subject.name} {subject.grade ? `— ${subject.grade}` : ""}
+                        {getSubjectLabel(subject)}
                       </option>
                     ))}
                   </select>
@@ -1018,6 +1270,51 @@ export default function TeacherAcademicReportsPage() {
                     ))}
                   </select>
                 </FormGroup>
+              </div>
+
+              <div className="rounded-2xl border border-dashed border-[#DCC8B6] bg-white px-5 py-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="flex items-center gap-2 text-[14px] font-extrabold text-[#2B1B18]">
+                      <UploadCloud className="h-5 w-5 text-[#8C0F2D]" />
+                      Upload File Laporan / Raport
+                    </p>
+
+                    <p className="mt-1 text-[13px] text-[#6F5549]">
+                      Format PDF, Word, Excel, JPG, JPEG, atau PNG. Maksimal 10MB.
+                    </p>
+
+                    {form.report_file_url ? (
+                      <a
+                        href={form.report_file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-block text-[13px] font-extrabold text-[#0369A1] underline"
+                      >
+                        Lihat file yang sudah ada
+                      </a>
+                    ) : null}
+
+                    {selectedFile ? (
+                      <p className="mt-2 text-[13px] font-bold text-[#158A58]">
+                        File dipilih: {selectedFile.name}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <label className="flex h-11 cursor-pointer items-center justify-center rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#54131D]">
+                    Pilih File
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0] || null;
+                        setSelectedFile(file);
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
 
               <ScoreSection title="Nilai UH" icon={<BookOpen className="h-5 w-5" />}>
@@ -1075,7 +1372,7 @@ export default function TeacherAcademicReportsPage() {
               <div className="grid gap-3 md:grid-cols-2">
                 <button
                   type="button"
-                  onClick={handleSaveDraft}
+                  onClick={() => saveReport("draft")}
                   disabled={saving}
                   className="h-12 rounded-xl border border-[#DCC8B6] bg-white text-[15px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF] disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -1084,7 +1381,7 @@ export default function TeacherAcademicReportsPage() {
 
                 <button
                   type="button"
-                  onClick={handleSubmitApproval}
+                  onClick={() => saveReport("pending")}
                   disabled={saving}
                   className="h-12 rounded-xl bg-[#8C0F2D] text-[15px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                 >

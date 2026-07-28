@@ -10,7 +10,6 @@ import {
   Plus,
   Search,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -98,7 +97,43 @@ type FrameworkForm = {
   allocation_notes: string;
 };
 
-const levelOptions = ["SD", "SMP", "SMA"];
+const levelOptions = ["SD", "SMP", "SMA", "Bimbel/Kursus"];
+
+const gradeOptionsByLevel: Record<string, string[]> = {
+  SD: ["Kelas 1", "Kelas 2", "Kelas 3", "Kelas 4", "Kelas 5", "Kelas 6"],
+  SMP: ["Kelas 7", "Kelas 8", "Kelas 9"],
+  SMA: ["Kelas 10", "Kelas 11", "Kelas 12"],
+  "Bimbel/Kursus": [
+    "Kelas 1",
+    "Kelas 2",
+    "Kelas 3",
+    "Kelas 4",
+    "Kelas 5",
+    "Kelas 6",
+    "Kelas 7",
+    "Kelas 8",
+    "Kelas 9",
+    "Kelas 10",
+    "Kelas 11",
+    "Kelas 12",
+  ],
+};
+
+const allGradeOptions = [
+  "Kelas 1",
+  "Kelas 2",
+  "Kelas 3",
+  "Kelas 4",
+  "Kelas 5",
+  "Kelas 6",
+  "Kelas 7",
+  "Kelas 8",
+  "Kelas 9",
+  "Kelas 10",
+  "Kelas 11",
+  "Kelas 12",
+];
+
 const semesterOptions = ["Ganjil", "Genap"];
 const statusOptions = ["draft", "published"];
 
@@ -107,8 +142,8 @@ function emptyForm(): FrameworkForm {
     id: "",
     teacher_id: "",
     subject_id: "",
-    level: "SMP",
-    grade: "Kelas 7",
+    level: "SD",
+    grade: "Kelas 4",
     semester: "Ganjil",
     academic_year: "2026/2027",
     framework_title: "",
@@ -147,18 +182,6 @@ function formatNumber(value?: number | null) {
   return Number(value).toFixed(2).replace(".00", "");
 }
 
-function getInitials(name?: string | null) {
-  if (!name) return "-";
-
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 function getStatusLabel(status?: string | null) {
   if (status === "published") return "Published";
   return "Draft";
@@ -179,7 +202,8 @@ export default function KepalaSekolahKerangkaMateriPage() {
   const [form, setForm] = useState<FrameworkForm>(emptyForm());
 
   const [search, setSearch] = useState("");
-  const [levelFilter, setLevelFilter] = useState("Semua Level");
+  const [levelFilter, setLevelFilter] = useState("Semua Tingkat");
+  const [gradeFilter, setGradeFilter] = useState("Semua Kelas");
   const [teacherFilter, setTeacherFilter] = useState("Semua Guru");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
 
@@ -202,13 +226,20 @@ export default function KepalaSekolahKerangkaMateriPage() {
     const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
     const allocationsData = (allocationsRes.data || []) as TimeAllocationRow[];
 
-    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
-    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
+    const teacherMap = new Map(
+      teachersData.map((teacher) => [teacher.id, teacher])
+    );
+    const subjectMap = new Map(
+      subjectsData.map((subject) => [subject.id, subject])
+    );
 
     const allocationMap = new Map(
       allocationsData
         .filter((allocation) => allocation.material_framework_id)
-        .map((allocation) => [allocation.material_framework_id as string, allocation])
+        .map((allocation) => [
+          allocation.material_framework_id as string,
+          allocation,
+        ])
     );
 
     const enriched: EnrichedFramework[] = frameworksData.map((framework) => {
@@ -280,7 +311,10 @@ export default function KepalaSekolahKerangkaMateriPage() {
         normalizeText(framework.learning_objectives).includes(q);
 
       const matchLevel =
-        levelFilter === "Semua Level" || framework.level === levelFilter;
+        levelFilter === "Semua Tingkat" || framework.level === levelFilter;
+
+      const matchGrade =
+        gradeFilter === "Semua Kelas" || framework.grade === gradeFilter;
 
       const matchTeacher =
         teacherFilter === "Semua Guru" || framework.teacher_id === teacherFilter;
@@ -288,9 +322,9 @@ export default function KepalaSekolahKerangkaMateriPage() {
       const matchStatus =
         statusFilter === "Semua Status" || framework.status === statusFilter;
 
-      return matchSearch && matchLevel && matchTeacher && matchStatus;
+      return matchSearch && matchLevel && matchGrade && matchTeacher && matchStatus;
     });
-  }, [frameworks, search, levelFilter, teacherFilter, statusFilter]);
+  }, [frameworks, search, levelFilter, gradeFilter, teacherFilter, statusFilter]);
 
   const summary = useMemo(() => {
     const total = frameworks.length;
@@ -335,8 +369,8 @@ export default function KepalaSekolahKerangkaMateriPage() {
       id: framework.id,
       teacher_id: framework.teacher_id || "",
       subject_id: framework.subject_id || "",
-      level: framework.level || "SMP",
-      grade: framework.grade || "Kelas 7",
+      level: framework.level || "SD",
+      grade: framework.grade || "Kelas 4",
       semester: framework.semester || "Ganjil",
       academic_year: framework.academic_year || "2026/2027",
       framework_title: framework.framework_title || "",
@@ -369,6 +403,16 @@ export default function KepalaSekolahKerangkaMateriPage() {
       return false;
     }
 
+    if (!form.level) {
+      alert("Pilih tingkat / program terlebih dahulu.");
+      return false;
+    }
+
+    if (!form.grade) {
+      alert("Pilih kelas terlebih dahulu.");
+      return false;
+    }
+
     if (!form.framework_title.trim()) {
       alert("Isi judul kerangka materi terlebih dahulu.");
       return false;
@@ -394,7 +438,9 @@ export default function KepalaSekolahKerangkaMateriPage() {
     const weeksCount = toNumber(form.weeks_count);
 
     const totalMinutes =
-      totalMeetings && minutesPerMeeting ? totalMeetings * minutesPerMeeting : null;
+      totalMeetings && minutesPerMeeting
+        ? totalMeetings * minutesPerMeeting
+        : null;
 
     const frameworkPayload = {
       teacher_id: form.teacher_id,
@@ -591,7 +637,7 @@ export default function KepalaSekolahKerangkaMateriPage() {
         </div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr_1fr_1fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
@@ -617,12 +663,29 @@ export default function KepalaSekolahKerangkaMateriPage() {
 
             <select
               value={levelFilter}
-              onChange={(event) => setLevelFilter(event.target.value)}
+              onChange={(event) => {
+                setLevelFilter(event.target.value);
+                setGradeFilter("Semua Kelas");
+              }}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option>Semua Level</option>
+              <option>Semua Tingkat</option>
               {levelOptions.map((level) => (
                 <option key={level}>{level}</option>
+              ))}
+            </select>
+
+            <select
+              value={gradeFilter}
+              onChange={(event) => setGradeFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Kelas</option>
+              {(levelFilter === "Semua Tingkat"
+                ? allGradeOptions
+                : gradeOptionsByLevel[levelFilter] || allGradeOptions
+              ).map((grade) => (
+                <option key={grade}>{grade}</option>
               ))}
             </select>
 
@@ -774,7 +837,9 @@ export default function KepalaSekolahKerangkaMateriPage() {
                 <FormGroup label="Guru">
                   <select
                     value={form.teacher_id}
-                    onChange={(event) => updateForm("teacher_id", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("teacher_id", event.target.value)
+                    }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih guru</option>
@@ -789,7 +854,9 @@ export default function KepalaSekolahKerangkaMateriPage() {
                 <FormGroup label="Mata Pelajaran">
                   <select
                     value={form.subject_id}
-                    onChange={(event) => updateForm("subject_id", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("subject_id", event.target.value)
+                    }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih mata pelajaran</option>
@@ -803,10 +870,20 @@ export default function KepalaSekolahKerangkaMateriPage() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-4">
-                <FormGroup label="Level">
+                <FormGroup label="Tingkat / Program">
                   <select
                     value={form.level}
-                    onChange={(event) => updateForm("level", event.target.value)}
+                    onChange={(event) => {
+                      const nextLevel = event.target.value;
+                      const firstGrade =
+                        gradeOptionsByLevel[nextLevel]?.[0] || "Kelas 1";
+
+                      setForm((prev) => ({
+                        ...prev,
+                        level: nextLevel,
+                        grade: firstGrade,
+                      }));
+                    }}
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     {levelOptions.map((level) => (
@@ -816,18 +893,25 @@ export default function KepalaSekolahKerangkaMateriPage() {
                 </FormGroup>
 
                 <FormGroup label="Kelas">
-                  <input
+                  <select
                     value={form.grade}
                     onChange={(event) => updateForm("grade", event.target.value)}
-                    placeholder="Kelas 7"
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                  />
+                  >
+                    {(gradeOptionsByLevel[form.level] || allGradeOptions).map(
+                      (grade) => (
+                        <option key={grade}>{grade}</option>
+                      )
+                    )}
+                  </select>
                 </FormGroup>
 
                 <FormGroup label="Semester">
                   <select
                     value={form.semester}
-                    onChange={(event) => updateForm("semester", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("semester", event.target.value)
+                    }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     {semesterOptions.map((semester) => (
@@ -854,7 +938,7 @@ export default function KepalaSekolahKerangkaMateriPage() {
                   onChange={(event) =>
                     updateForm("framework_title", event.target.value)
                   }
-                  placeholder="Contoh: Kerangka Materi IPA Kelas 7 Semester Ganjil"
+                  placeholder="Contoh: Kerangka Materi IPAS Kelas 4 Semester Ganjil"
                   className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                 />
               </FormGroup>
@@ -888,9 +972,11 @@ export default function KepalaSekolahKerangkaMateriPage() {
               <FormGroup label="Materi Pokok">
                 <textarea
                   value={form.core_materials}
-                  onChange={(event) => updateForm("core_materials", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("core_materials", event.target.value)
+                  }
                   rows={5}
-                  placeholder="Contoh: Besaran, satuan, pengukuran, zat dan wujudnya..."
+                  placeholder="Contoh: Mengubah bentuk energi, gaya, benda, lingkungan sekitar..."
                   className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
                 />
               </FormGroup>
@@ -1093,7 +1179,10 @@ function FrameworkDetailModal({
 
         <div className="space-y-5 px-6 py-6">
           <div className="grid gap-4 md:grid-cols-4">
-            <DetailCard label="Level" value={`${framework.level} — ${framework.grade}`} />
+            <DetailCard
+              label="Tingkat / Kelas"
+              value={`${framework.level} — ${framework.grade}`}
+            />
             <DetailCard label="Semester" value={framework.semester || "-"} />
             <DetailCard
               label="Pertemuan"
@@ -1101,7 +1190,9 @@ function FrameworkDetailModal({
             />
             <DetailCard
               label="Total Menit"
-              value={`${formatNumber(framework.allocation?.total_minutes)} menit`}
+              value={`${formatNumber(
+                framework.allocation?.total_minutes
+              )} menit`}
             />
           </div>
 
@@ -1116,12 +1207,30 @@ function FrameworkDetailModal({
           </div>
 
           <div className="grid gap-5 xl:grid-cols-2">
-            <InfoBlock label="Capaian Pembelajaran" value={framework.learning_outcomes || "-"} />
-            <InfoBlock label="Tujuan Pembelajaran" value={framework.learning_objectives || "-"} />
-            <InfoBlock label="Materi Pokok" value={framework.core_materials || "-"} />
-            <InfoBlock label="Metode Pembelajaran" value={framework.learning_methods || "-"} />
-            <InfoBlock label="Sumber Belajar" value={framework.learning_resources || "-"} />
-            <InfoBlock label="Rencana Assessment" value={framework.assessment_plan || "-"} />
+            <InfoBlock
+              label="Capaian Pembelajaran"
+              value={framework.learning_outcomes || "-"}
+            />
+            <InfoBlock
+              label="Tujuan Pembelajaran"
+              value={framework.learning_objectives || "-"}
+            />
+            <InfoBlock
+              label="Materi Pokok"
+              value={framework.core_materials || "-"}
+            />
+            <InfoBlock
+              label="Metode Pembelajaran"
+              value={framework.learning_methods || "-"}
+            />
+            <InfoBlock
+              label="Sumber Belajar"
+              value={framework.learning_resources || "-"}
+            />
+            <InfoBlock
+              label="Rencana Assessment"
+              value={framework.assessment_plan || "-"}
+            />
           </div>
 
           <InfoBlock

@@ -40,12 +40,17 @@ type ScheduleRow = {
   teacher_id: string | null;
   student_id: string | null;
   subject_id: string | null;
+  day_name?: string | null;
   schedule_date: string | null;
   start_time: string | null;
   end_time: string | null;
+  duration_minutes?: number | null;
   session_name: string | null;
   material_topic: string | null;
   semester?: string | null;
+  notes?: string | null;
+  temporary_schedule_url?: string | null;
+  academic_year?: string | null;
   curriculum_program_id?: string | null;
   curriculum_chapter_id?: string | null;
   curriculum_sub_chapter_id?: string | null;
@@ -99,11 +104,15 @@ type RombelSchedule = {
   subject_id: string | null;
   subject_name: string;
   schedule_date: string;
+  day_name: string;
   start_time: string;
   end_time: string;
+  duration_minutes: number | null;
   session_name: string;
   material_topic: string;
   semester: string;
+  notes: string;
+  temporary_schedule_url: string | null;
   curriculum_program_id: string | null;
   curriculum_chapter_id: string | null;
   curriculum_sub_chapter_id: string | null;
@@ -126,6 +135,7 @@ type ProgramWithChildren = CurriculumProgram & {
   >;
 };
 
+const ACADEMIC_YEAR = "2026/2027";
 const understandingOptions = ["Paham", "Cukup Paham", "Belum Paham"];
 
 function normalizeAttendanceStatus(status?: string | null) {
@@ -140,14 +150,36 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
 
   if (Array.isArray(subjects)) {
-    return `Guru — ${subjects.slice(0, 4).join(", ")}`;
+    return `Guru Mapel — ${subjects.slice(0, 4).join(", ")}`;
   }
 
-  return `Guru — ${subjects}`;
+  return `Guru Mapel — ${subjects}`;
 }
 
 function toYMD(date: Date) {
@@ -177,6 +209,57 @@ function formatTime(value?: string | null) {
   return value.slice(0, 5);
 }
 
+function getDayNameFromDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    weekday: "long",
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function calculateDurationMinutes(
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  if (!startTime || !endTime) return null;
+
+  const [startHour, startMinute] = startTime.split(":").map(Number);
+  const [endHour, endMinute] = endTime.split(":").map(Number);
+
+  if (
+    Number.isNaN(startHour) ||
+    Number.isNaN(startMinute) ||
+    Number.isNaN(endHour) ||
+    Number.isNaN(endMinute)
+  ) {
+    return null;
+  }
+
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = endHour * 60 + endMinute;
+  const duration = endTotal - startTotal;
+
+  return duration > 0 ? duration : null;
+}
+
+function formatDuration(
+  minutes?: number | null,
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  const duration = minutes || calculateDurationMinutes(startTime, endTime);
+
+  if (!duration) return "-";
+
+  const hour = Math.floor(duration / 60);
+  const minute = duration % 60;
+
+  if (hour > 0 && minute > 0) return `${hour} jam ${minute} menit`;
+  if (hour > 0) return `${hour} jam`;
+
+  return `${minute} menit`;
+}
+
 function createRombelKey(schedule: ScheduleRow) {
   return [
     schedule.teacher_id || "",
@@ -197,6 +280,18 @@ function sameSubject(programSubject?: string | null, subjectName?: string | null
   if (!programSubject || !subjectName) return false;
 
   return normalizeText(programSubject) === normalizeText(subjectName);
+}
+
+function isHadir(status: string) {
+  return status === "Hadir";
+}
+
+function isIzin(status: string) {
+  return status === "Izin";
+}
+
+function isAlpa(status: string) {
+  return status === "Alpa";
 }
 
 export default function TeacherAbsensiPage() {
@@ -314,7 +409,9 @@ export default function TeacherAbsensiPage() {
     subChaptersData.forEach((subChapter) => {
       if (!subChapter.curriculum_chapter_id) return;
 
-      const current = subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
+      const current =
+        subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
+
       current.push(subChapter);
       subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
     });
@@ -437,14 +534,22 @@ export default function TeacherAbsensiPage() {
             subject_id: schedule.subject_id,
             subject_name: subject?.name || "-",
             schedule_date: schedule.schedule_date || "",
+            day_name:
+              schedule.day_name || getDayNameFromDate(schedule.schedule_date),
             start_time: schedule.start_time || "",
             end_time: schedule.end_time || "",
+            duration_minutes:
+              schedule.duration_minutes ||
+              calculateDurationMinutes(schedule.start_time, schedule.end_time),
             session_name: schedule.session_name || "-",
             material_topic: schedule.material_topic || "-",
             semester: schedule.semester || "-",
+            notes: schedule.notes || "-",
+            temporary_schedule_url: schedule.temporary_schedule_url || null,
             curriculum_program_id: schedule.curriculum_program_id || null,
             curriculum_chapter_id: schedule.curriculum_chapter_id || null,
-            curriculum_sub_chapter_id: schedule.curriculum_sub_chapter_id || null,
+            curriculum_sub_chapter_id:
+              schedule.curriculum_sub_chapter_id || null,
             schedules: [schedule],
             students: student ? [student] : [],
             alreadyAttendance: hasAttendance,
@@ -479,17 +584,24 @@ export default function TeacherAbsensiPage() {
         normalizeText(rombel.subject_name).includes(q) ||
         normalizeText(rombel.session_name).includes(q) ||
         normalizeText(rombel.material_topic).includes(q) ||
-        rombel.students.some((student) =>
-          normalizeText(student.full_name).includes(q) ||
-          normalizeText(student.nis).includes(q) ||
-          normalizeText(student.nisn).includes(q)
-        )
+        normalizeText(rombel.notes).includes(q) ||
+        rombel.students.some((student) => {
+          return (
+            normalizeText(student.full_name).includes(q) ||
+            normalizeText(student.nis).includes(q) ||
+            normalizeText(student.nisn).includes(q) ||
+            normalizeText(student.grade).includes(q) ||
+            normalizeText(student.level).includes(q)
+          );
+        })
       );
     });
   }, [rombelSchedules, search]);
 
   const selectedRombel = useMemo(() => {
-    return rombelSchedules.find((rombel) => rombel.key === selectedRombelKey) || null;
+    return (
+      rombelSchedules.find((rombel) => rombel.key === selectedRombelKey) || null
+    );
   }, [rombelSchedules, selectedRombelKey]);
 
   const availablePrograms = useMemo(() => {
@@ -623,6 +735,7 @@ export default function TeacherAbsensiPage() {
 
         if (field === "attendanceStatus" && value === "Hadir") {
           next.note = "";
+          next.understandingStatus = "Paham";
         }
 
         if (field === "attendanceStatus" && value !== "Hadir") {
@@ -697,6 +810,7 @@ export default function TeacherAbsensiPage() {
 
   async function handleSaveAttendance() {
     if (!validateBeforeSave()) return;
+
     if (
       !teacher?.id ||
       !selectedRombel ||
@@ -731,6 +845,7 @@ export default function TeacherAbsensiPage() {
       student_id: student.id,
       subject_id: selectedRombel.subject_id,
       attendance_date: selectedRombel.schedule_date,
+      day_name: selectedRombel.day_name,
       start_time: selectedRombel.start_time,
       end_time: selectedRombel.end_time,
       attendance_status: student.attendanceStatus,
@@ -821,9 +936,8 @@ export default function TeacherAbsensiPage() {
           </h1>
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
-            Pilih jadwal/rombel. Jika jadwal sudah terhubung dengan Program
-            Semester, Bab, dan Sub Bab, data tersebut otomatis terpilih di
-            halaman ini.
+            Pilih jadwal/rombel dari data Jadwal Mengajar. Guru dapat checklist
+            Hadir, Izin, atau Alpa sesuai format absensi sekolah.
           </p>
         </div>
 
@@ -895,12 +1009,13 @@ export default function TeacherAbsensiPage() {
               <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
                 Pilih Jadwal / Rombel
               </h2>
+
               <p className="mt-1 text-[13px] text-[#6F5549]">
                 Data diambil dari Jadwal Mengajar.
               </p>
             </div>
 
-            <div className="max-h-[620px] space-y-3 overflow-y-auto p-5">
+            <div className="max-h-[700px] space-y-3 overflow-y-auto p-5">
               {loading ? (
                 <p className="py-10 text-center text-[14px] text-[#6F5549]">
                   Memuat jadwal...
@@ -915,29 +1030,43 @@ export default function TeacherAbsensiPage() {
                     key={rombel.key}
                     type="button"
                     onClick={() => handleSelectRombel(rombel.key)}
-                    className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
-                      selectedRombelKey === rombel.key
-                        ? "border-[#8C0F2D] bg-[#FFF2F5]"
-                        : "border-[#EADACA] bg-[#FFFCF8] hover:bg-[#FFF8EF]"
-                    }`}
+                    className={`w-full rounded-2xl border px-4 py-4 text-left transition ${selectedRombelKey === rombel.key
+                      ? "border-[#8C0F2D] bg-[#FFF2F5]"
+                      : "border-[#EADACA] bg-[#FFFCF8] hover:bg-[#FFF8EF]"
+                      }`}
                   >
                     <div className="mb-2 flex items-start justify-between gap-3">
                       <div>
                         <p className="text-[15px] font-extrabold text-[#2B1B18]">
                           {rombel.subject_name}
                         </p>
+
                         <p className="mt-1 text-[13px] text-[#6F5549]">
-                          {formatTime(rombel.start_time)} -{" "}
-                          {formatTime(rombel.end_time)} • {rombel.session_name}
+                          {rombel.day_name} • {formatDate(rombel.schedule_date)}
+                        </p>
+
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          Datang {formatTime(rombel.start_time)} • Pulang{" "}
+                          {formatTime(rombel.end_time)}
+                        </p>
+
+                        <p className="mt-1 text-[13px] text-[#6F5549]">
+                          Jam {formatTime(rombel.start_time)}-
+                          {formatTime(rombel.end_time)} •{" "}
+                          {formatDuration(
+                            rombel.duration_minutes,
+                            rombel.start_time,
+                            rombel.end_time
+                          )}{" "}
+                          • {rombel.session_name}
                         </p>
                       </div>
 
                       <span
-                        className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${
-                          rombel.alreadyAttendance
-                            ? "bg-[#C7F0DA] text-[#158A58]"
-                            : "bg-[#FFF2B8] text-[#B26A00]"
-                        }`}
+                        className={`rounded-full px-3 py-1 text-[11px] font-extrabold ${rombel.alreadyAttendance
+                          ? "bg-[#C7F0DA] text-[#158A58]"
+                          : "bg-[#FFF2B8] text-[#B26A00]"
+                          }`}
                       >
                         {rombel.alreadyAttendance ? "Sudah" : "Belum"}
                       </span>
@@ -945,6 +1074,10 @@ export default function TeacherAbsensiPage() {
 
                     <p className="text-[13px] text-[#6F5549]">
                       Materi: {rombel.material_topic}
+                    </p>
+
+                    <p className="mt-1 text-[13px] text-[#6F5549]">
+                      Keterangan: {rombel.notes || "-"}
                     </p>
 
                     {rombel.curriculum_sub_chapter_id ? (
@@ -1068,8 +1201,8 @@ export default function TeacherAbsensiPage() {
                   <p className="mt-1 text-[13px] text-[#6F5549]">
                     {selectedRombel
                       ? `${selectedRombel.subject_name} • ${formatDate(
-                          selectedRombel.schedule_date
-                        )}`
+                        selectedRombel.schedule_date
+                      )}`
                       : "Pilih jadwal/rombel terlebih dahulu."}
                   </p>
                 </div>
@@ -1084,17 +1217,88 @@ export default function TeacherAbsensiPage() {
                 </button>
               </div>
 
+              {selectedRombel ? (
+                <div className="border-b border-[#EADACA] bg-[#FFF8EF] px-5 py-4">
+                  <div className="grid gap-3 text-[13px] md:grid-cols-4">
+                    <InfoItem label="Hari" value={selectedRombel.day_name} />
+                    <InfoItem
+                      label="Tanggal"
+                      value={formatDate(selectedRombel.schedule_date)}
+                    />
+                    <InfoItem
+                      label="Datang"
+                      value={formatTime(selectedRombel.start_time)}
+                    />
+                    <InfoItem
+                      label="Pulang"
+                      value={formatTime(selectedRombel.end_time)}
+                    />
+                    <InfoItem
+                      label="Jam"
+                      value={`${formatTime(
+                        selectedRombel.start_time
+                      )}-${formatTime(selectedRombel.end_time)}`}
+                    />
+                    <InfoItem
+                      label="Durasi"
+                      value={formatDuration(
+                        selectedRombel.duration_minutes,
+                        selectedRombel.start_time,
+                        selectedRombel.end_time
+                      )}
+                    />
+                    <InfoItem label="Sesi" value={selectedRombel.session_name} />
+                    <InfoItem
+                      label="Keterangan"
+                      value={selectedRombel.notes || "-"}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1080px] border-collapse">
+                <table className="w-full min-w-[1280px] border-collapse">
                   <thead>
                     <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
-                      <th className="px-5 py-4">Nama</th>
-                      <th className="px-5 py-4">Kelas</th>
-                      <th className="px-5 py-4 text-center">Hadir</th>
-                      <th className="px-5 py-4 text-center">Izin</th>
-                      <th className="px-5 py-4 text-center">Alpa</th>
-                      <th className="px-5 py-4">Pemahaman</th>
-                      <th className="px-5 py-4">Keterangan</th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4">
+                        No
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4">
+                        Nama
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4">
+                        Datang
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4">
+                        Pulang
+                      </th>
+                      <th
+                        colSpan={6}
+                        className="border-r border-[#EADACA] px-5 py-4 text-center"
+                      >
+                        Jadwal Kegiatan Belajar Mengajar
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4 text-center">
+                        Hadir
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4 text-center">
+                        Izin
+                      </th>
+                      <th rowSpan={2} className="border-r border-[#EADACA] px-5 py-4 text-center">
+                        Alpa
+                      </th>
+                      <th rowSpan={2} className="px-5 py-4">
+                        Keterangan
+                      </th>
+                    </tr>
+
+                    <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                      <th className="border-r border-[#EADACA] px-5 py-3">Jam</th>
+                      <th className="border-r border-[#EADACA] px-5 py-3">Sesi</th>
+                      <th className="border-r border-[#EADACA] px-5 py-3">Kls</th>
+                      <th className="border-r border-[#EADACA] px-5 py-3">Mapel</th>
+                      <th className="border-r border-[#EADACA] px-5 py-3">Materi</th>
+                      <th className="border-r border-[#EADACA] px-5 py-3">Siswa</th>
                     </tr>
                   </thead>
 
@@ -1102,35 +1306,72 @@ export default function TeacherAbsensiPage() {
                     {rombelStudents.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={7}
+                          colSpan={14}
                           className="px-5 py-12 text-center text-[#6F5549]"
                         >
                           Belum ada rombel dipilih.
                         </td>
                       </tr>
                     ) : (
-                      rombelStudents.map((student) => (
+                      rombelStudents.map((student, index) => (
                         <tr
                           key={student.id}
                           className="border-b border-[#F0E1D4] text-[14px]"
                         >
-                          <td className="px-5 py-4">
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 font-bold">
+                            {index + 1}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4">
                             <p className="font-extrabold text-[#2B1B18]">
                               {student.full_name}
                             </p>
+
                             <p className="mt-1 text-[12px] text-[#6F5549]">
                               NIPD: {student.nis || "-"}
                               {student.nisn ? ` • NISN: ${student.nisn}` : ""}
                             </p>
                           </td>
 
-                          <td className="px-5 py-4 text-[#6F5549]">
-                            {student.level} — {student.grade}
+                          <td className="whitespace-nowrap border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {selectedRombel ? formatTime(selectedRombel.start_time) : "-"}
                           </td>
 
-                          <td className="px-5 py-4 text-center">
+                          <td className="whitespace-nowrap border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {selectedRombel ? formatTime(selectedRombel.end_time) : "-"}
+                          </td>
+
+                          <td className="whitespace-nowrap border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {selectedRombel
+                              ? `${formatTime(selectedRombel.start_time)}-${formatTime(
+                                selectedRombel.end_time
+                              )}`
+                              : "-"}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {selectedRombel?.session_name || "-"}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {formatClass(student.level, student.grade)}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {selectedRombel?.subject_name || "-"}
+                          </td>
+
+                          <td className="min-w-[220px] border-r border-[#F0E1D4] px-5 py-4 font-bold text-[#2B1B18]">
+                            {selectedRombel?.material_topic || "-"}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-[#6F5549]">
+                            {student.full_name || "-"}
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-center">
                             <ChecklistButton
-                              checked={student.attendanceStatus === "Hadir"}
+                              checked={isHadir(student.attendanceStatus)}
                               onClick={() =>
                                 updateStudentAttendance(
                                   student.id,
@@ -1141,9 +1382,9 @@ export default function TeacherAbsensiPage() {
                             />
                           </td>
 
-                          <td className="px-5 py-4 text-center">
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-center">
                             <ChecklistButton
-                              checked={student.attendanceStatus === "Izin"}
+                              checked={isIzin(student.attendanceStatus)}
                               onClick={() =>
                                 updateStudentAttendance(
                                   student.id,
@@ -1154,9 +1395,9 @@ export default function TeacherAbsensiPage() {
                             />
                           </td>
 
-                          <td className="px-5 py-4 text-center">
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-center">
                             <ChecklistButton
-                              checked={student.attendanceStatus === "Alpa"}
+                              checked={isAlpa(student.attendanceStatus)}
                               onClick={() =>
                                 updateStudentAttendance(
                                   student.id,
@@ -1167,46 +1408,46 @@ export default function TeacherAbsensiPage() {
                             />
                           </td>
 
-                          <td className="px-5 py-4">
-                            <select
-                              value={student.understandingStatus}
-                              onChange={(event) =>
-                                updateStudentAttendance(
-                                  student.id,
-                                  "understandingStatus",
-                                  event.target.value
-                                )
-                              }
-                              disabled={student.attendanceStatus !== "Hadir"}
-                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {student.attendanceStatus !== "Hadir" ? (
-                                <option>-</option>
-                              ) : (
-                                understandingOptions.map((option) => (
-                                  <option key={option}>{option}</option>
-                                ))
-                              )}
-                            </select>
-                          </td>
+                          <td className="min-w-[260px] px-5 py-4">
+                            <div className="space-y-2">
+                              <select
+                                value={student.understandingStatus}
+                                onChange={(event) =>
+                                  updateStudentAttendance(
+                                    student.id,
+                                    "understandingStatus",
+                                    event.target.value
+                                  )
+                                }
+                                disabled={student.attendanceStatus !== "Hadir"}
+                                className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {student.attendanceStatus !== "Hadir" ? (
+                                  <option>-</option>
+                                ) : (
+                                  understandingOptions.map((option) => (
+                                    <option key={option}>{option}</option>
+                                  ))
+                                )}
+                              </select>
 
-                          <td className="px-5 py-4">
-                            <input
-                              value={student.note}
-                              onChange={(event) =>
-                                updateStudentAttendance(
-                                  student.id,
-                                  "note",
-                                  event.target.value
-                                )
-                              }
-                              placeholder={
-                                student.attendanceStatus === "Hadir"
-                                  ? "Opsional"
-                                  : "Wajib isi alasan"
-                              }
-                              className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
-                            />
+                              <input
+                                value={student.note}
+                                onChange={(event) =>
+                                  updateStudentAttendance(
+                                    student.id,
+                                    "note",
+                                    event.target.value
+                                  )
+                                }
+                                placeholder={
+                                  student.attendanceStatus === "Hadir"
+                                    ? "Keterangan opsional"
+                                    : "Wajib isi alasan"
+                                }
+                                className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+                              />
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1288,11 +1529,10 @@ function ChecklistButton({
     <button
       type="button"
       onClick={onClick}
-      className={`mx-auto flex h-7 w-12 items-center justify-center rounded-[5px] border text-[14px] font-extrabold transition ${
-        checked
-          ? "border-[#2F66C9] bg-[#3F73C8] text-white"
-          : "border-[#C9D3E6] bg-white text-transparent hover:border-[#3F73C8]"
-      }`}
+      className={`mx-auto flex h-7 w-12 items-center justify-center rounded-[5px] border text-[14px] font-extrabold transition ${checked
+        ? "border-[#2F66C9] bg-[#3F73C8] text-white"
+        : "border-[#C9D3E6] bg-white text-transparent hover:border-[#3F73C8]"
+        }`}
       aria-pressed={checked}
     >
       ✓
@@ -1314,5 +1554,16 @@ function FormGroup({
       </p>
       {children}
     </label>
+  );
+}
+
+function InfoItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+      <p className="mt-1 font-extrabold text-[#2B1B18]">{value}</p>
+    </div>
   );
 }

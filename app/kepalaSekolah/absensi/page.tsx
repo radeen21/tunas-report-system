@@ -49,7 +49,8 @@ type AttendanceRow = {
   attendance_status: string | null;
   understanding_status: string | null;
   material_topic: string | null;
-  notes: string | null;
+  note?: string | null;
+  notes?: string | null;
 };
 
 type EnrichedAttendance = AttendanceRow & {
@@ -106,6 +107,28 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "-";
 
@@ -139,6 +162,10 @@ function getMonthName(dateString?: string | null) {
   return new Intl.DateTimeFormat("id-ID", {
     month: "long",
   }).format(new Date(`${dateString}T00:00:00`));
+}
+
+function getAttendanceNote(item: AttendanceRow) {
+  return item.note || item.notes || "-";
 }
 
 function normalizeAttendanceStatus(status?: string | null) {
@@ -228,7 +255,9 @@ function groupAttendanceByRombel(attendance: EnrichedAttendance[]) {
       subject_id: first.subject_id,
       subject_name: first.subject_name,
       material_topic: first.material_topic,
-      students: rows.sort((a, b) => a.student_name.localeCompare(b.student_name)),
+      students: rows.sort((a, b) =>
+        a.student_name.localeCompare(b.student_name)
+      ),
       total: rows.length,
       hadir,
       izin,
@@ -316,9 +345,17 @@ export default function KepalaSekolahAbsensiPage() {
     const subjectsData = (subjectsRes.data || []) as SubjectRow[];
     const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
 
-    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
-    const studentMap = new Map(studentsData.map((student) => [student.id, student]));
-    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
+    const teacherMap = new Map(
+      teachersData.map((teacher) => [teacher.id, teacher])
+    );
+
+    const studentMap = new Map(
+      studentsData.map((student) => [student.id, student])
+    );
+
+    const subjectMap = new Map(
+      subjectsData.map((subject) => [subject.id, subject])
+    );
 
     const enriched: EnrichedAttendance[] = attendanceData.map((item) => {
       const teacher = item.teacher_id ? teacherMap.get(item.teacher_id) : null;
@@ -386,14 +423,15 @@ export default function KepalaSekolahAbsensiPage() {
             normalizeText(student.student_level).includes(q) ||
             normalizeText(student.student_nis).includes(q) ||
             normalizeText(student.student_nisn).includes(q) ||
-            normalizeText(student.notes).includes(q)
+            normalizeText(getAttendanceNote(student)).includes(q)
           );
         });
 
       const matchStatus =
         statusFilter === "Semua Status" ||
         group.students.some(
-          (student) => normalizeAttendanceStatus(student.attendance_status) === statusFilter
+          (student) =>
+            normalizeAttendanceStatus(student.attendance_status) === statusFilter
         );
 
       const matchMonth =
@@ -487,10 +525,10 @@ export default function KepalaSekolahAbsensiPage() {
       })
       .map((item, index) => ({
         No: index + 1,
-        Tanggal: formatDate(item.attendance_date),
         Hari: item.day_name || "-",
+        Tanggal: formatDate(item.attendance_date),
         Nama: item.student_name || "-",
-        Kelas: item.student_grade || "-",
+        Kelas: formatClass(item.student_level, item.student_grade),
         Jam: `${formatTime(item.start_time)}-${formatTime(item.end_time)}`,
         Guru: item.teacher_name || "-",
         Mapel: item.subject_name || "-",
@@ -502,14 +540,14 @@ export default function KepalaSekolahAbsensiPage() {
         Sakit: isSakit(item.attendance_status) ? "✓" : "",
         Materi: item.material_topic || "-",
         Pemahaman: item.understanding_status || "-",
-        Keterangan: item.notes || "-",
+        Keterangan: getAttendanceNote(item),
       }));
 
     if (rows.length === 0) {
       alert(
-        `Tidak ada data absensi untuk periode ${formatDate(start)} sampai ${formatDate(
-          end
-        )}.`
+        `Tidak ada data absensi untuk periode ${formatDate(
+          start
+        )} sampai ${formatDate(end)}.`
       );
       return;
     }
@@ -518,10 +556,10 @@ export default function KepalaSekolahAbsensiPage() {
 
     worksheet["!cols"] = [
       { wch: 6 },
-      { wch: 16 },
       { wch: 14 },
+      { wch: 16 },
       { wch: 26 },
-      { wch: 12 },
+      { wch: 14 },
       { wch: 16 },
       { wch: 24 },
       { wch: 20 },
@@ -567,8 +605,8 @@ export default function KepalaSekolahAbsensiPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Pantau absensi yang diinput guru berdasarkan jadwal/rombel. Format
-              tabel dibuat menyerupai file absensi sekolah dengan checklist
+              Pantau absensi yang diinput guru berdasarkan jadwal/rombel.
+              Tampilan dibuat seperti format absensi sekolah dengan checklist
               Hadir, Izin, dan Alpa.
             </p>
           </div>
@@ -611,6 +649,7 @@ export default function KepalaSekolahAbsensiPage() {
             info="Rombel"
             tone="pink"
           />
+
           <SummaryCard
             icon={<CalendarCheck className="h-5 w-5" />}
             label="Total Data Absensi"
@@ -618,6 +657,7 @@ export default function KepalaSekolahAbsensiPage() {
             info="Rows"
             tone="orange"
           />
+
           <SummaryCard
             icon={<UserCheck className="h-5 w-5" />}
             label="Total Hadir"
@@ -625,6 +665,7 @@ export default function KepalaSekolahAbsensiPage() {
             info={`${summary.percentage}%`}
             tone="green"
           />
+
           <SummaryCard
             icon={<UserX className="h-5 w-5" />}
             label="Izin / Alpa / Sakit"
@@ -641,7 +682,7 @@ export default function KepalaSekolahAbsensiPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari guru, siswa, NIPD, NISN, mapel, atau materi..."
+                placeholder="Cari guru, siswa, NIPD, NISN, mapel, materi, atau keterangan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -695,15 +736,16 @@ export default function KepalaSekolahAbsensiPage() {
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Tampilan per siswa dengan checklist Hadir, Izin, dan Alpa sesuai
-              format absensi sekolah.
+              Format tabel: Nama, Kelas, Jam, Guru, Mapel, Hadir, Izin, Alpa,
+              Keterangan.
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1220px] border-collapse">
+            <table className="w-full min-w-[1320px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th className="px-5 py-4">No</th>
                   <th className="px-5 py-4">Nama</th>
                   <th className="px-5 py-4">Kelas</th>
                   <th className="px-5 py-4">Jam</th>
@@ -721,7 +763,7 @@ export default function KepalaSekolahAbsensiPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat data absensi...
@@ -730,73 +772,96 @@ export default function KepalaSekolahAbsensiPage() {
                 ) : visibleAttendanceRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada data absensi.
                     </td>
                   </tr>
                 ) : (
-                  visibleAttendanceRows.map(({ group, student, isFirstInGroup }) => (
-                    <tr
-                      key={`${group.key}-${student.id}`}
-                      className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18]"
-                    >
-                      <td className="px-5 py-4">
-                        <div>
-                          <p className="font-extrabold">{student.student_name}</p>
-                          <p className="mt-1 text-[12px] text-[#6F5549]">
-                            NIPD: {student.student_nis || "-"}
+                  visibleAttendanceRows.map(
+                    ({ group, student, isFirstInGroup }, index) => (
+                      <tr
+                        key={`${group.key}-${student.id}`}
+                        className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18]"
+                      >
+                        <td className="px-5 py-4 font-bold">{index + 1}</td>
+
+                        <td className="px-5 py-4">
+                          <div>
+                            <p className="font-extrabold">
+                              {student.student_name}
+                            </p>
+                            <p className="mt-1 text-[12px] text-[#6F5549]">
+                              NIPD: {student.student_nis || "-"}
+                              {student.student_nisn
+                                ? ` • NISN: ${student.student_nisn}`
+                                : ""}
+                            </p>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4">
+                          {formatClass(
+                            student.student_level,
+                            student.student_grade
+                          )}
+                        </td>
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          {formatTime(group.start_time)}-
+                          {formatTime(group.end_time)}
+                        </td>
+
+                        <td className="px-5 py-4 font-extrabold">
+                          {group.teacher_name}
+                        </td>
+
+                        <td className="px-5 py-4">{group.subject_name}</td>
+
+                        <td className="px-5 py-4 text-center">
+                          <ChecklistBox
+                            checked={isHadir(student.attendance_status)}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 text-center">
+                          <ChecklistBox
+                            checked={isIzin(student.attendance_status)}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 text-center">
+                          <ChecklistBox
+                            checked={isAlpa(student.attendance_status)}
+                          />
+                        </td>
+
+                        <td className="max-w-[260px] px-5 py-4 text-[#6F5549]">
+                          <p className="line-clamp-2">
+                            {getAttendanceNote(student)}
                           </p>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {student.student_grade || "-"}
-                      </td>
-
-                      <td className="whitespace-nowrap px-5 py-4">
-                        {formatTime(group.start_time)}-{formatTime(group.end_time)}
-                      </td>
-
-                      <td className="px-5 py-4 font-extrabold">
-                        {group.teacher_name}
-                      </td>
-
-                      <td className="px-5 py-4">{group.subject_name}</td>
-
-                      <td className="px-5 py-4 text-center">
-                        <ChecklistBox checked={isHadir(student.attendance_status)} />
-                      </td>
-
-                      <td className="px-5 py-4 text-center">
-                        <ChecklistBox checked={isIzin(student.attendance_status)} />
-                      </td>
-
-                      <td className="px-5 py-4 text-center">
-                        <ChecklistBox checked={isAlpa(student.attendance_status)} />
-                      </td>
-
-                      <td className="max-w-[260px] px-5 py-4 text-[#6F5549]">
-                        <p className="line-clamp-2">{student.notes || "-"}</p>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        {isFirstInGroup ? (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedRombel(group)}
-                            className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                          >
-                            <Eye className="h-4 w-4" />
-                            Detail
-                          </button>
-                        ) : (
-                          <span className="text-[12px] text-[#A58A7A]">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                        <td className="px-5 py-4">
+                          {isFirstInGroup ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRombel(group)}
+                              className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                            >
+                              <Eye className="h-4 w-4" />
+                              Detail
+                            </button>
+                          ) : (
+                            <span className="text-[12px] text-[#A58A7A]">
+                              -
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  )
                 )}
               </tbody>
             </table>
@@ -830,7 +895,10 @@ export default function KepalaSekolahAbsensiPage() {
 
             <div className="space-y-5 px-6 py-6">
               <div className="grid gap-4 md:grid-cols-4">
-                <DetailSummaryCard label="Total Siswa" value={selectedRombel.total} />
+                <DetailSummaryCard
+                  label="Total Siswa"
+                  value={selectedRombel.total}
+                />
                 <DetailSummaryCard label="Hadir" value={selectedRombel.hadir} />
                 <DetailSummaryCard label="Izin" value={selectedRombel.izin} />
                 <DetailSummaryCard label="Alpa" value={selectedRombel.alpa} />
@@ -839,16 +907,24 @@ export default function KepalaSekolahAbsensiPage() {
               <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
                 <div className="grid gap-3 text-[13px] md:grid-cols-4">
                   <InfoItem
+                    label="Hari"
+                    value={selectedRombel.day_name || "-"}
+                  />
+                  <InfoItem
                     label="Tanggal"
                     value={formatDate(selectedRombel.attendance_date)}
                   />
                   <InfoItem
                     label="Jam"
-                    value={`${formatTime(selectedRombel.start_time)}-${formatTime(
-                      selectedRombel.end_time
-                    )}`}
+                    value={`${formatTime(
+                      selectedRombel.start_time
+                    )}-${formatTime(selectedRombel.end_time)}`}
                   />
                   <InfoItem label="Mapel" value={selectedRombel.subject_name} />
+                  <InfoItem
+                    label="Guru"
+                    value={selectedRombel.teacher_name}
+                  />
                   <InfoItem
                     label="Materi"
                     value={selectedRombel.material_topic || "-"}
@@ -858,9 +934,10 @@ export default function KepalaSekolahAbsensiPage() {
 
               <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[960px] border-collapse">
+                  <table className="w-full min-w-[1060px] border-collapse">
                     <thead>
                       <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                        <th className="px-5 py-4">No</th>
                         <th className="px-5 py-4">Siswa</th>
                         <th className="px-5 py-4">NIPD</th>
                         <th className="px-5 py-4">Kelas</th>
@@ -873,11 +950,13 @@ export default function KepalaSekolahAbsensiPage() {
                     </thead>
 
                     <tbody>
-                      {selectedRombel.students.map((student) => (
+                      {selectedRombel.students.map((student, index) => (
                         <tr
                           key={student.id}
                           className="border-b border-[#F0E1D4] text-[14px]"
                         >
+                          <td className="px-5 py-4 font-bold">{index + 1}</td>
+
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
                               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F8DFD0] text-[13px] font-extrabold text-[#8C0F2D]">
@@ -895,19 +974,28 @@ export default function KepalaSekolahAbsensiPage() {
                           </td>
 
                           <td className="px-5 py-4 text-[#6F5549]">
-                            {student.student_level} — {student.student_grade}
+                            {formatClass(
+                              student.student_level,
+                              student.student_grade
+                            )}
                           </td>
 
                           <td className="px-5 py-4 text-center">
-                            <ChecklistBox checked={isHadir(student.attendance_status)} />
+                            <ChecklistBox
+                              checked={isHadir(student.attendance_status)}
+                            />
                           </td>
 
                           <td className="px-5 py-4 text-center">
-                            <ChecklistBox checked={isIzin(student.attendance_status)} />
+                            <ChecklistBox
+                              checked={isIzin(student.attendance_status)}
+                            />
                           </td>
 
                           <td className="px-5 py-4 text-center">
-                            <ChecklistBox checked={isAlpa(student.attendance_status)} />
+                            <ChecklistBox
+                              checked={isAlpa(student.attendance_status)}
+                            />
                           </td>
 
                           <td className="px-5 py-4">
@@ -917,7 +1005,7 @@ export default function KepalaSekolahAbsensiPage() {
                           </td>
 
                           <td className="px-5 py-4 text-[#6F5549]">
-                            {student.notes || "-"}
+                            {getAttendanceNote(student)}
                           </td>
                         </tr>
                       ))}
@@ -1020,6 +1108,8 @@ function UnderstandingBadge({ status }: { status?: string | null }) {
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "Cukup Paham"
       ? "bg-[#FFF2B8] text-[#B26A00]"
+      : safe === "-"
+      ? "bg-[#F1F5F9] text-[#64748B]"
       : "bg-[#FFE4E6] text-[#BE123C]";
 
   return (

@@ -49,6 +49,9 @@ type StudentForm = {
   gender: string;
   religion: string;
   parent_id: string;
+  parent_manual_name: string;
+  parent_manual_phone: string;
+  parent_manual_email: string;
   homeroom_teacher_id: string;
   progress: string;
   attendance: string;
@@ -77,6 +80,9 @@ const initialForm: StudentForm = {
   gender: "",
   religion: "",
   parent_id: "",
+  parent_manual_name: "",
+  parent_manual_phone: "",
+  parent_manual_email: "",
   homeroom_teacher_id: "",
   progress: "0",
   attendance: "0",
@@ -171,6 +177,14 @@ function cleanFileName(fileName: string) {
     .replace(/[^a-z0-9._-]/g, "");
 }
 
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizePhone(value?: string | null) {
+  return (value || "").replace(/\D/g, "");
+}
+
 function genderLabel(gender?: string | null) {
   if (gender === "L") return "Laki-laki";
   if (gender === "P") return "Perempuan";
@@ -202,6 +216,24 @@ async function uploadStudentDocument(
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function ensureValidSession() {
+  const { data: sessionData } = await supabase.auth.getSession();
+
+  if (sessionData.session) return true;
+
+  const { data: refreshData, error: refreshError } =
+    await supabase.auth.refreshSession();
+
+  if (refreshError || !refreshData.session) {
+    alert("Sesi login sudah berakhir. Silakan login ulang.");
+    await supabase.auth.signOut();
+    window.location.href = "/";
+    return false;
+  }
+
+  return true;
 }
 
 export default function KepalaSekolahStudentEditPage() {
@@ -308,6 +340,9 @@ export default function KepalaSekolahStudentEditPage() {
         gender: student.gender || "",
         religion: student.religion || "",
         parent_id: student.parent_id || "",
+        parent_manual_name: "",
+        parent_manual_phone: "",
+        parent_manual_email: "",
         homeroom_teacher_id: student.homeroom_teacher_id || "",
         progress: String(student.progress ?? 0),
         attendance: String(student.attendance ?? 0),
@@ -346,6 +381,62 @@ export default function KepalaSekolahStudentEditPage() {
       ...prev,
       [key]: value,
     }));
+  }
+
+  async function getOrCreateParentId() {
+    if (form.parent_id) return form.parent_id;
+
+    const manualName = form.parent_manual_name.trim();
+    const manualPhone = form.parent_manual_phone.trim();
+    const manualEmail = form.parent_manual_email.trim().toLowerCase();
+
+    if (!manualName) {
+      return "";
+    }
+
+    const normalizedManualName = normalizeText(manualName);
+    const normalizedManualPhone = normalizePhone(manualPhone);
+    const normalizedManualEmail = normalizeText(manualEmail);
+
+    const existingParent = parents.find((parent) => {
+      const sameName = normalizeText(parent.full_name) === normalizedManualName;
+      const samePhone =
+        normalizedManualPhone &&
+        normalizePhone(parent.phone) === normalizedManualPhone;
+      const sameEmail =
+        normalizedManualEmail &&
+        normalizeText(parent.email) === normalizedManualEmail;
+
+      return sameEmail || samePhone || sameName;
+    });
+
+    if (existingParent?.id) {
+      return existingParent.id;
+    }
+
+    const { data, error } = await supabase
+      .from("parents")
+      .insert({
+        full_name: manualName,
+        phone: manualPhone || null,
+        email: manualEmail || null,
+        relation: "Orang Tua / Wali",
+        notes: `Dibuat otomatis dari form edit siswa: ${form.full_name.trim()}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      throw new Error(`Gagal membuat data orang tua: ${error.message}`);
+    }
+
+    if (!data?.id) {
+      throw new Error("Gagal membuat data orang tua.");
+    }
+
+    return String(data.id);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -393,6 +484,15 @@ export default function KepalaSekolahStudentEditPage() {
     setSaving(true);
 
     try {
+      const sessionOk = await ensureValidSession();
+
+      if (!sessionOk) {
+        setSaving(false);
+        return;
+      }
+
+      const parentId = await getOrCreateParentId();
+
       const uploadedUrls: Partial<Record<DocumentKey, string>> = {};
 
       for (const field of documentFields) {
@@ -421,16 +521,20 @@ export default function KepalaSekolahStudentEditPage() {
           birth_place: form.birth_place.trim() || null,
           gender: form.gender || null,
           religion: form.religion || null,
-          parent_id: form.parent_id || null,
+          parent_id: parentId || null,
           homeroom_teacher_id: form.homeroom_teacher_id || null,
           progress: progressValue,
           attendance: attendanceValue,
           description: form.description.trim() || null,
-          family_card_url: uploadedUrls.family_card_url || form.family_card_url || null,
+          family_card_url:
+            uploadedUrls.family_card_url || form.family_card_url || null,
           diploma_url: uploadedUrls.diploma_url || form.diploma_url || null,
-          father_ktp_url: uploadedUrls.father_ktp_url || form.father_ktp_url || null,
-          mother_ktp_url: uploadedUrls.mother_ktp_url || form.mother_ktp_url || null,
-          report_card_url: uploadedUrls.report_card_url || form.report_card_url || null,
+          father_ktp_url:
+            uploadedUrls.father_ktp_url || form.father_ktp_url || null,
+          mother_ktp_url:
+            uploadedUrls.mother_ktp_url || form.mother_ktp_url || null,
+          report_card_url:
+            uploadedUrls.report_card_url || form.report_card_url || null,
           student_photo_url:
             uploadedUrls.student_photo_url || form.student_photo_url || null,
           registration_form_url:
@@ -486,8 +590,8 @@ export default function KepalaSekolahStudentEditPage() {
             </h1>
 
             <p className="mt-1 text-sm text-[#6B4A3A]">
-              Perbarui profil siswa, orang tua, guru pembimbing, dokumen, progress,
-              dan attendance.
+              Perbarui profil siswa, orang tua/wali, guru mapel, dokumen,
+              progress, dan attendance.
             </p>
           </div>
         </div>
@@ -690,30 +794,96 @@ export default function KepalaSekolahStudentEditPage() {
                     />
                   </div>
 
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="text-sm font-bold text-[#2B1B18]">
-                      Orang Tua
+                      Orang Tua / Wali
                     </label>
+
                     <select
                       value={form.parent_id}
                       onChange={(event) =>
-                        updateForm("parent_id", event.target.value)
+                        setForm((prev) => ({
+                          ...prev,
+                          parent_id: event.target.value,
+                          parent_manual_name: event.target.value
+                            ? ""
+                            : prev.parent_manual_name,
+                          parent_manual_phone: event.target.value
+                            ? ""
+                            : prev.parent_manual_phone,
+                          parent_manual_email: event.target.value
+                            ? ""
+                            : prev.parent_manual_email,
+                        }))
                       }
                       className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                     >
-                      <option value="">Pilih orang tua</option>
+                      <option value="">Pilih orang tua yang sudah ada</option>
                       {parents.map((parent) => (
                         <option key={parent.id} value={parent.id}>
-                          {parent.full_name || "-"}
+                          {parent.full_name || parent.email || "-"}
                           {parent.phone ? ` — ${parent.phone}` : ""}
                         </option>
                       ))}
                     </select>
+
+                    <div className="mt-4 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] p-4">
+                      <p className="text-[13px] font-bold text-[#6F5549]">
+                        Tambah Manual Orang Tua / Wali
+                      </p>
+
+                      <p className="mt-1 text-[12px] text-[#7D5E50]">
+                        Jika orang tua belum ada di pilihan atas, isi manual di
+                        bawah. Saat Simpan Perubahan, data orang tua otomatis
+                        masuk ke database.
+                      </p>
+
+                      <div className="mt-4 grid gap-4 md:grid-cols-3">
+                        <FormInput
+                          label="Nama Orang Tua / Wali"
+                          value={form.parent_manual_name}
+                          placeholder="Contoh: Dedi"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_name: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+
+                        <FormInput
+                          label="No HP / WhatsApp"
+                          value={form.parent_manual_phone}
+                          placeholder="Contoh: 08123456789"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_phone: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+
+                        <FormInput
+                          label="Email Orang Tua"
+                          value={form.parent_manual_email}
+                          placeholder="Opsional"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_email: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div>
                     <label className="text-sm font-bold text-[#2B1B18]">
-                      Guru Pembimbing
+                      Guru Mapel
                     </label>
                     <select
                       value={form.homeroom_teacher_id}
@@ -908,6 +1078,30 @@ export default function KepalaSekolahStudentEditPage() {
         )}
       </div>
     </KepalaSekolahLayout>
+  );
+}
+
+function FormInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="text-[13px] font-bold text-[#6F5549]">{label}</label>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+      />
+    </div>
   );
 }
 

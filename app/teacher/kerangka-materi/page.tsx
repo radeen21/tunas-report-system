@@ -8,7 +8,6 @@ import {
   FileText,
   Layers3,
   Search,
-  UserRound,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -73,11 +72,63 @@ type EnrichedFramework = MaterialFrameworkRow & {
   allocation: TimeAllocationRow | null;
 };
 
-const levelOptions = ["Semua Level", "SD", "SMP", "SMA"];
+const levelOptions = [
+  "Semua Tingkat",
+  "SD",
+  "SMP",
+  "SMA",
+  "Bimbel/Kursus",
+];
+
+const gradeOptions = [
+  "Semua Kelas",
+  "Kelas 1",
+  "Kelas 2",
+  "Kelas 3",
+  "Kelas 4",
+  "Kelas 5",
+  "Kelas 6",
+  "Kelas 7",
+  "Kelas 8",
+  "Kelas 9",
+  "Kelas 10",
+  "Kelas 11",
+  "Kelas 12",
+];
+
 const statusOptions = ["Semua Status", "draft", "published"];
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
+}
+
+function normalizeLevel(value?: string | null) {
+  const level = normalizeText(value);
+
+  if (!level) return "-";
+  if (level === "sd" || level.includes("primary")) return "SD";
+  if (level === "smp" || level.includes("secondary")) return "SMP";
+  if (level === "sma" || level.includes("high")) return "SMA";
+  if (level.includes("early") || level.includes("bimbel")) {
+    return "Bimbel/Kursus";
+  }
+
+  return value || "-";
+}
+
+function normalizeGrade(value?: string | null) {
+  const grade = (value || "").trim();
+
+  if (!grade) return "-";
+
+  const match = grade.match(/\d+/);
+  if (match?.[0]) return `Kelas ${match[0]}`;
+
+  return grade;
+}
+
+function formatLevelGrade(level?: string | null, grade?: string | null) {
+  return `${normalizeLevel(level)} — ${normalizeGrade(grade)}`;
 }
 
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
@@ -115,13 +166,13 @@ function getStatusLabel(status?: string | null) {
 
 export default function TeacherKerangkaMateriPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
-  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [frameworks, setFrameworks] = useState<EnrichedFramework[]>([]);
 
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState("");
-  const [levelFilter, setLevelFilter] = useState("Semua Level");
+  const [levelFilter, setLevelFilter] = useState("Semua Tingkat");
+  const [gradeFilter, setGradeFilter] = useState("Semua Kelas");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
   const [semesterFilter, setSemesterFilter] = useState("Semua Semester");
 
@@ -165,7 +216,6 @@ export default function TeacherKerangkaMateriPage() {
     setTeacher(currentTeacher);
 
     if (!currentTeacher?.id) {
-      setSubjects([]);
       setFrameworks([]);
       setLoading(false);
       return;
@@ -210,9 +260,7 @@ export default function TeacherKerangkaMateriPage() {
       };
     });
 
-    setSubjects(subjectsData);
     setFrameworks(enriched);
-
     setLoading(false);
   }
 
@@ -243,20 +291,40 @@ export default function TeacherKerangkaMateriPage() {
     };
   }, []);
 
+  const availableGradeOptions = useMemo(() => {
+    const existingGrades = frameworks
+      .map((framework) => normalizeGrade(framework.grade))
+      .filter((grade) => grade !== "-");
+
+    const combined = Array.from(
+      new Set([...gradeOptions.filter((grade) => grade !== "Semua Kelas"), ...existingGrades])
+    );
+
+    return ["Semua Kelas", ...combined];
+  }, [frameworks]);
+
   const filteredFrameworks = useMemo(() => {
     const q = normalizeText(search);
 
     return frameworks.filter((framework) => {
+      const frameworkLevel = normalizeLevel(framework.level);
+      const frameworkGrade = normalizeGrade(framework.grade);
+
       const matchSearch =
         !q ||
         normalizeText(framework.framework_title).includes(q) ||
         normalizeText(framework.subject_name).includes(q) ||
         normalizeText(framework.core_materials).includes(q) ||
         normalizeText(framework.learning_objectives).includes(q) ||
-        normalizeText(framework.learning_methods).includes(q);
+        normalizeText(framework.learning_methods).includes(q) ||
+        normalizeText(frameworkLevel).includes(q) ||
+        normalizeText(frameworkGrade).includes(q);
 
       const matchLevel =
-        levelFilter === "Semua Level" || framework.level === levelFilter;
+        levelFilter === "Semua Tingkat" || frameworkLevel === levelFilter;
+
+      const matchGrade =
+        gradeFilter === "Semua Kelas" || frameworkGrade === gradeFilter;
 
       const matchStatus =
         statusFilter === "Semua Status" || framework.status === statusFilter;
@@ -265,9 +333,22 @@ export default function TeacherKerangkaMateriPage() {
         semesterFilter === "Semua Semester" ||
         framework.semester === semesterFilter;
 
-      return matchSearch && matchLevel && matchStatus && matchSemester;
+      return (
+        matchSearch &&
+        matchLevel &&
+        matchGrade &&
+        matchStatus &&
+        matchSemester
+      );
     });
-  }, [frameworks, search, levelFilter, statusFilter, semesterFilter]);
+  }, [
+    frameworks,
+    search,
+    levelFilter,
+    gradeFilter,
+    statusFilter,
+    semesterFilter,
+  ]);
 
   const summary = useMemo(() => {
     const total = frameworks.length;
@@ -324,9 +405,7 @@ export default function TeacherKerangkaMateriPage() {
 
           <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-3 text-[14px] font-bold text-[#6F5549] shadow-sm">
             Mode:{" "}
-            <span className="font-extrabold text-[#2B1B18]">
-              Read Only
-            </span>
+            <span className="font-extrabold text-[#2B1B18]">Read Only</span>
           </div>
         </div>
 
@@ -365,13 +444,13 @@ export default function TeacherKerangkaMateriPage() {
         </div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr_1fr_1fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.4fr_0.9fr_0.9fr_0.9fr_0.9fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, mapel, materi, tujuan, atau metode..."
+                placeholder="Cari judul, mapel, materi, tujuan, kelas, atau metode..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -383,6 +462,16 @@ export default function TeacherKerangkaMateriPage() {
             >
               {levelOptions.map((level) => (
                 <option key={level}>{level}</option>
+              ))}
+            </select>
+
+            <select
+              value={gradeFilter}
+              onChange={(event) => setGradeFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              {availableGradeOptions.map((grade) => (
+                <option key={grade}>{grade}</option>
               ))}
             </select>
 
@@ -430,7 +519,7 @@ export default function TeacherKerangkaMateriPage() {
                         <StatusBadge status={framework.status} />
 
                         <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-                          {framework.level} — {framework.grade}
+                          {formatLevelGrade(framework.level, framework.grade)}
                         </span>
 
                         <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
@@ -524,7 +613,8 @@ function FrameworkDetailModal({
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              {framework.subject_name} • {framework.level} {framework.grade}
+              {framework.subject_name} •{" "}
+              {formatLevelGrade(framework.level, framework.grade)}
             </p>
           </div>
 
@@ -539,15 +629,18 @@ function FrameworkDetailModal({
 
         <div className="space-y-5 px-6 py-6">
           <div className="grid gap-4 md:grid-cols-4">
-            <DetailCard label="Level" value={`${framework.level} — ${framework.grade}`} />
+            <DetailCard
+              label="Tingkat"
+              value={normalizeLevel(framework.level)}
+            />
+            <DetailCard
+              label="Kelas"
+              value={normalizeGrade(framework.grade)}
+            />
             <DetailCard label="Semester" value={framework.semester || "-"} />
             <DetailCard
               label="Pertemuan"
               value={`${formatNumber(framework.allocation?.total_meetings)}x`}
-            />
-            <DetailCard
-              label="Total Menit"
-              value={`${formatNumber(framework.allocation?.total_minutes)} menit`}
             />
           </div>
 
@@ -627,12 +720,16 @@ function FrameworkDetailModal({
 
               <MiniInfo
                 label="Jumlah Minggu"
-                value={`${formatNumber(framework.allocation?.weeks_count)} minggu`}
+                value={`${formatNumber(
+                  framework.allocation?.weeks_count
+                )} minggu`}
               />
 
               <MiniInfo
                 label="Total Menit"
-                value={`${formatNumber(framework.allocation?.total_minutes)} menit`}
+                value={`${formatNumber(
+                  framework.allocation?.total_minutes
+                )} menit`}
               />
             </div>
 

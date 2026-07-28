@@ -81,6 +81,15 @@ type Subject = {
   grade: string | null;
 };
 
+type ScheduleRow = {
+  id: string;
+  teacher_id: string | null;
+  student_id: string | null;
+  subject_id: string | null;
+  schedule_date: string | null;
+  academic_year: string | null;
+};
+
 type KbmForm = {
   student_id: string;
   subject_id: string;
@@ -94,6 +103,10 @@ type KbmForm = {
   teacher_note: string;
   status: string;
 };
+
+const ACADEMIC_YEAR = "2026/2027";
+const ACADEMIC_YEAR_START = "2026-07-01";
+const ACADEMIC_YEAR_END = "2027-06-30";
 
 const initialKbmForm: KbmForm = {
   student_id: "",
@@ -241,6 +254,44 @@ export default function TeacherStudentsPage() {
   }
 
   async function fetchStudents(teacherId: string) {
+    const { data: scheduleData, error: scheduleError } = await supabase
+      .from("schedules")
+      .select("id, teacher_id, student_id, subject_id, schedule_date, academic_year")
+      .eq("teacher_id", teacherId)
+      .gte("schedule_date", ACADEMIC_YEAR_START)
+      .lte("schedule_date", ACADEMIC_YEAR_END);
+
+    if (scheduleError) throw new Error(scheduleError.message);
+
+    const schedules = (scheduleData || []) as ScheduleRow[];
+
+    const validSchedules = schedules.filter((schedule) => {
+      if (!schedule.student_id) return false;
+      if (!schedule.schedule_date) return false;
+
+      const isAcademicYearDate =
+        schedule.schedule_date >= ACADEMIC_YEAR_START &&
+        schedule.schedule_date <= ACADEMIC_YEAR_END;
+
+      const isAcademicYearMatch =
+        !schedule.academic_year || schedule.academic_year === ACADEMIC_YEAR;
+
+      return isAcademicYearDate && isAcademicYearMatch;
+    });
+
+    const studentIds = Array.from(
+      new Set(
+        validSchedules
+          .map((schedule) => schedule.student_id)
+          .filter(Boolean) as string[]
+      )
+    );
+
+    if (studentIds.length === 0) {
+      setStudents([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("students")
       .select(
@@ -269,7 +320,7 @@ export default function TeacherStudentsPage() {
         )
       `
       )
-      .eq("homeroom_teacher_id", teacherId)
+      .in("id", studentIds)
       .order("full_name", { ascending: true });
 
     if (error) throw new Error(error.message);
@@ -378,6 +429,11 @@ export default function TeacherStudentsPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "schedules" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
         () => fetchPageData()
       )
@@ -449,7 +505,10 @@ export default function TeacherStudentsPage() {
   ).length;
 
   const averageScore = useMemo(() => {
+    const studentIds = new Set(students.map((student) => student.id));
+
     const scores = academicReports
+      .filter((report) => report.student_id && studentIds.has(report.student_id))
       .map((report) => Number(report.final_score || 0))
       .filter((score) => score > 0);
 
@@ -458,7 +517,7 @@ export default function TeacherStudentsPage() {
     const total = scores.reduce((sum, score) => sum + score, 0);
 
     return Math.round(total / scores.length);
-  }, [academicReports]);
+  }, [academicReports, students]);
 
   function getStudentAverageScore(studentId: string) {
     const reports = academicReports.filter(
@@ -608,7 +667,7 @@ export default function TeacherStudentsPage() {
             </h1>
 
             <p className="mt-1 text-sm text-[#6B4A3A]">
-              Daftar murid yang terhubung dengan{" "}
+              Daftar murid yang terhubung dengan jadwal{" "}
               <span className="font-bold text-[#2B1B18]">
                 {teacher?.full_name || "guru aktif"}
               </span>
@@ -666,7 +725,7 @@ export default function TeacherStudentsPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari nama murid, NIS, NISN, orang tua..."
+                  placeholder="Cari nama murid, NIPD, NISN, orang tua..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -679,6 +738,7 @@ export default function TeacherStudentsPage() {
                   <option>Early Learning</option>
                   <option>Primary Level</option>
                   <option>Secondary Level</option>
+                  <option>High School</option>
                 </select>
 
                 <select
@@ -698,14 +758,14 @@ export default function TeacherStudentsPage() {
                 <div className="border-b border-[#E8D6C1] px-6 py-5">
                   <h2 className="text-lg font-bold">Daftar Murid</h2>
                   <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Murid aktif yang menjadi tanggung jawab guru.
+                    Murid yang masuk di jadwal mengajar guru.
                   </p>
                 </div>
 
                 <div className="divide-y divide-[#E8D6C1]">
                   {filteredStudents.length === 0 && (
                     <div className="px-6 py-10 text-center text-sm text-[#6B4A3A]">
-                      Belum ada murid yang terhubung ke guru ini.
+                      Belum ada murid yang terhubung ke jadwal guru ini.
                     </div>
                   )}
 
@@ -749,7 +809,7 @@ export default function TeacherStudentsPage() {
                             <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#6B4A3A] md:grid-cols-2">
                               <p>
                                 <span className="font-semibold text-[#2B1B18]">
-                                  NIS:
+                                  NIPD:
                                 </span>{" "}
                                 {student.nis || "-"}
                               </p>
@@ -917,16 +977,10 @@ export default function TeacherStudentsPage() {
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Tombol{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      + Buat Laporan
-                    </span>{" "}
-                    akan menyimpan data ke table{" "}
-                    <span className="font-bold text-[#2B1B18]">
-                      kbm_reports
-                    </span>
-                    . Setelah disimpan, laporan akan muncul di menu Laporan KBM
-                    dan menunggu review Kepala Sekolah.
+                    Data murid di halaman ini sekarang diambil dari table{" "}
+                    <span className="font-bold text-[#2B1B18]">schedules</span>.
+                    Jadi guru hanya melihat murid yang masuk ke jadwal mengajar
+                    guru tersebut.
                   </p>
                 </div>
               </div>

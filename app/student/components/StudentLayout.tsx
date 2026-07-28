@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
   BookOpen,
@@ -14,7 +14,6 @@ import {
   LayoutGrid,
   LogOut,
   Search,
-  UserRound,
   type LucideIcon,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -22,38 +21,63 @@ import AcademicFooter from "@/app/components/AcademicFooter";
 
 type ActiveMenu =
   | "Dashboard"
+  | "Dashboard Saya"
   | "Jadwal Belajar"
   | "Absensi"
   | "Materi"
   | "Tugas"
+  | "Tugas & Hasil"
   | "Laporan Akademik"
+  | "Laporan Saya"
+  | "Progress Saya"
+  | "Progress Belajar"
   | "Gallery";
 
 type StudentLayoutProps = {
-  children: React.ReactNode;
+  children: ReactNode;
   activeMenu: ActiveMenu;
   studentName?: string;
   studentClass?: string;
   searchPlaceholder?: string;
 
-  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
+  // Compat untuk halaman lama
   buttonLabel?: string;
 };
 
 type MenuItem = {
   name: ActiveMenu;
+  label: string;
   href: string;
   icon: LucideIcon;
 };
 
+type StudentProfile = {
+  id: string;
+  full_name: string | null;
+  level: string | null;
+  grade: string | null;
+  nis: string | null;
+  nisn: string | null;
+  email?: string | null;
+  user_id?: string | null;
+  parent_id?: string | null;
+};
+
+type ParentProfile = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  phone?: string | null;
+};
+
 const menus: MenuItem[] = [
-  { name: "Dashboard", href: "/student", icon: LayoutGrid },
-  { name: "Jadwal Belajar", href: "/student/jadwal", icon: CalendarDays },
-  { name: "Absensi", href: "/student/absensi", icon: CheckSquare },
-  { name: "Materi", href: "/student/materials", icon: BookOpen },
-  { name: "Tugas", href: "/student/assignments", icon: FileText },
-  { name: "Laporan Akademik", href: "/student/reports", icon: BookOpen },
-  { name: "Gallery", href: "/student/gallery", icon: GalleryHorizontal },
+  { name: "Dashboard", label: "Dashboard Saya", href: "/student", icon: LayoutGrid },
+  { name: "Jadwal Belajar", label: "Jadwal Belajar", href: "/student/jadwal", icon: CalendarDays },
+  { name: "Absensi", label: "Absensi", href: "/student/absensi", icon: CheckSquare },
+  { name: "Materi", label: "Materi Belajar", href: "/student/materials", icon: BookOpen },
+  { name: "Tugas", label: "Tugas & Hasil", href: "/student/assignments", icon: FileText },
+  { name: "Laporan Akademik", label: "Laporan Akademik", href: "/student/reports", icon: BookOpen },
+  { name: "Gallery", label: "Galeri Kegiatan", href: "/student/gallery", icon: GalleryHorizontal },
 ];
 
 function getInitials(name: string) {
@@ -68,9 +92,95 @@ function getInitials(name: string) {
   return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
 }
 
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizeLevel(level?: string | null) {
+  const normalized = normalizeText(level);
+
+  if (!normalized) return "";
+
+  if (
+    normalized === "primary" ||
+    normalized === "primary level" ||
+    normalized === "sd" ||
+    normalized.includes("primary")
+  ) {
+    return "SD";
+  }
+
+  if (
+    normalized === "secondary" ||
+    normalized === "secondary level" ||
+    normalized === "smp" ||
+    normalized.includes("secondary")
+  ) {
+    return "SMP";
+  }
+
+  if (
+    normalized === "high school" ||
+    normalized === "highschool" ||
+    normalized === "sma" ||
+    normalized.includes("high")
+  ) {
+    return "SMA";
+  }
+
+  if (
+    normalized === "early learning" ||
+    normalized.includes("early")
+  ) {
+    return "Bimbel/Kursus";
+  }
+
+  return level || "";
+}
+
+function formatStudentClass(student?: StudentProfile | null) {
+  if (!student) return "Portal Murid / Orang Tua";
+
+  const level = normalizeLevel(student.level);
+  const grade = student.grade || "";
+
+  const classInfo = [level, grade].filter(Boolean).join(" - ");
+
+  return classInfo || "Portal Murid / Orang Tua";
+}
+
+function formatStudentSubInfo(student?: StudentProfile | null) {
+  if (!student) return "Data murid belum terhubung";
+
+  const classInfo = formatStudentClass(student);
+  const nipd = student.nis ? `NIPD ${student.nis}` : "";
+  const nisn = student.nisn ? `NISN ${student.nisn}` : "";
+
+  return [classInfo, nipd, nisn].filter(Boolean).join(" • ");
+}
+
+function isMenuActive(pathname: string, menu: MenuItem) {
+  if (menu.href === "/student") return pathname === "/student";
+
+  return pathname === menu.href || pathname.startsWith(`${menu.href}/`);
+}
+
+function isActiveMenuMatch(activeMenu: ActiveMenu, menu: MenuItem) {
+  if (activeMenu === menu.name) return true;
+
+  const aliases: Record<string, ActiveMenu[]> = {
+    Dashboard: ["Dashboard Saya"],
+    Tugas: ["Tugas & Hasil"],
+    "Laporan Akademik": ["Laporan Saya"],
+    "Progress Belajar": ["Progress Saya"],
+  };
+
+  return aliases[menu.name]?.includes(activeMenu) || false;
+}
+
 export default function StudentLayout({
   activeMenu,
-  searchPlaceholder = "Cari jadwal, materi, atau tugas...",
+  searchPlaceholder = "Cari jadwal, materi, tugas, atau laporan...",
   studentName,
   studentClass,
   children,
@@ -82,56 +192,137 @@ export default function StudentLayout({
   const router = useRouter();
 
   const [displayName, setDisplayName] = useState(studentName || "Murid");
-  const [displayClass, setDisplayClass] = useState(studentClass || "Student Portal");
+  const [displayClass, setDisplayClass] = useState(
+    studentClass || "Portal Murid / Orang Tua"
+  );
+  const [connectedStudent, setConnectedStudent] = useState<StudentProfile | null>(
+    null
+  );
+  const [profileNote, setProfileNote] = useState("");
 
   useEffect(() => {
-    async function loadStudentProfile() {
+    let ignore = false;
+
+    async function findStudentByLogin() {
+      setProfileNote("");
+
+      if (studentName && studentName !== "Murid") {
+        setDisplayName(studentName);
+        localStorage.setItem("hstkb_student_name", studentName);
+      }
+
+      if (studentClass && studentClass !== "Portal Murid / Orang Tua") {
+        setDisplayClass(studentClass);
+        localStorage.setItem("hstkb_student_class", studentClass);
+      }
+
       const cachedName = localStorage.getItem("hstkb_student_name");
       const cachedClass = localStorage.getItem("hstkb_student_class");
 
-      if (cachedName) setDisplayName(cachedName);
-      if (cachedClass) setDisplayClass(cachedClass);
+      if (cachedName && !studentName) setDisplayName(cachedName);
+      if (cachedClass && !studentClass) setDisplayClass(cachedClass);
 
       const { data: authData } = await supabase.auth.getUser();
 
-      const email =
+      const authUserId = authData.user?.id || "";
+      const email = (
         authData.user?.email ||
         localStorage.getItem("hstkb_demo_email") ||
         localStorage.getItem("hstkb_email") ||
-        "";
+        ""
+      )
+        .trim()
+        .toLowerCase();
 
-      if (!email) return;
-
-      const { data: student } = await supabase
-        .from("students")
-        .select("*")
-        .eq("email", email)
-        .limit(1)
-        .maybeSingle();
-
-      if (student) {
-        const name = student.full_name || "Murid";
-        const classInfo = `${student.level || ""} ${student.grade || ""}`.trim();
-
-        setDisplayName(name);
-        setDisplayClass(classInfo || "Student Portal");
-
-        localStorage.setItem("hstkb_student_name", name);
-        localStorage.setItem("hstkb_student_class", classInfo || "Student Portal");
+      if (!authUserId && !email) {
+        if (!ignore) {
+          setDisplayName("Murid");
+          setDisplayClass("Data login belum ditemukan");
+          setProfileNote("Silakan login ulang agar data murid dapat dimuat.");
+        }
+        return;
       }
+
+      let student: StudentProfile | null = null;
+
+      if (authUserId) {
+        const { data } = await supabase
+          .from("students")
+          .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
+          .eq("user_id", authUserId)
+          .limit(1)
+          .maybeSingle();
+
+        student = (data as StudentProfile) || null;
+      }
+
+      if (!student && email) {
+        const { data } = await supabase
+          .from("students")
+          .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
+          .ilike("email", email)
+          .limit(1)
+          .maybeSingle();
+
+        student = (data as StudentProfile) || null;
+      }
+
+      if (!student && email) {
+        const { data: parent } = await supabase
+          .from("parents")
+          .select("id, full_name, email, phone")
+          .ilike("email", email)
+          .limit(1)
+          .maybeSingle();
+
+        const parentProfile = (parent as ParentProfile) || null;
+
+        if (parentProfile?.id) {
+          const { data } = await supabase
+            .from("students")
+            .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
+            .eq("parent_id", parentProfile.id)
+            .order("full_name", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+          student = (data as StudentProfile) || null;
+        }
+      }
+
+      if (ignore) return;
+
+      if (!student) {
+        setConnectedStudent(null);
+        setDisplayName("Data murid belum terhubung");
+        setDisplayClass("Hubungkan akun login dengan data siswa");
+        setProfileNote(
+          "Akun ini belum terhubung ke data murid. Isi students.email atau students.user_id sesuai akun login, atau hubungkan parent_id untuk akun orang tua."
+        );
+        localStorage.removeItem("hstkb_student_name");
+        localStorage.removeItem("hstkb_student_class");
+        localStorage.removeItem("hstkb_active_student_id");
+        return;
+      }
+
+      const name = student.full_name || "Murid";
+      const classInfo = formatStudentSubInfo(student);
+
+      setConnectedStudent(student);
+      setDisplayName(name);
+      setDisplayClass(classInfo);
+      setProfileNote("");
+
+      localStorage.setItem("hstkb_student_name", name);
+      localStorage.setItem("hstkb_student_class", classInfo);
+      localStorage.setItem("hstkb_active_student_id", student.id);
     }
 
-    if (studentName && studentName !== "Murid") {
-      setDisplayName(studentName);
-      localStorage.setItem("hstkb_student_name", studentName);
-    }
+    findStudentByLogin();
 
-    if (studentClass && studentClass !== "Student Portal") {
-      setDisplayClass(studentClass);
-      localStorage.setItem("hstkb_student_class", studentClass);
-    }
-
-    loadStudentProfile();
+    return () => {
+      ignore = true;
+    };
   }, [studentName, studentClass]);
 
   async function handleLogout() {
@@ -140,6 +331,7 @@ export default function StudentLayout({
     localStorage.removeItem("hstkb_full_name");
     localStorage.removeItem("hstkb_student_name");
     localStorage.removeItem("hstkb_student_class");
+    localStorage.removeItem("hstkb_active_student_id");
 
     await supabase.auth.signOut();
 
@@ -168,7 +360,7 @@ export default function StudentLayout({
               <div>
                 <p className="text-[18px] font-bold leading-none">HSTKB</p>
                 <p className="mt-1 text-[13px] text-white/80">
-                  Student Portal
+                  Portal Murid / Orang Tua
                 </p>
               </div>
             </Link>
@@ -180,10 +372,8 @@ export default function StudentLayout({
                 const Icon = menu.icon;
 
                 const isActive =
-                  menu.href === "/student"
-                    ? pathname === "/student"
-                    : pathname === menu.href ||
-                      pathname.startsWith(`${menu.href}/`);
+                  isMenuActive(pathname, menu) ||
+                  isActiveMenuMatch(activeMenu, menu);
 
                 return (
                   <Link
@@ -196,7 +386,7 @@ export default function StudentLayout({
                     <span className="flex items-center gap-3">
                       <Icon className="h-[18px] w-[18px]" />
                       <span className="text-[15px] font-semibold">
-                        {menu.name}
+                        {menu.label}
                       </span>
                     </span>
 
@@ -271,6 +461,12 @@ export default function StudentLayout({
           </header>
 
           <div className="px-8 py-8">
+            {profileNote ? (
+              <div className="mb-5 rounded-2xl border border-yellow-200 bg-yellow-50 px-5 py-4 text-sm leading-6 text-yellow-800">
+                {profileNote}
+              </div>
+            ) : null}
+
             {children}
             <AcademicFooter />
           </div>

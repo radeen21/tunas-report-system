@@ -65,6 +65,9 @@ type StudentForm = {
   gender: string;
   religion: string;
   parent_id: string;
+  parent_manual_name: string;
+  parent_manual_phone: string;
+  parent_manual_email: string;
   homeroom_teacher_id: string;
   description: string;
 };
@@ -81,6 +84,9 @@ const initialForm: StudentForm = {
   gender: "",
   religion: "",
   parent_id: "",
+  parent_manual_name: "",
+  parent_manual_phone: "",
+  parent_manual_email: "",
   homeroom_teacher_id: "",
   description: "",
 };
@@ -200,6 +206,14 @@ function cleanFileName(fileName: string) {
     .replace(/[^a-z0-9._-]/g, "");
 }
 
+function normalizeText(value?: string | null) {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizePhone(value?: string | null) {
+  return (value || "").replace(/\D/g, "");
+}
+
 async function uploadStudentDocument(
   file: File,
   studentName: string,
@@ -225,6 +239,24 @@ async function uploadStudentDocument(
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function ensureValidSession() {
+  const { data: sessionData } = await supabase.auth.getSession();
+
+  if (sessionData.session) return true;
+
+  const { data: refreshData, error: refreshError } =
+    await supabase.auth.refreshSession();
+
+  if (refreshError || !refreshData.session) {
+    alert("Sesi login sudah berakhir. Silakan login ulang.");
+    await supabase.auth.signOut();
+    window.location.href = "/";
+    return false;
+  }
+
+  return true;
 }
 
 export default function KepalaSekolahStudentsPage() {
@@ -461,6 +493,62 @@ export default function KepalaSekolahStudentsPage() {
     setFormError("");
   }
 
+  async function getOrCreateParentId() {
+    if (form.parent_id) return form.parent_id;
+
+    const manualName = form.parent_manual_name.trim();
+    const manualPhone = form.parent_manual_phone.trim();
+    const manualEmail = form.parent_manual_email.trim().toLowerCase();
+
+    if (!manualName) {
+      throw new Error("Pilih orang tua atau isi nama orang tua manual.");
+    }
+
+    const normalizedManualName = normalizeText(manualName);
+    const normalizedManualPhone = normalizePhone(manualPhone);
+    const normalizedManualEmail = normalizeText(manualEmail);
+
+    const existingParent = parents.find((parent) => {
+      const sameName = normalizeText(parent.full_name) === normalizedManualName;
+      const samePhone =
+        normalizedManualPhone &&
+        normalizePhone(parent.phone) === normalizedManualPhone;
+      const sameEmail =
+        normalizedManualEmail &&
+        normalizeText(parent.email) === normalizedManualEmail;
+
+      return sameEmail || samePhone || sameName;
+    });
+
+    if (existingParent?.id) {
+      return existingParent.id;
+    }
+
+    const { data, error } = await supabase
+      .from("parents")
+      .insert({
+        full_name: manualName,
+        phone: manualPhone || null,
+        email: manualEmail || null,
+        relation: "Orang Tua / Wali",
+        notes: `Dibuat otomatis dari form tambah siswa: ${form.full_name.trim()}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      throw new Error(`Gagal membuat data orang tua: ${error.message}`);
+    }
+
+    if (!data?.id) {
+      throw new Error("Gagal membuat data orang tua.");
+    }
+
+    return String(data.id);
+  }
+
   async function handleSaveStudent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -476,8 +564,8 @@ export default function KepalaSekolahStudentsPage() {
       return;
     }
 
-    if (!form.parent_id) {
-      setFormError("Orang tua wajib dipilih.");
+    if (!form.parent_id && !form.parent_manual_name.trim()) {
+      setFormError("Pilih orang tua atau isi nama orang tua manual.");
       return;
     }
 
@@ -489,6 +577,15 @@ export default function KepalaSekolahStudentsPage() {
     setSaving(true);
 
     try {
+      const sessionOk = await ensureValidSession();
+
+      if (!sessionOk) {
+        setSaving(false);
+        return;
+      }
+
+      const parentId = await getOrCreateParentId();
+
       const uploadedUrls: Partial<Record<DocumentKey, string>> = {};
 
       for (const field of documentFields) {
@@ -514,7 +611,7 @@ export default function KepalaSekolahStudentsPage() {
         birth_place: form.birth_place.trim() || null,
         gender: form.gender || null,
         religion: form.religion || null,
-        parent_id: form.parent_id,
+        parent_id: parentId,
         homeroom_teacher_id: form.homeroom_teacher_id,
         description: form.description.trim() || null,
         family_card_url: uploadedUrls.family_card_url || null,
@@ -557,6 +654,10 @@ export default function KepalaSekolahStudentsPage() {
 
     if (!confirmed) return;
 
+    const sessionOk = await ensureValidSession();
+
+    if (!sessionOk) return;
+
     const { error } = await supabase
       .from("students")
       .delete()
@@ -589,6 +690,7 @@ export default function KepalaSekolahStudentsPage() {
           <button
             onClick={openAddModal}
             className="flex h-[46px] items-center gap-3 rounded-2xl bg-[#9C0824] px-6 text-[15px] font-bold text-white shadow-sm transition hover:brightness-105"
+            type="button"
           >
             <Plus className="h-4 w-4" />
             Add Student
@@ -649,7 +751,8 @@ export default function KepalaSekolahStudentsPage() {
                       {student.birth_place ? ` • ${student.birth_place}` : ""}
                     </p>
                     <p className="mt-0.5 text-[12px] text-[#7A5E52]">
-                      NIPD: {student.nis || "-"} • JK: {genderLabel(student.gender)} • Agama:{" "}
+                      NIPD: {student.nis || "-"} • JK:{" "}
+                      {genderLabel(student.gender)} • Agama:{" "}
                       {student.religion || "-"}
                     </p>
                   </div>
@@ -892,27 +995,91 @@ export default function KepalaSekolahStudentsPage() {
                     }
                   />
 
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="text-[13px] font-bold text-[#6F5549]">
-                      Orang Tua
+                      Orang Tua / Wali
                     </label>
+
                     <select
                       value={form.parent_id}
                       onChange={(event) =>
                         setForm((prev) => ({
                           ...prev,
                           parent_id: event.target.value,
+                          parent_manual_name: event.target.value
+                            ? ""
+                            : prev.parent_manual_name,
+                          parent_manual_phone: event.target.value
+                            ? ""
+                            : prev.parent_manual_phone,
+                          parent_manual_email: event.target.value
+                            ? ""
+                            : prev.parent_manual_email,
                         }))
                       }
                       className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                     >
-                      <option value="">Pilih orang tua</option>
+                      <option value="">Pilih orang tua yang sudah ada</option>
                       {parents.map((parent) => (
                         <option key={parent.id} value={parent.id}>
                           {parent.full_name || parent.email || "Tanpa Nama"}
+                          {parent.phone ? ` — ${parent.phone}` : ""}
                         </option>
                       ))}
                     </select>
+
+                    <div className="mt-4 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] p-4">
+                      <p className="text-[13px] font-bold text-[#6F5549]">
+                        Tambah Manual Orang Tua / Wali
+                      </p>
+
+                      <p className="mt-1 text-[12px] text-[#7D5E50]">
+                        Jika orang tua belum ada di pilihan atas, isi manual di
+                        bawah. Saat Save Student, data orang tua otomatis masuk
+                        ke database.
+                      </p>
+
+                      <div className="mt-4 grid gap-4 md:grid-cols-3">
+                        <FormInput
+                          label="Nama Orang Tua / Wali"
+                          value={form.parent_manual_name}
+                          placeholder="Contoh: Dedi"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_name: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+
+                        <FormInput
+                          label="No HP / WhatsApp"
+                          value={form.parent_manual_phone}
+                          placeholder="Contoh: 08123456789"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_phone: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+
+                        <FormInput
+                          label="Email Orang Tua"
+                          value={form.parent_manual_email}
+                          placeholder="Opsional"
+                          onChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              parent_manual_email: value,
+                              parent_id: value.trim() ? "" : prev.parent_id,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div>
