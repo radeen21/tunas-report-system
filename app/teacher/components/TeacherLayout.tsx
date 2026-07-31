@@ -10,7 +10,6 @@ import {
   CalendarDays,
   CheckSquare,
   ClipboardList,
-  Clock,
   FileText,
   GalleryHorizontal,
   LayoutGrid,
@@ -34,7 +33,6 @@ type ActiveMenu =
   | "RPP"
   | "Program Semester"
   | "Kerangka Materi"
-  | "Alokasi Waktu"
   | "Gallery Upload";
 
 type TeacherLayoutProps = {
@@ -70,7 +68,6 @@ const menus: MenuItem[] = [
     href: "/teacher/kerangka-materi",
     icon: FileText,
   },
-  { name: "Alokasi Waktu", href: "/teacher/alokasi-waktu", icon: Clock },
   { name: "Gallery Upload", href: "/teacher/gallery", icon: GalleryHorizontal },
 ];
 
@@ -104,6 +101,7 @@ export default function TeacherLayout({
   children,
   buttonLabel,
 }: TeacherLayoutProps) {
+  void activeMenu;
   void buttonLabel;
 
   const pathname = usePathname();

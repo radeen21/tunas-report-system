@@ -74,12 +74,15 @@ type AcademicReportRow = {
   final_grade?: number | null;
   predicate?: string | null;
 
+  report_file_url?: string | null;
+
   approval_status?: "draft" | "pending" | "approved" | "rejected" | string | null;
   submitted_at?: string | null;
   approved_at?: string | null;
   rejected_at?: string | null;
   rejection_note?: string | null;
   updated_at?: string | null;
+  created_at?: string | null;
 };
 
 type EnrichedReport = AcademicReportRow & {
@@ -107,13 +110,17 @@ function normalizeText(value?: string | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatNumber(value?: number | null) {
@@ -149,12 +156,14 @@ function getStatusLabel(status?: string | null) {
   if (status === "approved") return "Approved";
   if (status === "pending") return "Pending Approval";
   if (status === "rejected") return "Rejected";
+
   return "Draft";
 }
 
 function getReportTypeLabel(type?: string | null) {
   if (type === "mid_semester") return "Mid Semester";
   if (type === "semester") return "Semester";
+
   return "Bulanan";
 }
 
@@ -167,20 +176,45 @@ function formatExportDateName() {
   return `${year}-${month}-${day}`;
 }
 
-function escapeCsvCell(value: string | number | null | undefined) {
-  const text = String(value ?? "-").replace(/"/g, '""');
+function escapeExcelCell(value: string | number | null | undefined) {
+  return String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
-  return `"${text}"`;
+function downloadHtmlAsExcel(filename: string, html: string) {
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  URL.revokeObjectURL(url);
+}
+
+function canReview(status?: string | null) {
+  return status === "pending";
 }
 
 export default function KepalaSekolahReportsPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [reports, setReports] = useState<EnrichedReport[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
@@ -196,50 +230,81 @@ export default function KepalaSekolahReportsPage() {
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const [teachersRes, studentsRes, subjectsRes, reportsRes] =
-      await Promise.all([
-        supabase.from("teachers").select("*").order("full_name"),
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
-        supabase
-          .from("academic_reports")
-          .select("*")
-          .order("report_period", { ascending: false }),
-      ]);
+    try {
+      const [teachersRes, studentsRes, subjectsRes, reportsRes] =
+        await Promise.all([
+          supabase.from("teachers").select("*").order("full_name"),
+          supabase.from("students").select("*").order("full_name"),
+          supabase.from("subjects").select("*").order("name"),
+          supabase
+            .from("academic_reports")
+            .select("*")
+            .order("updated_at", { ascending: false }),
+        ]);
 
-    const teachersData = (teachersRes.data || []) as TeacherRow[];
-    const studentsData = (studentsRes.data || []) as StudentRow[];
-    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-    const reportsData = (reportsRes.data || []) as AcademicReportRow[];
+      if (teachersRes.error) throw new Error(teachersRes.error.message);
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (reportsRes.error) throw new Error(reportsRes.error.message);
 
-    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
-    const studentMap = new Map(studentsData.map((student) => [student.id, student]));
-    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const studentsData = (studentsRes.data || []) as StudentRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const reportsData = (reportsRes.data || []) as AcademicReportRow[];
 
-    const enrichedReports: EnrichedReport[] = reportsData.map((report) => {
-      const teacher = report.teacher_id ? teacherMap.get(report.teacher_id) : null;
-      const student = report.student_id ? studentMap.get(report.student_id) : null;
-      const subject = report.subject_id ? subjectMap.get(report.subject_id) : null;
+      const teacherMap = new Map(
+        teachersData.map((teacher) => [teacher.id, teacher])
+      );
 
-      return {
-        ...report,
-        teacher_name: teacher?.full_name || "-",
-        student_name: student?.full_name || "-",
-        student_grade: student?.grade || "-",
-        student_level: student?.level || "-",
-        student_nis: student?.nis || "-",
-        student_nisn: student?.nisn || "-",
-        subject_name: subject?.name || "-",
-      };
-    });
+      const studentMap = new Map(
+        studentsData.map((student) => [student.id, student])
+      );
 
-    setTeachers(teachersData);
-    setStudents(studentsData);
-    setSubjects(subjectsData);
-    setReports(enrichedReports);
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
 
-    setLoading(false);
+      const enrichedReports: EnrichedReport[] = reportsData.map((report) => {
+        const teacher = report.teacher_id
+          ? teacherMap.get(report.teacher_id)
+          : null;
+
+        const student = report.student_id
+          ? studentMap.get(report.student_id)
+          : null;
+
+        const subject = report.subject_id
+          ? subjectMap.get(report.subject_id)
+          : null;
+
+        return {
+          ...report,
+          teacher_name: teacher?.full_name || "-",
+          student_name: student?.full_name || "-",
+          student_grade: student?.grade || "-",
+          student_level: student?.level || "-",
+          student_nis: student?.nis || "-",
+          student_nisn: student?.nisn || "-",
+          subject_name: subject?.name || "-",
+        };
+      });
+
+      setTeachers(teachersData);
+      setReports(enrichedReports);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data laporan akademik.");
+      }
+
+      setTeachers([]);
+      setReports([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -250,27 +315,27 @@ export default function KepalaSekolahReportsPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
-        fetchData
+        () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -291,6 +356,10 @@ export default function KepalaSekolahReportsPage() {
       const matchSearch =
         !q ||
         normalizeText(report.student_name).includes(q) ||
+        normalizeText(report.student_nis).includes(q) ||
+        normalizeText(report.student_nisn).includes(q) ||
+        normalizeText(report.student_grade).includes(q) ||
+        normalizeText(report.student_level).includes(q) ||
         normalizeText(report.teacher_name).includes(q) ||
         normalizeText(report.subject_name).includes(q) ||
         normalizeText(report.report_period).includes(q) ||
@@ -310,13 +379,16 @@ export default function KepalaSekolahReportsPage() {
   }, [reports, search, statusFilter, teacherFilter, periodFilter]);
 
   const summary = useMemo(() => {
-    const draft = reports.filter((report) => getStatusKey(report) === "draft").length;
-    const pending = reports.filter(
-      (report) => getStatusKey(report) === "pending"
-    ).length;
+    const draft = reports.filter((report) => getStatusKey(report) === "draft")
+      .length;
+
+    const pending = reports.filter((report) => getStatusKey(report) === "pending")
+      .length;
+
     const approved = reports.filter(
       (report) => getStatusKey(report) === "approved"
     ).length;
+
     const rejected = reports.filter(
       (report) => getStatusKey(report) === "rejected"
     ).length;
@@ -331,6 +403,13 @@ export default function KepalaSekolahReportsPage() {
   }, [reports]);
 
   async function handleApprove(report: EnrichedReport) {
+    const status = getStatusKey(report);
+
+    if (!canReview(status)) {
+      setErrorMessage("Hanya laporan pending yang bisa di-approve.");
+      return;
+    }
+
     const confirmApprove = confirm(
       `Approve laporan ${report.student_name} - ${report.subject_name}?`
     );
@@ -338,36 +417,55 @@ export default function KepalaSekolahReportsPage() {
     if (!confirmApprove) return;
 
     setProcessing(true);
+    setErrorMessage("");
+    setSuccessMessage("");
 
-    const now = new Date().toISOString();
+    try {
+      const now = new Date().toISOString();
 
-    const { error } = await supabase
-      .from("academic_reports")
-      .update({
-        approval_status: "approved",
-        status: "published",
-        approved_at: now,
-        rejected_at: null,
-        rejection_note: null,
-        updated_at: now,
-      })
-      .eq("id", report.id);
+      const { error } = await supabase
+        .from("academic_reports")
+        .update({
+          approval_status: "approved",
+          status: "published",
+          approved_at: now,
+          rejected_at: null,
+          rejection_note: null,
+          updated_at: now,
+        })
+        .eq("id", report.id);
 
-    if (error) {
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("Laporan akademik berhasil di-approve.");
+      setSelectedReport(null);
+      setRejectReport(null);
+      setRejectionNote("");
+
+      await fetchData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal approve laporan akademik.");
+      }
+    } finally {
       setProcessing(false);
-      alert(`Gagal approve laporan: ${error.message}`);
-      return;
     }
-
-    await fetchData();
-
-    setProcessing(false);
-    setSelectedReport(null);
   }
 
   function openRejectModal(report: EnrichedReport) {
+    const status = getStatusKey(report);
+
+    if (!canReview(status)) {
+      setErrorMessage("Hanya laporan pending yang bisa direject/revisi.");
+      return;
+    }
+
     setRejectReport(report);
     setRejectionNote("");
+    setErrorMessage("");
+    setSuccessMessage("");
   }
 
   async function handleReject() {
@@ -385,32 +483,40 @@ export default function KepalaSekolahReportsPage() {
     if (!confirmReject) return;
 
     setProcessing(true);
+    setErrorMessage("");
+    setSuccessMessage("");
 
-    const now = new Date().toISOString();
+    try {
+      const now = new Date().toISOString();
 
-    const { error } = await supabase
-      .from("academic_reports")
-      .update({
-        approval_status: "rejected",
-        status: "rejected",
-        rejected_at: now,
-        rejection_note: rejectionNote.trim(),
-        updated_at: now,
-      })
-      .eq("id", rejectReport.id);
+      const { error } = await supabase
+        .from("academic_reports")
+        .update({
+          approval_status: "rejected",
+          status: "rejected",
+          rejected_at: now,
+          rejection_note: rejectionNote.trim(),
+          updated_at: now,
+        })
+        .eq("id", rejectReport.id);
 
-    if (error) {
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("Laporan akademik berhasil dikembalikan untuk revisi.");
+      setRejectReport(null);
+      setRejectionNote("");
+      setSelectedReport(null);
+
+      await fetchData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal reject laporan akademik.");
+      }
+    } finally {
       setProcessing(false);
-      alert(`Gagal reject laporan: ${error.message}`);
-      return;
     }
-
-    await fetchData();
-
-    setProcessing(false);
-    setRejectReport(null);
-    setRejectionNote("");
-    setSelectedReport(null);
   }
 
   function handleExportData() {
@@ -425,7 +531,7 @@ export default function KepalaSekolahReportsPage() {
       return {
         No: index + 1,
         "Nama Siswa": report.student_name,
-        NIS: report.student_nis,
+        NIPD: report.student_nis,
         NISN: report.student_nisn,
         Level: report.student_level,
         Kelas: report.student_grade,
@@ -433,23 +539,24 @@ export default function KepalaSekolahReportsPage() {
         "Mata Pelajaran": report.subject_name,
         Periode: report.report_period || "-",
         "Jenis Laporan": getReportTypeLabel(report.report_type),
-        "UH 1": formatNumber(report.uh_1 || report.uh_score),
+        "UH 1": formatNumber(report.uh_1 ?? report.uh_score),
         "UH 2": formatNumber(report.uh_2),
         "UH 3": formatNumber(report.uh_3),
         "UH 4": formatNumber(report.uh_4),
-        "Rata-rata UH": formatNumber(report.average_uh || report.uh_score),
-        "Tugas 1": formatNumber(report.task_1 || report.task_score),
+        "Rata-rata UH": formatNumber(report.average_uh ?? report.uh_score),
+        "Tugas 1": formatNumber(report.task_1 ?? report.task_score),
         "Tugas 2": formatNumber(report.task_2),
         "Tugas 3": formatNumber(report.task_3),
         "Tugas 4": formatNumber(report.task_4),
         "Tugas 5": formatNumber(report.task_5),
-        "Rata-rata Tugas": formatNumber(report.average_task || report.task_score),
-        UTS: formatNumber(report.mid_score || report.uts_score),
-        UAS: formatNumber(report.final_exam_score || report.uas_score),
+        "Rata-rata Tugas": formatNumber(report.average_task ?? report.task_score),
+        UTS: formatNumber(report.mid_score ?? report.uts_score),
+        UAS: formatNumber(report.final_exam_score ?? report.uas_score),
         "Nilai Proses": formatNumber(report.process_score),
-        "Nilai Akhir": formatNumber(report.final_grade || report.final_score),
+        "Nilai Akhir": formatNumber(report.final_grade ?? report.final_score),
         Predikat: report.predicate || report.description || "-",
         "Catatan Guru": report.teacher_comment || "-",
+        "File Laporan": report.report_file_url || "-",
         Status: getStatusLabel(status),
         "Submitted At": formatDateTime(report.submitted_at),
         "Approved At": formatDateTime(report.approved_at),
@@ -460,32 +567,93 @@ export default function KepalaSekolahReportsPage() {
 
     const headers = Object.keys(rows[0]);
 
-    const csvContent = [
-      headers.map((header) => escapeCsvCell(header)).join(","),
-      ...rows.map((row) =>
-        headers
-          .map((header) => {
-            const value = row[header as keyof typeof row];
-            return escapeCsvCell(value);
-          })
-          .join(",")
-      ),
-    ].join("\n");
+    const tableRows = rows
+      .map((row) => {
+        return `
+          <tr>
+            ${headers
+              .map((header) => {
+                const value = row[header as keyof typeof row];
+                return `<td>${escapeExcelCell(value)}</td>`;
+              })
+              .join("")}
+          </tr>
+        `;
+      })
+      .join("");
 
-    const blob = new Blob(["\uFEFF" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
+    const html = `
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <style>
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              font-family: Arial, sans-serif;
+              font-size: 12px;
+            }
 
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+            th {
+              background: #7A1F2B;
+              color: #ffffff;
+              font-weight: bold;
+              border: 1px solid #dddddd;
+              padding: 8px;
+              text-align: left;
+              white-space: nowrap;
+            }
 
-    link.href = url;
-    link.download = `laporan-akademik-${formatExportDateName()}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+            td {
+              border: 1px solid #dddddd;
+              padding: 8px;
+              vertical-align: top;
+              mso-number-format: "\\@";
+            }
 
-    URL.revokeObjectURL(url);
+            .title {
+              font-size: 18px;
+              font-weight: bold;
+              color: #2B1B18;
+              margin-bottom: 6px;
+            }
+
+            .subtitle {
+              font-size: 12px;
+              color: #6B4A3A;
+              margin-bottom: 16px;
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="title">Laporan Akademik</div>
+          <div class="subtitle">
+            Export tanggal ${formatDateTime(new Date().toISOString())} |
+            Total data: ${filteredReports.length}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                ${headers
+                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
+                  .join("")}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    downloadHtmlAsExcel(
+      `laporan-akademik-${formatExportDateName()}.xls`,
+      html
+    );
   }
 
   return (
@@ -505,8 +673,8 @@ export default function KepalaSekolahReportsPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Review laporan akademik yang dikirim guru. Kepala sekolah dapat
-              approve atau reject laporan sebelum tampil ke orang tua.
+              Review laporan akademik yang dikirim guru. Kepala Sekolah/Admin
+              dapat approve atau reject laporan sebelum tampil ke orang tua.
             </p>
           </div>
 
@@ -515,9 +683,21 @@ export default function KepalaSekolahReportsPage() {
             onClick={handleExportData}
             className="h-11 w-fit rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] shadow-sm transition hover:bg-[#FFF8EF]"
           >
-            Export Data
+            Export Excel
           </button>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] leading-6 text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -527,6 +707,7 @@ export default function KepalaSekolahReportsPage() {
             info="Data"
             tone="pink"
           />
+
           <SummaryCard
             icon={<Send className="h-5 w-5" />}
             label="Pending Approval"
@@ -534,6 +715,7 @@ export default function KepalaSekolahReportsPage() {
             info="Menunggu"
             tone="orange"
           />
+
           <SummaryCard
             icon={<CheckCircle2 className="h-5 w-5" />}
             label="Approved"
@@ -541,6 +723,7 @@ export default function KepalaSekolahReportsPage() {
             info="Disetujui"
             tone="green"
           />
+
           <SummaryCard
             icon={<XCircle className="h-5 w-5" />}
             label="Rejected"
@@ -557,7 +740,7 @@ export default function KepalaSekolahReportsPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari siswa, guru, mapel, periode, atau catatan..."
+                placeholder="Cari siswa, NIPD, NISN, guru, mapel, periode, atau catatan..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -570,7 +753,7 @@ export default function KepalaSekolahReportsPage() {
               <option value="Semua Guru">Semua Guru</option>
               {teachers.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
-                  {teacher.full_name}
+                  {teacher.full_name || "-"}
                 </option>
               ))}
             </select>
@@ -609,7 +792,7 @@ export default function KepalaSekolahReportsPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1250px] border-collapse">
+            <table className="w-full min-w-[1320px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="px-6 py-4">Siswa</th>
@@ -622,6 +805,7 @@ export default function KepalaSekolahReportsPage() {
                   <th className="px-6 py-4">UAS</th>
                   <th className="px-6 py-4">Nilai Akhir</th>
                   <th className="px-6 py-4">Predikat</th>
+                  <th className="px-6 py-4">File</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Aksi</th>
                 </tr>
@@ -631,7 +815,7 @@ export default function KepalaSekolahReportsPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat laporan akademik...
@@ -640,7 +824,7 @@ export default function KepalaSekolahReportsPage() {
                 ) : filteredReports.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada laporan akademik.
@@ -662,9 +846,15 @@ export default function KepalaSekolahReportsPage() {
                             </div>
 
                             <div>
-                              <p className="font-extrabold">{report.student_name}</p>
+                              <p className="font-extrabold">
+                                {report.student_name}
+                              </p>
                               <p className="mt-1 text-[12px] text-[#6F5549]">
                                 {report.student_level} — {report.student_grade}
+                              </p>
+                              <p className="mt-1 text-[12px] text-[#6F5549]">
+                                NIPD: {report.student_nis || "-"} • NISN:{" "}
+                                {report.student_nisn || "-"}
                               </p>
                             </div>
                           </div>
@@ -677,38 +867,60 @@ export default function KepalaSekolahReportsPage() {
                         <td className="px-6 py-4">{report.subject_name}</td>
 
                         <td className="px-6 py-4">
-                          <p className="font-bold">{report.report_period || "-"}</p>
+                          <p className="font-bold">
+                            {report.report_period || "-"}
+                          </p>
                           <p className="mt-1 text-[12px] text-[#6F5549]">
                             {getReportTypeLabel(report.report_type)}
                           </p>
                         </td>
 
                         <td className="px-6 py-4">
-                          {formatNumber(report.average_uh || report.uh_score)}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          {formatNumber(report.average_task || report.task_score)}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          {formatNumber(report.mid_score || report.uts_score)}
+                          {formatNumber(report.average_uh ?? report.uh_score)}
                         </td>
 
                         <td className="px-6 py-4">
                           {formatNumber(
-                            report.final_exam_score || report.uas_score
+                            report.average_task ?? report.task_score
+                          )}
+                        </td>
+
+                        <td className="px-6 py-4">
+                          {formatNumber(report.mid_score ?? report.uts_score)}
+                        </td>
+
+                        <td className="px-6 py-4">
+                          {formatNumber(
+                            report.final_exam_score ?? report.uas_score
                           )}
                         </td>
 
                         <td className="px-6 py-4 font-extrabold">
-                          {formatNumber(report.final_grade || report.final_score)}
+                          {formatNumber(
+                            report.final_grade ?? report.final_score
+                          )}
                         </td>
 
                         <td className="px-6 py-4">
                           <PredicateBadge
                             predicate={report.predicate || report.description}
                           />
+                        </td>
+
+                        <td className="px-6 py-4">
+                          {report.report_file_url ? (
+                            <a
+                              href={report.report_file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                            >
+                              <FileText className="h-4 w-4" />
+                              File
+                            </a>
+                          ) : (
+                            "-"
+                          )}
                         </td>
 
                         <td className="px-6 py-4">
@@ -726,7 +938,7 @@ export default function KepalaSekolahReportsPage() {
                               Detail
                             </button>
 
-                            {status === "pending" ? (
+                            {canReview(status) ? (
                               <>
                                 <button
                                   type="button"
@@ -877,16 +1089,13 @@ function ReportDetailModal({
           <div className="grid gap-4 md:grid-cols-4">
             <DetailSummaryCard
               label="Nilai Akhir"
-              value={formatNumber(report.final_grade || report.final_score)}
+              value={formatNumber(report.final_grade ?? report.final_score)}
             />
             <DetailSummaryCard
               label="Predikat"
               value={report.predicate || report.description || "-"}
             />
-            <DetailSummaryCard
-              label="Status"
-              value={getStatusLabel(status)}
-            />
+            <DetailSummaryCard label="Status" value={getStatusLabel(status)} />
             <DetailSummaryCard
               label="Jenis"
               value={getReportTypeLabel(report.report_type)}
@@ -896,6 +1105,8 @@ function ReportDetailModal({
           <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
             <div className="grid gap-4 md:grid-cols-3">
               <InfoItem label="Siswa" value={report.student_name} />
+              <InfoItem label="NIPD" value={report.student_nis} />
+              <InfoItem label="NISN" value={report.student_nisn} />
               <InfoItem
                 label="Kelas"
                 value={`${report.student_level} — ${report.student_grade}`}
@@ -908,30 +1119,48 @@ function ReportDetailModal({
                 value={formatDateTime(report.submitted_at)}
               />
             </div>
+
+            {report.report_file_url ? (
+              <a
+                href={report.report_file_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-5 inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCC8B6] px-4 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+              >
+                <FileText className="h-4 w-4" />
+                Buka File Laporan
+              </a>
+            ) : null}
           </div>
 
           <div className="grid gap-5 xl:grid-cols-2">
             <ScoreBox title="Nilai UH">
-              <ScoreRow label="UH 1" value={formatNumber(report.uh_1 || report.uh_score)} />
+              <ScoreRow
+                label="UH 1"
+                value={formatNumber(report.uh_1 ?? report.uh_score)}
+              />
               <ScoreRow label="UH 2" value={formatNumber(report.uh_2)} />
               <ScoreRow label="UH 3" value={formatNumber(report.uh_3)} />
               <ScoreRow label="UH 4" value={formatNumber(report.uh_4)} />
               <ScoreRow
                 label="Rata-rata UH"
-                value={formatNumber(report.average_uh || report.uh_score)}
+                value={formatNumber(report.average_uh ?? report.uh_score)}
                 bold
               />
             </ScoreBox>
 
             <ScoreBox title="Nilai Tugas">
-              <ScoreRow label="Tugas 1" value={formatNumber(report.task_1 || report.task_score)} />
+              <ScoreRow
+                label="Tugas 1"
+                value={formatNumber(report.task_1 ?? report.task_score)}
+              />
               <ScoreRow label="Tugas 2" value={formatNumber(report.task_2)} />
               <ScoreRow label="Tugas 3" value={formatNumber(report.task_3)} />
               <ScoreRow label="Tugas 4" value={formatNumber(report.task_4)} />
               <ScoreRow label="Tugas 5" value={formatNumber(report.task_5)} />
               <ScoreRow
                 label="Rata-rata Tugas"
-                value={formatNumber(report.average_task || report.task_score)}
+                value={formatNumber(report.average_task ?? report.task_score)}
                 bold
               />
             </ScoreBox>
@@ -940,11 +1169,11 @@ function ReportDetailModal({
           <ScoreBox title="Nilai Ujian dan Proses">
             <ScoreRow
               label="UTS"
-              value={formatNumber(report.mid_score || report.uts_score)}
+              value={formatNumber(report.mid_score ?? report.uts_score)}
             />
             <ScoreRow
               label="UAS"
-              value={formatNumber(report.final_exam_score || report.uas_score)}
+              value={formatNumber(report.final_exam_score ?? report.uas_score)}
             />
             <ScoreRow
               label="Proses KBM"
@@ -952,7 +1181,7 @@ function ReportDetailModal({
             />
             <ScoreRow
               label="Nilai Akhir"
-              value={formatNumber(report.final_grade || report.final_score)}
+              value={formatNumber(report.final_grade ?? report.final_score)}
               bold
             />
           </ScoreBox>
@@ -988,7 +1217,7 @@ function ReportDetailModal({
               Tutup Detail
             </button>
 
-            {status === "pending" ? (
+            {canReview(status) ? (
               <>
                 <button
                   type="button"
@@ -1100,9 +1329,7 @@ function ScoreBox({
           <GraduationCap className="h-5 w-5" />
         </div>
 
-        <h3 className="text-[16px] font-extrabold text-[#2B1B18]">
-          {title}
-        </h3>
+        <h3 className="text-[16px] font-extrabold text-[#2B1B18]">{title}</h3>
       </div>
 
       <div className="space-y-3">{children}</div>
@@ -1140,10 +1367,10 @@ function StatusBadge({ status }: { status?: string | null }) {
     safe === "approved"
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "pending"
-      ? "bg-[#FFF2B8] text-[#B26A00]"
-      : safe === "rejected"
-      ? "bg-[#FFE4E6] text-[#BE123C]"
-      : "bg-[#F1F5F9] text-[#64748B]";
+        ? "bg-[#FFF2B8] text-[#B26A00]"
+        : safe === "rejected"
+          ? "bg-[#FFE4E6] text-[#BE123C]"
+          : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
     <span
@@ -1161,12 +1388,12 @@ function PredicateBadge({ predicate }: { predicate?: string | null }) {
     safe === "Sangat Baik"
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "Baik"
-      ? "bg-[#D7ECFA] text-[#1779B8]"
-      : safe === "Cukup"
-      ? "bg-[#FFF2B8] text-[#B26A00]"
-      : safe === "Kurang"
-      ? "bg-[#FFE4E6] text-[#BE123C]"
-      : "bg-[#F1F5F9] text-[#64748B]";
+        ? "bg-[#D7ECFA] text-[#1779B8]"
+        : safe === "Cukup"
+          ? "bg-[#FFF2B8] text-[#B26A00]"
+          : safe === "Kurang"
+            ? "bg-[#FFE4E6] text-[#BE123C]"
+            : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
     <span

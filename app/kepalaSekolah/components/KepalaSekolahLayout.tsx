@@ -9,7 +9,6 @@ import {
   CalendarDays,
   CalendarRange,
   ClipboardCheck,
-  Clock,
   FileText,
   GalleryVerticalEnd,
   GraduationCap,
@@ -17,7 +16,6 @@ import {
   ListChecks,
   LogOut,
   PenLine,
-  PlusCircle,
   Search,
   Settings,
   UsersRound,
@@ -36,7 +34,6 @@ type ActiveMenu =
   | "RPP"
   | "Program Semester"
   | "Kerangka Materi"
-  | "Alokasi Waktu"
   | "Gallery"
   | "Settings";
 
@@ -77,11 +74,6 @@ const menus: MenuItem[] = [
     name: "Kerangka Materi",
     icon: ListChecks,
     href: "/kepalaSekolah/kerangka-materi",
-  },
-  {
-    name: "Alokasi Waktu",
-    icon: Clock,
-    href: "/kepalaSekolah/alokasi-waktu",
   },
   { name: "Gallery", icon: GalleryVerticalEnd, href: "/kepalaSekolah/gallery" },
   { name: "Settings", icon: Settings, href: "/kepalaSekolah/settings" },
@@ -192,17 +184,7 @@ export default function KepalaSekolahLayout({
         </nav>
 
         <div className="border-t border-white/10 px-3 py-3">
-          <Link
-            href="/kepalaSekolah/laporan-kbm"
-            className="flex h-10 items-center justify-center gap-2 rounded-xl bg-[#E36F2C] px-3 text-[13px] font-extrabold text-white shadow-sm transition hover:bg-[#D85F20]"
-          >
-            <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-white/80">
-              <PlusCircle size={11} strokeWidth={2.7} />
-            </span>
-            Create New Report
-          </Link>
-
-          <div className="mt-3 flex items-center gap-3 rounded-2xl bg-white/8 px-3 py-3">
+          <div className="flex items-center gap-3 rounded-2xl bg-white/8 px-3 py-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/15 text-[12px] font-extrabold">
               {initials}
             </div>

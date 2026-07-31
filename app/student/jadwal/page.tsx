@@ -7,7 +7,6 @@ import {
   CalendarDays,
   Clock,
   FileText,
-  GraduationCap,
   Search,
   UserRound,
 } from "lucide-react";
@@ -147,11 +146,15 @@ function todayYMD() {
 function formatDate(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(date);
 }
 
 function formatTime(value?: string | null) {
@@ -162,9 +165,13 @@ function formatTime(value?: string | null) {
 function getDayNameFromDate(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     weekday: "long",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(date);
 }
 
 function getInitials(name?: string | null) {
@@ -278,9 +285,14 @@ export default function StudentSchedulePage() {
   const [dateFilter, setDateFilter] = useState("");
 
   async function findStudentByLoggedInUser() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+
+    if (authError) {
+      throw new Error(authError.message);
+    }
 
     const authUserId = authData.user?.id || "";
+
     const authEmail = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
@@ -293,37 +305,41 @@ export default function StudentSchedulePage() {
     if (!authEmail && !authUserId) return null;
 
     if (authUserId) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("students")
         .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
         .eq("user_id", authUserId)
         .limit(1)
         .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (data) return data as StudentRow;
     }
 
     if (authEmail) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("students")
         .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
-        .ilike("email", authEmail)
+        .eq("email", authEmail)
         .limit(1)
         .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (data) return data as StudentRow;
     }
 
     if (authEmail) {
-      const { data: parentData } = await supabase
+      const { data: parentData, error: parentError } = await supabase
         .from("parents")
         .select("id, email")
-        .ilike("email", authEmail)
+        .eq("email", authEmail)
         .limit(1)
         .maybeSingle();
 
+      if (parentError) throw new Error(parentError.message);
+
       if (parentData?.id) {
-        const { data: childData } = await supabase
+        const { data: childData, error: childError } = await supabase
           .from("students")
           .select("id, full_name, level, grade, nis, nisn, email, user_id, parent_id")
           .eq("parent_id", parentData.id)
@@ -331,6 +347,7 @@ export default function StudentSchedulePage() {
           .limit(1)
           .maybeSingle();
 
+        if (childError) throw new Error(childError.message);
         if (childData) return childData as StudentRow;
       }
     }
@@ -465,7 +482,7 @@ export default function StudentSchedulePage() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -531,6 +548,7 @@ export default function StudentSchedulePage() {
 
   const todaySchedules = useMemo(() => {
     const today = todayYMD();
+
     return schedules.filter((schedule) => schedule.schedule_date === today);
   }, [schedules]);
 
@@ -699,6 +717,7 @@ export default function StudentSchedulePage() {
                       <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
                         {group.day}
                       </h2>
+
                       <p className="mt-1 text-[13px] text-[#6F5549]">
                         {group.schedules.length} jadwal
                       </p>
@@ -831,6 +850,7 @@ export default function StudentSchedulePage() {
                     <p className="text-[18px] font-extrabold text-[#2B1B18]">
                       {student?.full_name || "-"}
                     </p>
+
                     <p className="mt-1 text-[13px] text-[#6F5549]">
                       {formatClass(student?.level, student?.grade)}
                     </p>

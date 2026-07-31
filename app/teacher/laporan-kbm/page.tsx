@@ -6,25 +6,26 @@ import TeacherLayout from "../components/TeacherLayout";
 
 type Teacher = {
   id: string;
-  full_name: string;
+  full_name: string | null;
   email: string | null;
-  phone: string | null;
-  teacher_code: string | null;
-  subjects: string[] | null;
+  phone?: string | null;
+  teacher_code?: string | null;
+  subjects?: string[] | string | null;
 };
 
-type StudentRelation = {
+type Student = {
   id: string;
-  full_name: string;
-  grade: string | null;
-  level: string | null;
+  full_name: string | null;
   nis: string | null;
   nisn: string | null;
+  level: string | null;
+  grade: string | null;
+  homeroom_teacher_id?: string | null;
 };
 
-type SubjectRelation = {
+type Subject = {
   id: string;
-  name: string;
+  name: string | null;
   level: string | null;
   grade: string | null;
 };
@@ -44,84 +45,19 @@ type KbmReportRow = {
   teacher_note: string | null;
   status: string | null;
   created_at: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
 };
 
-type KbmReport = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  report_date: string | null;
-  class_level: string | null;
-  semester: string | null;
-  chapter: string | null;
-  material_topic: string | null;
-  learning_issue: string | null;
-  solution: string | null;
-  teacher_note: string | null;
-  status: string | null;
-  created_at: string | null;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
-};
-
-type Student = {
-  id: string;
-  full_name: string;
-  nis: string | null;
-  nisn: string | null;
-  level: string | null;
-  grade: string | null;
-  homeroom_teacher_id: string | null;
-};
-
-type Subject = {
-  id: string;
-  name: string;
-  level: string | null;
-  grade: string | null;
-};
-
-type ScheduleOptionRow = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  day_name: string | null;
-  session_name: string | null;
-  material_topic: string | null;
-  semester: string | null;
-  curriculum_chapter_id?: string | null;
-  curriculum_sub_chapter_id?: string | null;
-  students: StudentRelation | StudentRelation[] | null;
-  subjects: SubjectRelation | SubjectRelation[] | null;
-};
-
-type ScheduleOption = {
-  id: string;
-  student_id: string | null;
-  subject_id: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  day_name: string | null;
-  session_name: string | null;
-  material_topic: string | null;
-  semester: string | null;
-  chapter_title: string;
-  sub_chapter_title: string;
-  students: StudentRelation | null;
-  subjects: SubjectRelation | null;
+type EnrichedKbmReport = KbmReportRow & {
+  student_name: string;
+  student_nis: string;
+  student_nisn: string;
+  student_level: string;
+  student_grade: string;
+  subject_name: string;
 };
 
 type KbmForm = {
   id: string;
-  schedule_id: string;
   student_id: string;
   subject_id: string;
   report_date: string;
@@ -137,33 +73,60 @@ type KbmForm = {
 
 const initialForm: KbmForm = {
   id: "",
-  schedule_id: "",
   student_id: "",
   subject_id: "",
   report_date: new Date().toISOString().slice(0, 10),
   class_level: "",
-  semester: "Genap",
+  semester: "Ganjil",
   chapter: "",
   material_topic: "",
   learning_issue: "",
   solution: "",
   teacher_note: "",
-  status: "pending_review",
+  status: "draft",
 };
 
-function normalizeRelation<T>(value: T | T[] | null): T | null {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
-}
+const statusOptions = [
+  "Semua Status",
+  "draft",
+  "pending_review",
+  "approved",
+  "revision",
+  "published",
+];
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function formatDate(date: string | null) {
   if (!date) return "-";
 
-  const parsedDate = new Date(date);
+  const parsedDate = new Date(`${date}T00:00:00`);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
 
   return parsedDate.toLocaleDateString("id-ID", {
     day: "2-digit",
@@ -172,25 +135,13 @@ function formatDate(date: string | null) {
   });
 }
 
-function formatTime(time?: string | null) {
-  if (!time) return "-";
-  return time.slice(0, 5);
-}
-
-function getScheduleLabel(schedule: ScheduleOption) {
-  return [
-    formatDate(schedule.schedule_date),
-    `${formatTime(schedule.start_time)}-${formatTime(schedule.end_time)}`,
-    schedule.students?.full_name || "-",
-    schedule.subjects?.name || "-",
-  ].join(" • ");
-}
-
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function getInitials(name: string) {
+function getInitials(name?: string | null) {
+  if (!name) return "-";
+
   return name
     .split(" ")
     .filter(Boolean)
@@ -222,12 +173,66 @@ function canEditReport(status: string | null) {
   return !status || status === "draft" || status === "revision";
 }
 
+function formatTeacherSubject(subjects: Teacher["subjects"]) {
+  if (!subjects) return "Guru";
+
+  if (Array.isArray(subjects)) {
+    return `Guru Mapel — ${subjects.slice(0, 4).join(", ")}`;
+  }
+
+  return `Guru Mapel — ${subjects}`;
+}
+
+function normalizeSubjects(subjects: Teacher["subjects"]) {
+  if (!subjects) return [];
+
+  if (Array.isArray(subjects)) {
+    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
+  }
+
+  return subjects
+    .split(",")
+    .map((subject) => normalizeText(subject))
+    .filter(Boolean);
+}
+
+function getGradeNumber(value?: string | null) {
+  const match = (value || "").match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function isAllGrade(value?: string | null) {
+  const safe = normalizeText(value);
+
+  return (
+    !safe ||
+    safe === "all" ||
+    safe === "all grade" ||
+    safe === "semua" ||
+    safe === "semua kelas"
+  );
+}
+
+function isMathSubject(subject?: Subject | null) {
+  return normalizeText(subject?.name).includes("math");
+}
+
+function getSubjectLabel(subject: Subject) {
+  const grade = subject.grade || "All Grade";
+  const level = normalizeLevel(subject.level);
+
+  if (subject.level || subject.grade) {
+    return `${subject.name || "-"} — ${level} ${grade}`;
+  }
+
+  return subject.name || "-";
+}
+
 export default function TeacherLaporanKbmPage() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [reports, setReports] = useState<KbmReport[]>([]);
+  const [reports, setReports] = useState<EnrichedKbmReport[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleOption[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -241,34 +246,37 @@ export default function TeacherLaporanKbmPage() {
   const [form, setForm] = useState<KbmForm>(initialForm);
 
   async function fetchActiveTeacher() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    const email =
+    if (authError) {
+      throw new Error(authError.message);
+    }
+
+    const email = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
       "";
 
     if (email) {
       const { data, error } = await supabase
         .from("teachers")
         .select("id, full_name, email, phone, teacher_code, subjects")
-        .eq("email", email)
+        .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
       if (error) throw new Error(error.message);
-
-      if (data) {
-        setTeacher(data as Teacher);
-        return data as Teacher;
-      }
+      if (data) return data as Teacher;
     }
-
-    const teacherCode =
-      localStorage.getItem("hstkb_teacher_code") ||
-      localStorage.getItem("teacher_code") ||
-      "";
 
     if (teacherCode) {
       const { data, error } = await supabase
@@ -279,175 +287,10 @@ export default function TeacherLaporanKbmPage() {
         .maybeSingle();
 
       if (error) throw new Error(error.message);
-
-      if (data) {
-        setTeacher(data as Teacher);
-        return data as Teacher;
-      }
+      if (data) return data as Teacher;
     }
 
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("teacher_code", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-
-    setTeacher((data as Teacher) || null);
-
-    return (data as Teacher) || null;
-  }
-
-  async function fetchStudents(teacherId: string) {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, full_name, nis, nisn, level, grade, homeroom_teacher_id")
-      .eq("homeroom_teacher_id", teacherId)
-      .order("full_name", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    setStudents(data || []);
-  }
-
-  async function fetchSubjects() {
-    const { data, error } = await supabase
-      .from("subjects")
-      .select("id, name, level, grade")
-      .order("name", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    setSubjects(data || []);
-  }
-
-  async function fetchSchedules(teacherId: string) {
-    const { data, error } = await supabase
-      .from("schedules")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        schedule_date,
-        start_time,
-        end_time,
-        day_name,
-        session_name,
-        material_topic,
-        semester,
-        curriculum_chapter_id,
-        curriculum_sub_chapter_id,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("schedule_date", { ascending: false })
-      .order("start_time", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as ScheduleOptionRow[];
-
-    const normalizedSchedules: ScheduleOption[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      subject_id: item.subject_id,
-      schedule_date: item.schedule_date,
-      start_time: item.start_time,
-      end_time: item.end_time,
-      day_name: item.day_name,
-      session_name: item.session_name,
-      material_topic: item.material_topic,
-      semester: item.semester,
-      chapter_title: item.curriculum_chapter_id || "",
-      sub_chapter_title: item.curriculum_sub_chapter_id || "",
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setSchedules(normalizedSchedules);
-  }
-
-  async function fetchReports(teacherId: string) {
-    const { data, error } = await supabase
-      .from("kbm_reports")
-      .select(
-        `
-        id,
-        student_id,
-        teacher_id,
-        subject_id,
-        report_date,
-        class_level,
-        semester,
-        chapter,
-        material_topic,
-        learning_issue,
-        solution,
-        teacher_note,
-        status,
-        created_at,
-        students (
-          id,
-          full_name,
-          grade,
-          level,
-          nis,
-          nisn
-        ),
-        subjects (
-          id,
-          name,
-          level,
-          grade
-        )
-      `
-      )
-      .eq("teacher_id", teacherId)
-      .order("report_date", { ascending: false })
-      .order("created_at", { ascending: false });
-
-    if (error) throw new Error(error.message);
-
-    const rows = (data || []) as KbmReportRow[];
-
-    const normalizedReports: KbmReport[] = rows.map((item) => ({
-      id: item.id,
-      student_id: item.student_id,
-      teacher_id: item.teacher_id,
-      subject_id: item.subject_id,
-      report_date: item.report_date,
-      class_level: item.class_level,
-      semester: item.semester,
-      chapter: item.chapter,
-      material_topic: item.material_topic,
-      learning_issue: item.learning_issue,
-      solution: item.solution,
-      teacher_note: item.teacher_note,
-      status: item.status,
-      created_at: item.created_at,
-      students: normalizeRelation(item.students),
-      subjects: normalizeRelation(item.subjects),
-    }));
-
-    setReports(normalizedReports);
+    return null;
   }
 
   async function fetchPageData() {
@@ -457,24 +300,79 @@ export default function TeacherLaporanKbmPage() {
     try {
       const activeTeacher = await fetchActiveTeacher();
 
-      if (!activeTeacher) {
-        setErrorMessage("Belum ada data guru di table teachers.");
-        setLoading(false);
+      setTeacher(activeTeacher);
+
+      if (!activeTeacher?.id) {
+        setStudents([]);
+        setSubjects([]);
+        setReports([]);
+        setErrorMessage(
+          "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
+        );
         return;
       }
 
-      await Promise.all([
-        fetchStudents(activeTeacher.id),
-        fetchSubjects(),
-        fetchSchedules(activeTeacher.id),
-        fetchReports(activeTeacher.id),
+      const [studentsRes, subjectsRes, reportsRes] = await Promise.all([
+        supabase.from("students").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("kbm_reports")
+          .select("*")
+          .eq("teacher_id", activeTeacher.id)
+          .order("report_date", { ascending: false })
+          .order("created_at", { ascending: false }),
       ]);
+
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (reportsRes.error) throw new Error(reportsRes.error.message);
+
+      const studentsData = (studentsRes.data || []) as Student[];
+      const subjectsData = (subjectsRes.data || []) as Subject[];
+      const reportsData = (reportsRes.data || []) as KbmReportRow[];
+
+      const studentMap = new Map(
+        studentsData.map((student) => [student.id, student])
+      );
+
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
+
+      const enrichedReports: EnrichedKbmReport[] = reportsData.map((report) => {
+        const student = report.student_id
+          ? studentMap.get(report.student_id)
+          : null;
+
+        const subject = report.subject_id
+          ? subjectMap.get(report.subject_id)
+          : null;
+
+        return {
+          ...report,
+          student_name: student?.full_name || "-",
+          student_nis: student?.nis || "-",
+          student_nisn: student?.nisn || "-",
+          student_level: student?.level || "-",
+          student_grade: student?.grade || "-",
+          subject_name: subject?.name || "-",
+        };
+      });
+
+      setStudents(studentsData);
+      setSubjects(subjectsData);
+      setReports(enrichedReports);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
       } else {
         setErrorMessage("Gagal mengambil data laporan KBM.");
       }
+
+      setTeacher(null);
+      setStudents([]);
+      setSubjects([]);
+      setReports([]);
     } finally {
       setLoading(false);
     }
@@ -500,52 +398,87 @@ export default function TeacherLaporanKbmPage() {
         { event: "*", schema: "public", table: "students" },
         () => fetchPageData()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "subjects" },
+        () => fetchPageData()
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
   const teacherSubjectNames = useMemo(() => {
-    return (teacher?.subjects || [])
-      .map((subject) => normalizeText(subject))
-      .filter(Boolean);
+    return normalizeSubjects(teacher?.subjects);
   }, [teacher]);
 
-  const reportSubjectOptions = useMemo(() => {
-    if (teacherSubjectNames.length === 0) return subjects;
+  const selectedStudent = useMemo(() => {
+    return students.find((student) => student.id === form.student_id) || null;
+  }, [students, form.student_id]);
 
-    const matchedSubjects = subjects.filter((subject) => {
+  const reportSubjectOptions = useMemo(() => {
+    return subjects.filter((subject) => {
       const subjectName = normalizeText(subject.name);
 
-      return teacherSubjectNames.some((teacherSubject) => {
-        return (
-          teacherSubject.includes(subjectName) ||
-          subjectName.includes(teacherSubject)
-        );
-      });
-    });
+      if (isMathSubject(subject) && isAllGrade(subject.grade)) {
+        return false;
+      }
 
-    return matchedSubjects.length > 0 ? matchedSubjects : subjects;
-  }, [subjects, teacherSubjectNames]);
+      const matchTeacherSubject =
+        teacherSubjectNames.length === 0 ||
+        teacherSubjectNames.some((teacherSubject) => {
+          return (
+            teacherSubject === subjectName ||
+            teacherSubject.includes(subjectName) ||
+            subjectName.includes(teacherSubject)
+          );
+        });
+
+      if (!matchTeacherSubject) return false;
+
+      const selectedGradeNumber = getGradeNumber(selectedStudent?.grade);
+      const subjectGradeNumber = getGradeNumber(subject.grade);
+
+      if (!selectedGradeNumber) return true;
+      if (!subjectGradeNumber) return true;
+
+      return selectedGradeNumber === subjectGradeNumber;
+    });
+  }, [subjects, teacherSubjectNames, selectedStudent]);
+
+  useEffect(() => {
+    if (!form.subject_id) return;
+
+    const stillAllowed = reportSubjectOptions.some(
+      (subject) => subject.id === form.subject_id
+    );
+
+    if (!stillAllowed) {
+      setForm((prev) => ({
+        ...prev,
+        subject_id: "",
+      }));
+    }
+  }, [form.subject_id, reportSubjectOptions]);
 
   const filteredReports = useMemo(() => {
-    const keyword = search.toLowerCase();
+    const keyword = normalizeText(search);
 
     return reports.filter((report) => {
       const matchSearch =
         !keyword ||
-        report.students?.full_name?.toLowerCase().includes(keyword) ||
-        report.students?.nis?.toLowerCase().includes(keyword) ||
-        report.students?.nisn?.toLowerCase().includes(keyword) ||
-        report.students?.grade?.toLowerCase().includes(keyword) ||
-        report.subjects?.name?.toLowerCase().includes(keyword) ||
-        report.chapter?.toLowerCase().includes(keyword) ||
-        report.material_topic?.toLowerCase().includes(keyword) ||
-        report.learning_issue?.toLowerCase().includes(keyword) ||
-        report.solution?.toLowerCase().includes(keyword) ||
-        report.teacher_note?.toLowerCase().includes(keyword);
+        normalizeText(report.student_name).includes(keyword) ||
+        normalizeText(report.student_nis).includes(keyword) ||
+        normalizeText(report.student_nisn).includes(keyword) ||
+        normalizeText(report.student_grade).includes(keyword) ||
+        normalizeText(report.subject_name).includes(keyword) ||
+        normalizeText(report.chapter).includes(keyword) ||
+        normalizeText(report.material_topic).includes(keyword) ||
+        normalizeText(report.learning_issue).includes(keyword) ||
+        normalizeText(report.solution).includes(keyword) ||
+        normalizeText(report.teacher_note).includes(keyword);
 
       const matchStatus =
         statusFilter === "Semua Status" || report.status === statusFilter;
@@ -563,27 +496,32 @@ export default function TeacherLaporanKbmPage() {
     (report) => report.status === "pending_review"
   ).length;
 
-  const publishedCount = reports.filter(
-    (report) => report.status === "published"
+  const revisionCount = reports.filter(
+    (report) => report.status === "revision"
   ).length;
 
-  function openModal(student?: Student) {
+  const publishedCount = reports.filter(
+    (report) => report.status === "published" || report.status === "approved"
+  ).length;
+
+  function openCreateModal(student?: Student) {
     setErrorMessage("");
 
     setForm({
       ...initialForm,
       id: "",
-      schedule_id: "",
       student_id: student?.id || "",
-      class_level: student?.grade || "",
+      class_level: student
+        ? formatClass(student.level, student.grade)
+        : "",
       report_date: getTodayDate(),
-      status: "pending_review",
+      status: "draft",
     });
 
     setIsModalOpen(true);
   }
 
-  function openEditModal(report: KbmReport) {
+  function openEditModal(report: EnrichedKbmReport) {
     if (!canEditReport(report.status)) {
       alert("Laporan ini sudah dikirim/review, jadi tidak bisa diedit.");
       return;
@@ -593,12 +531,13 @@ export default function TeacherLaporanKbmPage() {
 
     setForm({
       id: report.id,
-      schedule_id: "",
       student_id: report.student_id || "",
       subject_id: report.subject_id || "",
       report_date: report.report_date || getTodayDate(),
-      class_level: report.class_level || "",
-      semester: report.semester || "Genap",
+      class_level:
+        report.class_level ||
+        formatClass(report.student_level, report.student_grade),
+      semester: report.semester || "Ganjil",
       chapter: report.chapter || "",
       material_topic: report.material_topic || "",
       learning_issue: report.learning_issue || "",
@@ -610,74 +549,60 @@ export default function TeacherLaporanKbmPage() {
     setIsModalOpen(true);
   }
 
-  function handleScheduleChange(scheduleId: string) {
-    const selectedSchedule = schedules.find((schedule) => schedule.id === scheduleId);
+  function handleStudentChange(studentId: string) {
+    const selected = students.find((student) => student.id === studentId);
 
-    if (!selectedSchedule) {
-      setForm({
-        ...form,
-        schedule_id: "",
-        student_id: "",
-        subject_id: "",
-        class_level: "",
-        chapter: "",
-        material_topic: "",
-      });
-      return;
-    }
-
-    setForm({
-      ...form,
-      schedule_id: selectedSchedule.id,
-      student_id: selectedSchedule.student_id || "",
-      subject_id: selectedSchedule.subject_id || "",
-      report_date: selectedSchedule.schedule_date || getTodayDate(),
-      class_level: selectedSchedule.students?.grade || "",
-      semester: selectedSchedule.semester || form.semester || "Genap",
-      chapter: selectedSchedule.session_name || "",
-      material_topic: selectedSchedule.material_topic || "",
-    });
+    setForm((prev) => ({
+      ...prev,
+      student_id: studentId,
+      subject_id: "",
+      class_level: selected
+        ? formatClass(selected.level, selected.grade)
+        : "",
+    }));
   }
 
-  function handleStudentChange(studentId: string) {
-    const selectedStudent = students.find((student) => student.id === studentId);
+  function validateForm() {
+    if (!teacher?.id) {
+      setErrorMessage("Data guru aktif tidak ditemukan.");
+      return false;
+    }
 
-    setForm({
-      ...form,
-      schedule_id: "",
-      student_id: studentId,
-      class_level: selectedStudent?.grade || "",
-    });
+    if (!form.student_id) {
+      setErrorMessage("Siswa wajib dipilih.");
+      return false;
+    }
+
+    if (!form.subject_id) {
+      setErrorMessage("Mata pelajaran wajib dipilih.");
+      return false;
+    }
+
+    if (!form.report_date) {
+      setErrorMessage("Tanggal laporan wajib diisi.");
+      return false;
+    }
+
+    if (!form.class_level.trim()) {
+      setErrorMessage("Kelas wajib diisi.");
+      return false;
+    }
+
+    if (!form.material_topic.trim()) {
+      setErrorMessage("Materi KBM wajib diisi.");
+      return false;
+    }
+
+    return true;
   }
 
   async function handleSubmitReport(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage("");
 
-    if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
-      return;
-    }
+    if (!validateForm()) return;
 
-    if (!form.student_id) {
-      setErrorMessage("Siswa wajib dipilih.");
-      return;
-    }
-
-    if (!form.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
-      return;
-    }
-
-    if (!form.report_date) {
-      setErrorMessage("Tanggal laporan wajib diisi.");
-      return;
-    }
-
-    if (!form.material_topic.trim()) {
-      setErrorMessage("Materi KBM wajib diisi.");
-      return;
-    }
+    if (!teacher?.id) return;
 
     setSaving(true);
 
@@ -687,7 +612,7 @@ export default function TeacherLaporanKbmPage() {
         teacher_id: teacher.id,
         subject_id: form.subject_id,
         report_date: form.report_date,
-        class_level: form.class_level.trim() || null,
+        class_level: form.class_level.trim(),
         semester: form.semester,
         chapter: form.chapter.trim() || null,
         material_topic: form.material_topic.trim(),
@@ -721,10 +646,11 @@ export default function TeacherLaporanKbmPage() {
         ...initialForm,
         id: "",
         report_date: getTodayDate(),
-        status: "pending_review",
+        status: "draft",
       });
+
       setIsModalOpen(false);
-      await fetchReports(teacher.id);
+      await fetchPageData();
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -736,7 +662,7 @@ export default function TeacherLaporanKbmPage() {
     }
   }
 
-  async function handleSubmitDraft(report: KbmReport) {
+  async function handleSubmitDraft(report: EnrichedKbmReport) {
     if (!teacher?.id) return;
 
     if (!canEditReport(report.status)) {
@@ -745,8 +671,8 @@ export default function TeacherLaporanKbmPage() {
     }
 
     const confirmed = confirm(
-      `Kirim laporan "${report.students?.full_name || "-"} — ${
-        report.subjects?.name || "-"
+      `Kirim laporan "${report.student_name || "-"} — ${
+        report.subject_name || "-"
       }" ke Kepala Sekolah?`
     );
 
@@ -763,7 +689,7 @@ export default function TeacherLaporanKbmPage() {
       return;
     }
 
-    await fetchReports(teacher.id);
+    await fetchPageData();
   }
 
   function closeModal() {
@@ -773,15 +699,16 @@ export default function TeacherLaporanKbmPage() {
       ...initialForm,
       id: "",
       report_date: getTodayDate(),
-      status: "pending_review",
+      status: "draft",
     });
   }
 
   return (
     <TeacherLayout
       activeMenu="Laporan KBM"
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={formatTeacherSubject(teacher?.subjects)}
       searchPlaceholder="Cari laporan KBM..."
-      buttonLabel="+ Buat Laporan"
     >
       <div className="w-full max-w-full overflow-hidden">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -801,30 +728,36 @@ export default function TeacherLaporanKbmPage() {
               </span>
               .
             </p>
+
+            <p className="mt-2 max-w-[860px] text-sm leading-6 text-[#6B4A3A]">
+              Laporan KBM ini berdiri sendiri. Tidak wajib terhubung ke Jadwal,
+              Absensi, Program Semester, Bab/Sub Bab, atau RPP.
+            </p>
           </div>
 
           <button
             type="button"
-            onClick={() => openModal()}
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
+            onClick={() => openCreateModal()}
+            disabled={!teacher || saving}
+            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             + Buat Laporan
           </button>
         </div>
 
-        {errorMessage && !isModalOpen && (
+        {errorMessage && !isModalOpen ? (
           <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
           </div>
-        )}
+        ) : null}
 
-        {loading && (
+        {loading ? (
           <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
             Loading laporan KBM...
           </div>
-        )}
+        ) : null}
 
-        {!loading && (
+        {!loading ? (
           <>
             <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
@@ -843,7 +776,7 @@ export default function TeacherLaporanKbmPage() {
               </div>
 
               <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Published</p>
+                <p className="text-sm text-[#6B4A3A]">Approved / Published</p>
                 <p className="mt-4 text-3xl font-bold">{publishedCount}</p>
               </div>
             </div>
@@ -853,7 +786,7 @@ export default function TeacherLaporanKbmPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, mapel, bab, materi, masalah, solusi..."
+                  placeholder="Cari siswa, NIPD, NISN, mapel, bab, materi, masalah, solusi..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -862,12 +795,9 @@ export default function TeacherLaporanKbmPage() {
                   onChange={(event) => setStatusFilter(event.target.value)}
                   className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 >
-                  <option>Semua Status</option>
-                  <option value="draft">draft</option>
-                  <option value="pending_review">pending_review</option>
-                  <option value="approved">approved</option>
-                  <option value="revision">revision</option>
-                  <option value="published">published</option>
+                  {statusOptions.map((status) => (
+                    <option key={status}>{status}</option>
+                  ))}
                 </select>
 
                 <select
@@ -887,11 +817,11 @@ export default function TeacherLaporanKbmPage() {
 
             <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
               <div className="space-y-5">
-                {filteredReports.length === 0 && (
+                {filteredReports.length === 0 ? (
                   <div className="rounded-2xl border border-[#E8D6C1] bg-white p-10 text-center text-sm text-[#6B4A3A] shadow-sm">
                     Belum ada laporan KBM untuk guru ini.
                   </div>
-                )}
+                ) : null}
 
                 {filteredReports.map((report) => (
                   <div
@@ -901,20 +831,24 @@ export default function TeacherLaporanKbmPage() {
                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                       <div className="flex items-start gap-4">
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                          {getInitials(report.students?.full_name || "Siswa")}
+                          {getInitials(report.student_name)}
                         </div>
 
                         <div>
                           <h2 className="text-lg font-bold">
-                            {report.students?.full_name || "-"} —{" "}
-                            {report.subjects?.name || "-"}
+                            {report.student_name || "-"} —{" "}
+                            {report.subject_name || "-"}
                           </h2>
 
                           <p className="mt-1 text-sm text-[#6B4A3A]">
-                            {report.class_level || "-"} /{" "}
-                            {report.semester || "-"} •{" "}
+                            {report.class_level ||
+                              formatClass(
+                                report.student_level,
+                                report.student_grade
+                              )}{" "}
+                            / {report.semester || "-"} •{" "}
                             {formatDate(report.report_date)} • NIPD:{" "}
-                            {report.students?.nis || "-"}
+                            {report.student_nis || "-"}
                           </p>
                         </div>
                       </div>
@@ -931,7 +865,7 @@ export default function TeacherLaporanKbmPage() {
                     <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
                       <div className="rounded-2xl bg-[#FFF8EF] p-4">
                         <p className="text-xs font-bold uppercase tracking-wide text-[#6B4A3A]">
-                          Bab
+                          Bab / Unit
                         </p>
                         <p className="mt-2 font-bold">{report.chapter || "-"}</p>
                       </div>
@@ -1039,21 +973,23 @@ export default function TeacherLaporanKbmPage() {
                         <span className="font-semibold text-[#2B1B18]">
                           Mapel:
                         </span>{" "}
-                        {teacher?.subjects?.join(", ") || "-"}
+                        {Array.isArray(teacher?.subjects)
+                          ? teacher?.subjects.join(", ")
+                          : teacher?.subjects || "-"}
                       </p>
                     </div>
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Siswa Terhubung</h2>
+                  <h2 className="text-lg font-bold">Siswa</h2>
 
                   <div className="mt-5 space-y-3">
-                    {students.length === 0 && (
+                    {students.length === 0 ? (
                       <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
-                        Belum ada siswa untuk guru ini.
+                        Belum ada data siswa.
                       </div>
-                    )}
+                    ) : null}
 
                     {students.slice(0, 5).map((student) => (
                       <div
@@ -1068,15 +1004,17 @@ export default function TeacherLaporanKbmPage() {
                           <div>
                             <p className="font-bold">{student.full_name}</p>
                             <p className="text-sm text-[#6B4A3A]">
-                              {student.grade || "-"} • NIPD: {student.nis || "-"}
+                              {formatClass(student.level, student.grade)} •
+                              NIPD: {student.nis || "-"}
                             </p>
                           </div>
                         </div>
 
                         <button
                           type="button"
-                          onClick={() => openModal(student)}
-                          className="shrink-0 rounded-xl bg-[#7A1F2B] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
+                          onClick={() => openCreateModal(student)}
+                          disabled={!teacher}
+                          className="shrink-0 rounded-xl bg-[#7A1F2B] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
                         >
                           + Laporan
                         </button>
@@ -1089,59 +1027,33 @@ export default function TeacherLaporanKbmPage() {
                   <h2 className="text-lg font-bold">Status Laporan</h2>
 
                   <div className="mt-5 space-y-4">
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Draft</span>
-                        <span className="font-bold">{draftCount}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-slate-500"
-                          style={{
-                            width:
-                              reports.length > 0
-                                ? `${(draftCount / reports.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <ProgressItem
+                      label="Draft"
+                      value={draftCount}
+                      total={reports.length}
+                      color="bg-slate-500"
+                    />
 
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Pending Review</span>
-                        <span className="font-bold">{reviewCount}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-yellow-500"
-                          style={{
-                            width:
-                              reports.length > 0
-                                ? `${(reviewCount / reports.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <ProgressItem
+                      label="Pending Review"
+                      value={reviewCount}
+                      total={reports.length}
+                      color="bg-yellow-500"
+                    />
 
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Published</span>
-                        <span className="font-bold">{publishedCount}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-emerald-600"
-                          style={{
-                            width:
-                              reports.length > 0
-                                ? `${(publishedCount / reports.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <ProgressItem
+                      label="Revision"
+                      value={revisionCount}
+                      total={reports.length}
+                      color="bg-red-500"
+                    />
+
+                    <ProgressItem
+                      label="Approved / Published"
+                      value={publishedCount}
+                      total={reports.length}
+                      color="bg-emerald-600"
+                    />
                   </div>
                 </div>
 
@@ -1156,16 +1068,22 @@ export default function TeacherLaporanKbmPage() {
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
 
-      {isModalOpen && (
+      {isModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+          <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">
-                {form.id ? "Edit Laporan KBM" : "Buat Laporan KBM"}
-              </h2>
+              <div>
+                <h2 className="text-xl font-bold">
+                  {form.id ? "Edit Laporan KBM" : "Buat Laporan KBM"}
+                </h2>
+
+                <p className="mt-1 text-xs text-[#6B4A3A]">
+                  Input manual. Tidak wajib mengambil dari jadwal/absensi.
+                </p>
+              </div>
 
               <button
                 type="button"
@@ -1177,38 +1095,18 @@ export default function TeacherLaporanKbmPage() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              {errorMessage && (
+              {errorMessage ? (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
-              )}
+              ) : null}
 
               <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
-                Laporan draft bisa disimpan ulang atau dikirim ke Kepala
-                Sekolah dengan status pending_review.
+                Simpan sebagai draft jika belum selesai. Pilih pending_review
+                jika siap dikirim ke Kepala Sekolah.
               </div>
 
               <form onSubmit={handleSubmitReport} className="space-y-4 pb-2">
-                <div>
-                  <label className="text-sm font-bold">Ambil dari Jadwal</label>
-                  <select
-                    value={form.schedule_id}
-                    onChange={(event) => handleScheduleChange(event.target.value)}
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Input manual / pilih jadwal</option>
-                    {schedules.map((schedule) => (
-                      <option key={schedule.id} value={schedule.id}>
-                        {getScheduleLabel(schedule)}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-xs leading-5 text-[#6B4A3A]">
-                    Pilih jadwal agar siswa, mapel, tanggal, kelas, dan materi
-                    otomatis terisi.
-                  </p>
-                </div>
-
                 <div>
                   <label className="text-sm font-bold">Siswa</label>
                   <select
@@ -1219,7 +1117,8 @@ export default function TeacherLaporanKbmPage() {
                     <option value="">Pilih siswa</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.grade || "-"} — NIPD:{" "}
+                        {student.full_name} —{" "}
+                        {formatClass(student.level, student.grade)} — NIPD:{" "}
                         {student.nis || "-"}
                       </option>
                     ))}
@@ -1238,8 +1137,7 @@ export default function TeacherLaporanKbmPage() {
                     <option value="">Pilih mata pelajaran</option>
                     {reportSubjectOptions.map((subject) => (
                       <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                        {subject.grade ? ` — ${subject.grade}` : ""}
+                        {getSubjectLabel(subject)}
                       </option>
                     ))}
                   </select>
@@ -1280,7 +1178,7 @@ export default function TeacherLaporanKbmPage() {
                     onChange={(event) =>
                       setForm({ ...form, class_level: event.target.value })
                     }
-                    placeholder="Contoh: Grade 4"
+                    placeholder="Contoh: SD Grade 4"
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1317,7 +1215,7 @@ export default function TeacherLaporanKbmPage() {
                       setForm({ ...form, learning_issue: event.target.value })
                     }
                     rows={3}
-                    placeholder="Contoh: Siswa masih kesulitan menyamakan penyebut"
+                    placeholder="Contoh: Siswa masih kesulitan memahami materi tertentu"
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1330,7 +1228,7 @@ export default function TeacherLaporanKbmPage() {
                       setForm({ ...form, solution: event.target.value })
                     }
                     rows={3}
-                    placeholder="Contoh: Latihan tambahan dengan visual pecahan"
+                    placeholder="Contoh: Latihan tambahan atau pendekatan visual"
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1357,8 +1255,8 @@ export default function TeacherLaporanKbmPage() {
                     }
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   >
-                    <option value="pending_review">pending_review</option>
                     <option value="draft">draft</option>
+                    <option value="pending_review">pending_review</option>
                   </select>
                   <p className="mt-1 text-xs text-[#6B4A3A]">
                     Pilih draft jika belum selesai. Pilih pending_review jika
@@ -1375,15 +1273,44 @@ export default function TeacherLaporanKbmPage() {
                     {saving
                       ? "Menyimpan..."
                       : form.id
-                      ? "Simpan Perubahan"
-                      : "Simpan Laporan KBM"}
+                        ? "Simpan Perubahan"
+                        : "Simpan Laporan KBM"}
                   </button>
                 </div>
               </form>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </TeacherLayout>
+  );
+}
+
+function ProgressItem({
+  label,
+  value,
+  total,
+  color,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  color: string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex justify-between text-sm">
+        <span>{label}</span>
+        <span className="font-bold">{value}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{
+            width: total > 0 ? `${(value / total) * 100}%` : "0%",
+          }}
+        />
+      </div>
+    </div>
   );
 }

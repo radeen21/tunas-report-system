@@ -7,11 +7,19 @@ import StudentLayout from "./components/StudentLayout";
 type StudentRow = {
   id: string;
   full_name: string | null;
+  email?: string | null;
+  user_id?: string | null;
   grade: string | null;
   level: string | null;
   nis?: string | null;
   nisn?: string | null;
   parent_id?: string | null;
+};
+
+type ParentRow = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
 };
 
 type TeacherRow = {
@@ -98,10 +106,6 @@ const ACADEMIC_YEAR = "2026/2027";
 const ACADEMIC_YEAR_START = "2026-07-01";
 const ACADEMIC_YEAR_END = "2027-06-30";
 
-function normalizeText(value?: string | null) {
-  return (value || "").trim().toLowerCase();
-}
-
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -109,11 +113,15 @@ function getTodayDate() {
 function formatDate(date?: string | null) {
   if (!date) return "-";
 
+  const parsedDate = new Date(`${date}T00:00:00`);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${date}T00:00:00`));
+  }).format(parsedDate);
 }
 
 function formatTime(time?: string | null) {
@@ -153,7 +161,11 @@ function getAttendanceStatus(status?: string | null) {
 
 function getScoreValue(report: AcademicReportRow) {
   const value = report.final_grade ?? report.final_score ?? null;
-  if (value === null || value === undefined || Number.isNaN(value)) return null;
+
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return null;
+  }
+
   return Number(value);
 }
 
@@ -161,6 +173,7 @@ function getProgressPercentage(scores: SubjectScore[]) {
   if (scores.length === 0) return 0;
 
   const total = scores.reduce((sum, item) => sum + item.score, 0);
+
   return Math.round(total / scores.length);
 }
 
@@ -179,22 +192,19 @@ export default function StudentDashboardPage() {
   async function fetchActiveStudent() {
     const { data: authData } = await supabase.auth.getUser();
 
+    const userId = authData.user?.id || "";
+
     const email =
       authData.user?.email ||
-      localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      localStorage.getItem("hstkb_demo_email") ||
       "";
 
-    const storedStudentId =
-      localStorage.getItem("hstkb_student_id") ||
-      localStorage.getItem("student_id") ||
-      "";
-
-    if (storedStudentId) {
+    if (userId) {
       const { data, error } = await supabase
         .from("students")
         .select("*")
-        .eq("id", storedStudentId)
+        .eq("user_id", userId)
         .limit(1)
         .maybeSingle();
 
@@ -203,37 +213,45 @@ export default function StudentDashboardPage() {
     }
 
     if (email) {
-      const { data: parentData } = await supabase
-        .from("parents")
-        .select("id, email")
-        .eq("email", email)
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const { data: studentByEmail, error: studentEmailError } = await supabase
+        .from("students")
+        .select("*")
+        .eq("email", normalizedEmail)
         .limit(1)
         .maybeSingle();
 
-      if (parentData?.id) {
-        const { data, error } = await supabase
-          .from("students")
-          .select("*")
-          .eq("parent_id", parentData.id)
-          .order("full_name", { ascending: true })
-          .limit(1)
-          .maybeSingle();
+      if (studentEmailError) throw new Error(studentEmailError.message);
+      if (studentByEmail) return studentByEmail as StudentRow;
 
-        if (error) throw new Error(error.message);
-        if (data) return data as StudentRow;
+      const { data: parentData, error: parentError } = await supabase
+        .from("parents")
+        .select("id, full_name, email")
+        .eq("email", normalizedEmail)
+        .limit(1)
+        .maybeSingle();
+
+      if (parentError) throw new Error(parentError.message);
+
+      const parent = parentData as ParentRow | null;
+
+      if (parent?.id) {
+        const { data: studentByParent, error: studentParentError } =
+          await supabase
+            .from("students")
+            .select("*")
+            .eq("parent_id", parent.id)
+            .order("full_name", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+        if (studentParentError) throw new Error(studentParentError.message);
+        if (studentByParent) return studentByParent as StudentRow;
       }
     }
 
-    const { data, error } = await supabase
-      .from("students")
-      .select("*")
-      .order("full_name", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-
-    return (data as StudentRow) || null;
+    return null;
   }
 
   async function fetchPageData() {
@@ -242,10 +260,13 @@ export default function StudentDashboardPage() {
 
     try {
       const activeStudent = await fetchActiveStudent();
+
       setStudent(activeStudent);
 
       if (!activeStudent?.id) {
-        setErrorMessage("Data murid belum ditemukan.");
+        setErrorMessage(
+          "Data murid belum terhubung dengan akun login ini. Silakan hubungkan user_id/email murid atau parent_id terlebih dahulu."
+        );
         setTeachers([]);
         setSubjects([]);
         setSchedules([]);
@@ -256,38 +277,44 @@ export default function StudentDashboardPage() {
         return;
       }
 
-      const [teachersRes, subjectsRes, schedulesRes, attendanceRes, academicRes, kbmRes] =
-        await Promise.all([
-          supabase.from("teachers").select("id, full_name"),
-          supabase.from("subjects").select("id, name"),
-          supabase
-            .from("schedules")
-            .select(
-              "id, student_id, teacher_id, subject_id, day_name, schedule_date, start_time, end_time, session_name, material_topic, duration_minutes, notes, academic_year"
-            )
-            .eq("student_id", activeStudent.id)
-            .gte("schedule_date", ACADEMIC_YEAR_START)
-            .lte("schedule_date", ACADEMIC_YEAR_END)
-            .order("schedule_date", { ascending: true })
-            .order("start_time", { ascending: true }),
-          supabase
-            .from("attendance")
-            .select("*")
-            .eq("student_id", activeStudent.id),
-          supabase
-            .from("academic_reports")
-            .select("*")
-            .eq("student_id", activeStudent.id)
-            .or("approval_status.eq.approved,status.eq.approved,status.eq.published")
-            .order("updated_at", { ascending: false }),
-          supabase
-            .from("kbm_reports")
-            .select("*")
-            .eq("student_id", activeStudent.id)
-            .or("status.eq.approved,status.eq.published")
-            .order("report_date", { ascending: false })
-            .limit(5),
-        ]);
+      const [
+        teachersRes,
+        subjectsRes,
+        schedulesRes,
+        attendanceRes,
+        academicRes,
+        kbmRes,
+      ] = await Promise.all([
+        supabase.from("teachers").select("id, full_name"),
+        supabase.from("subjects").select("id, name"),
+        supabase
+          .from("schedules")
+          .select(
+            "id, student_id, teacher_id, subject_id, day_name, schedule_date, start_time, end_time, session_name, material_topic, duration_minutes, notes, academic_year"
+          )
+          .eq("student_id", activeStudent.id)
+          .gte("schedule_date", ACADEMIC_YEAR_START)
+          .lte("schedule_date", ACADEMIC_YEAR_END)
+          .order("schedule_date", { ascending: true })
+          .order("start_time", { ascending: true }),
+        supabase
+          .from("attendance")
+          .select("*")
+          .eq("student_id", activeStudent.id),
+        supabase
+          .from("academic_reports")
+          .select("*")
+          .eq("student_id", activeStudent.id)
+          .or("approval_status.eq.approved,status.eq.approved,status.eq.published")
+          .order("updated_at", { ascending: false }),
+        supabase
+          .from("kbm_reports")
+          .select("*")
+          .eq("student_id", activeStudent.id)
+          .or("status.eq.approved,status.eq.published")
+          .order("report_date", { ascending: false })
+          .limit(5),
+      ]);
 
       if (teachersRes.error) throw new Error(teachersRes.error.message);
       if (subjectsRes.error) throw new Error(subjectsRes.error.message);
@@ -318,15 +345,40 @@ export default function StudentDashboardPage() {
 
     const channel = supabase
       .channel("student-dashboard-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "students" }, fetchPageData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "schedules" }, fetchPageData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "attendance" }, fetchPageData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "academic_reports" }, fetchPageData)
-      .on("postgres_changes", { event: "*", schema: "public", table: "kbm_reports" }, fetchPageData)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students" },
+        fetchPageData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "parents" },
+        fetchPageData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "schedules" },
+        fetchPageData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attendance" },
+        fetchPageData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "academic_reports" },
+        fetchPageData
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "kbm_reports" },
+        fetchPageData
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -344,6 +396,7 @@ export default function StudentDashboardPage() {
     return schedules
       .filter((schedule) => {
         const matchDate = schedule.schedule_date === today;
+
         const matchAcademicYear =
           !schedule.academic_year || schedule.academic_year === ACADEMIC_YEAR;
 
@@ -384,6 +437,7 @@ export default function StudentDashboardPage() {
 
   const attendanceSummary = useMemo(() => {
     const total = attendance.length;
+
     const hadir = attendance.filter(
       (item) => getAttendanceStatus(item.attendance_status) === "Hadir"
     ).length;
@@ -414,12 +468,15 @@ export default function StudentDashboardPage() {
                 <p className="text-xs font-bold tracking-[0.2em] text-white/60">
                   HALO, SEMANGAT BELAJAR!
                 </p>
+
                 <h1 className="mt-2 text-[30px] font-bold tracking-tight">
                   {student?.full_name || "Murid"}
                 </h1>
+
                 <p className="mt-1 text-sm text-white/75">
                   {student?.level || "-"} — {student?.grade || "-"}
                 </p>
+
                 <p className="mt-1 text-xs font-semibold text-white/60">
                   NIPD: {student?.nis || "-"} • NISN: {student?.nisn || "-"}
                 </p>
@@ -435,7 +492,9 @@ export default function StudentDashboardPage() {
 
               <div className="rounded-2xl bg-white/10 p-4">
                 <p className="text-[#D96B2B]">📅</p>
-                <p className="mt-2 text-2xl font-bold">{attendanceSummary.percentage}%</p>
+                <p className="mt-2 text-2xl font-bold">
+                  {attendanceSummary.percentage}%
+                </p>
                 <p className="text-xs text-white/60">Attendance</p>
               </div>
 
@@ -455,15 +514,23 @@ export default function StudentDashboardPage() {
           </div>
         </div>
 
-        {errorMessage && (
+        {errorMessage ? (
           <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
           </div>
-        )}
+        ) : null}
 
         {loading ? (
           <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
             Loading dashboard murid...
+          </div>
+        ) : !student ? (
+          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm leading-6 text-[#6B4A3A] shadow-sm">
+            Data murid belum terhubung dengan akun ini.
+            <br />
+            Pastikan akun login sudah dihubungkan ke tabel students melalui
+            kolom <b>user_id</b> atau <b>email</b>. Untuk akun orang tua,
+            hubungkan melalui <b>parent_id</b>.
           </div>
         ) : (
           <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-[2fr_1fr]">
@@ -485,11 +552,16 @@ export default function StudentDashboardPage() {
                     <div key={item.subject_id}>
                       <div className="mb-2 flex items-center justify-between">
                         <div>
-                          <p className="text-sm font-bold">{item.subject_name}</p>
+                          <p className="text-sm font-bold">
+                            {item.subject_name}
+                          </p>
                           <p className="text-xs text-[#6B4A3A]">{item.period}</p>
                         </div>
+
                         <div className="flex items-center gap-3">
-                          <p className="text-sm text-[#6B4A3A]">{item.score}/100</p>
+                          <p className="text-sm text-[#6B4A3A]">
+                            {item.score}/100
+                          </p>
                           <p className="text-xs font-bold text-emerald-600">
                             {item.predicate}
                           </p>
@@ -552,11 +624,15 @@ export default function StudentDashboardPage() {
 
                         <div className="mt-3 rounded-xl bg-white px-3 py-2 text-xs leading-5 text-[#6B4A3A]">
                           <p>
-                            {formatTime(item.start_time)} - {formatTime(item.end_time)} • {formatDuration(item.duration_minutes)}
+                            {formatTime(item.start_time)} -{" "}
+                            {formatTime(item.end_time)} •{" "}
+                            {formatDuration(item.duration_minutes)}
                           </p>
+
                           <p className="font-semibold text-[#2B1B18]">
                             Materi: {item.material_topic || "-"}
                           </p>
+
                           {item.notes ? <p>Keterangan: {item.notes}</p> : null}
                         </div>
                       </div>
@@ -604,7 +680,8 @@ export default function StudentDashboardPage() {
                         Laporan Akademik
                       </p>
                       <p className="mt-1 font-bold text-[#2B1B18]">
-                        {report.report_period || "-"} • Nilai {getScoreValue(report) || "-"}
+                        {report.report_period || "-"} • Nilai{" "}
+                        {getScoreValue(report) || "-"}
                       </p>
                       <p className="mt-1 text-xs text-[#6B4A3A]">
                         {report.predicate || report.description || "-"}

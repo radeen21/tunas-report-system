@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import {
+  AlertCircle,
   CalendarCheck,
   Eye,
   Search,
@@ -132,11 +133,15 @@ function formatClass(level?: string | null, grade?: string | null) {
 function formatDate(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(date);
 }
 
 function formatTime(value?: string | null) {
@@ -159,9 +164,13 @@ function getInitials(name?: string | null) {
 function getMonthName(dateString?: string | null) {
   if (!dateString) return "";
 
+  const date = new Date(`${dateString}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "";
+
   return new Intl.DateTimeFormat("id-ID", {
     month: "long",
-  }).format(new Date(`${dateString}T00:00:00`));
+  }).format(date);
 }
 
 function getAttendanceNote(item: AttendanceRow) {
@@ -174,6 +183,7 @@ function normalizeAttendanceStatus(status?: string | null) {
   if (safeStatus === "hadir" || safeStatus === "present") return "Hadir";
   if (safeStatus === "izin") return "Izin";
   if (safeStatus === "sakit") return "Sakit";
+
   if (
     safeStatus === "alpa" ||
     safeStatus === "alpha" ||
@@ -255,9 +265,7 @@ function groupAttendanceByRombel(attendance: EnrichedAttendance[]) {
       subject_id: first.subject_id,
       subject_name: first.subject_name,
       material_topic: first.material_topic,
-      students: rows.sort((a, b) =>
-        a.student_name.localeCompare(b.student_name)
-      ),
+      students: rows.sort((a, b) => a.student_name.localeCompare(b.student_name)),
       total: rows.length,
       hadir,
       izin,
@@ -306,6 +314,7 @@ export default function KepalaSekolahAbsensiPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [attendance, setAttendance] = useState<EnrichedAttendance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
@@ -327,56 +336,74 @@ export default function KepalaSekolahAbsensiPage() {
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const [teachersRes, studentsRes, subjectsRes, attendanceRes] =
-      await Promise.all([
-        supabase.from("teachers").select("*").order("full_name"),
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
-        supabase
-          .from("attendance")
-          .select("*")
-          .order("attendance_date", { ascending: false })
-          .order("start_time", { ascending: true }),
-      ]);
+    try {
+      const [teachersRes, studentsRes, subjectsRes, attendanceRes] =
+        await Promise.all([
+          supabase.from("teachers").select("*").order("full_name"),
+          supabase.from("students").select("*").order("full_name"),
+          supabase.from("subjects").select("*").order("name"),
+          supabase
+            .from("attendance")
+            .select("*")
+            .order("attendance_date", { ascending: false })
+            .order("start_time", { ascending: true }),
+        ]);
 
-    const teachersData = (teachersRes.data || []) as TeacherRow[];
-    const studentsData = (studentsRes.data || []) as StudentRow[];
-    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-    const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
+      if (teachersRes.error) throw new Error(teachersRes.error.message);
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (attendanceRes.error) throw new Error(attendanceRes.error.message);
 
-    const teacherMap = new Map(
-      teachersData.map((teacher) => [teacher.id, teacher])
-    );
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const studentsData = (studentsRes.data || []) as StudentRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
 
-    const studentMap = new Map(
-      studentsData.map((student) => [student.id, student])
-    );
+      const teacherMap = new Map(
+        teachersData.map((teacher) => [teacher.id, teacher])
+      );
 
-    const subjectMap = new Map(
-      subjectsData.map((subject) => [subject.id, subject])
-    );
+      const studentMap = new Map(
+        studentsData.map((student) => [student.id, student])
+      );
 
-    const enriched: EnrichedAttendance[] = attendanceData.map((item) => {
-      const teacher = item.teacher_id ? teacherMap.get(item.teacher_id) : null;
-      const student = item.student_id ? studentMap.get(item.student_id) : null;
-      const subject = item.subject_id ? subjectMap.get(item.subject_id) : null;
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
 
-      return {
-        ...item,
-        teacher_name: teacher?.full_name || "-",
-        student_name: student?.full_name || "-",
-        student_grade: student?.grade || "-",
-        student_level: student?.level || "-",
-        student_nis: student?.nis || "-",
-        student_nisn: student?.nisn || "-",
-        subject_name: subject?.name || "-",
-      };
-    });
+      const enriched: EnrichedAttendance[] = attendanceData.map((item) => {
+        const teacher = item.teacher_id ? teacherMap.get(item.teacher_id) : null;
+        const student = item.student_id ? studentMap.get(item.student_id) : null;
+        const subject = item.subject_id ? subjectMap.get(item.subject_id) : null;
 
-    setTeachers(teachersData);
-    setAttendance(enriched);
-    setLoading(false);
+        return {
+          ...item,
+          teacher_name: teacher?.full_name || "-",
+          student_name: student?.full_name || "-",
+          student_grade: student?.grade || "-",
+          student_level: student?.level || "-",
+          student_nis: student?.nis || "-",
+          student_nisn: student?.nisn || "-",
+          subject_name: subject?.name || "-",
+        };
+      });
+
+      setTeachers(teachersData);
+      setAttendance(enriched);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data absensi.");
+      }
+
+      setTeachers([]);
+      setAttendance([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -387,22 +414,27 @@ export default function KepalaSekolahAbsensiPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "attendance" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        fetchData
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "subjects" },
+        () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -457,28 +489,32 @@ export default function KepalaSekolahAbsensiPage() {
     );
   }, [rombelGroups]);
 
+  const filteredAttendance = useMemo(() => {
+    return rombelGroups.flatMap((group) => group.students);
+  }, [rombelGroups]);
+
   const summary = useMemo(() => {
     const totalRombel = rombelGroups.length;
-    const totalAttendanceRows = attendance.length;
+    const totalAttendanceRows = filteredAttendance.length;
 
-    const totalHadir = attendance.filter((item) =>
+    const totalHadir = filteredAttendance.filter((item) =>
       isHadir(item.attendance_status)
     ).length;
 
-    const totalIzin = attendance.filter((item) =>
+    const totalIzin = filteredAttendance.filter((item) =>
       isIzin(item.attendance_status)
     ).length;
 
-    const totalAlpa = attendance.filter((item) =>
+    const totalAlpa = filteredAttendance.filter((item) =>
       isAlpa(item.attendance_status)
     ).length;
 
-    const totalSakit = attendance.filter((item) =>
+    const totalSakit = filteredAttendance.filter((item) =>
       isSakit(item.attendance_status)
     ).length;
 
     const activeTeachers = new Set(
-      attendance.map((item) => item.teacher_id).filter(Boolean)
+      filteredAttendance.map((item) => item.teacher_id).filter(Boolean)
     ).size;
 
     const percentage =
@@ -497,7 +533,7 @@ export default function KepalaSekolahAbsensiPage() {
       activeTeachers,
       percentage,
     };
-  }, [rombelGroups, attendance]);
+  }, [rombelGroups, filteredAttendance]);
 
   function handleExportExcel() {
     const monthNumber = Number(exportMonth);
@@ -509,7 +545,6 @@ export default function KepalaSekolahAbsensiPage() {
     }
 
     const { start, end } = getCutoffRange(monthNumber, yearNumber);
-
     const selectedMonthName = monthOptions[monthNumber] || `Bulan ${monthNumber}`;
 
     const rows = attendance
@@ -605,9 +640,8 @@ export default function KepalaSekolahAbsensiPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Pantau absensi yang diinput guru berdasarkan jadwal/rombel.
-              Tampilan dibuat seperti format absensi sekolah dengan checklist
-              Hadir, Izin, dan Alpa.
+              Pantau absensi yang diinput guru. Halaman ini hanya untuk
+              monitoring dan export, bukan untuk input absensi.
             </p>
           </div>
 
@@ -640,6 +674,15 @@ export default function KepalaSekolahAbsensiPage() {
             </button>
           </div>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            <div className="flex gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>{errorMessage}</p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -789,9 +832,7 @@ export default function KepalaSekolahAbsensiPage() {
 
                         <td className="px-5 py-4">
                           <div>
-                            <p className="font-extrabold">
-                              {student.student_name}
-                            </p>
+                            <p className="font-extrabold">{student.student_name}</p>
                             <p className="mt-1 text-[12px] text-[#6F5549]">
                               NIPD: {student.student_nis || "-"}
                               {student.student_nisn
@@ -820,21 +861,15 @@ export default function KepalaSekolahAbsensiPage() {
                         <td className="px-5 py-4">{group.subject_name}</td>
 
                         <td className="px-5 py-4 text-center">
-                          <ChecklistBox
-                            checked={isHadir(student.attendance_status)}
-                          />
+                          <ChecklistBox checked={isHadir(student.attendance_status)} />
                         </td>
 
                         <td className="px-5 py-4 text-center">
-                          <ChecklistBox
-                            checked={isIzin(student.attendance_status)}
-                          />
+                          <ChecklistBox checked={isIzin(student.attendance_status)} />
                         </td>
 
                         <td className="px-5 py-4 text-center">
-                          <ChecklistBox
-                            checked={isAlpa(student.attendance_status)}
-                          />
+                          <ChecklistBox checked={isAlpa(student.attendance_status)} />
                         </td>
 
                         <td className="max-w-[260px] px-5 py-4 text-[#6F5549]">
@@ -854,9 +889,7 @@ export default function KepalaSekolahAbsensiPage() {
                               Detail
                             </button>
                           ) : (
-                            <span className="text-[12px] text-[#A58A7A]">
-                              -
-                            </span>
+                            <span className="text-[12px] text-[#A58A7A]">-</span>
                           )}
                         </td>
                       </tr>
@@ -906,25 +939,19 @@ export default function KepalaSekolahAbsensiPage() {
 
               <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
                 <div className="grid gap-3 text-[13px] md:grid-cols-4">
-                  <InfoItem
-                    label="Hari"
-                    value={selectedRombel.day_name || "-"}
-                  />
+                  <InfoItem label="Hari" value={selectedRombel.day_name || "-"} />
                   <InfoItem
                     label="Tanggal"
                     value={formatDate(selectedRombel.attendance_date)}
                   />
                   <InfoItem
                     label="Jam"
-                    value={`${formatTime(
-                      selectedRombel.start_time
-                    )}-${formatTime(selectedRombel.end_time)}`}
+                    value={`${formatTime(selectedRombel.start_time)}-${formatTime(
+                      selectedRombel.end_time
+                    )}`}
                   />
                   <InfoItem label="Mapel" value={selectedRombel.subject_name} />
-                  <InfoItem
-                    label="Guru"
-                    value={selectedRombel.teacher_name}
-                  />
+                  <InfoItem label="Guru" value={selectedRombel.teacher_name} />
                   <InfoItem
                     label="Materi"
                     value={selectedRombel.material_topic || "-"}
@@ -1107,10 +1134,10 @@ function UnderstandingBadge({ status }: { status?: string | null }) {
     safe === "Paham"
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "Cukup Paham"
-      ? "bg-[#FFF2B8] text-[#B26A00]"
-      : safe === "-"
-      ? "bg-[#F1F5F9] text-[#64748B]"
-      : "bg-[#FFE4E6] text-[#BE123C]";
+        ? "bg-[#FFF2B8] text-[#B26A00]"
+        : safe === "-"
+          ? "bg-[#F1F5F9] text-[#64748B]"
+          : "bg-[#FFE4E6] text-[#BE123C]";
 
   return (
     <span

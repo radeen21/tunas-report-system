@@ -59,8 +59,10 @@ type CurriculumSubChapter = {
   curriculum_chapter_id: string | null;
   sub_chapter_title: string | null;
   sub_chapter_order: number | null;
-  target_month: string | null;
-  planned_week: number | null;
+  target_month?: string | null;
+  planned_week?: number | null;
+  target_date?: string | null;
+  notes?: string | null;
 };
 
 type ProgramWithChildren = CurriculumProgram & {
@@ -74,8 +76,8 @@ type ProgramWithChildren = CurriculumProgram & {
 type SubChapterForm = {
   id?: string;
   sub_chapter_title: string;
-  target_month: string;
-  planned_week: string;
+  target_date: string;
+  notes: string;
 };
 
 type ChapterForm = {
@@ -97,29 +99,6 @@ type ProgramForm = {
   chapters: ChapterForm[];
 };
 
-const monthOptions = [
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-];
-
-const weekOptions = [
-  { label: "W1", value: "1" },
-  { label: "W2", value: "2" },
-  { label: "W3", value: "3" },
-  { label: "W4", value: "4" },
-  { label: "W5", value: "5" },
-];
-
 function emptyProgramForm(): ProgramForm {
   return {
     id: "",
@@ -137,8 +116,8 @@ function emptyProgramForm(): ProgramForm {
         sub_chapters: [
           {
             sub_chapter_title: "",
-            target_month: "Juli",
-            planned_week: "1",
+            target_date: "",
+            notes: "",
           },
         ],
       },
@@ -167,6 +146,16 @@ function normalizeSubjects(subjects: TeacherRow["subjects"]) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(`${value}T00:00:00`));
 }
 
 function formatDateTime(value?: string | null) {
@@ -223,14 +212,22 @@ function isPdfUrl(url?: string | null) {
   return url.toLowerCase().split("?")[0].endsWith(".pdf");
 }
 
-function isTargetPlanCell(
-  subChapter: CurriculumSubChapter,
-  month: string,
-  weekValue: string
-) {
-  return (
-    normalizeText(subChapter.target_month) === normalizeText(month) &&
-    String(subChapter.planned_week || "") === weekValue
+function canEditProgram(status?: string | null) {
+  return !status || status === "draft" || status === "rejected";
+}
+
+function canDeleteProgram(status?: string | null) {
+  return !status || status === "draft" || status === "rejected";
+}
+
+function getTargetDate(subChapter: CurriculumSubChapter) {
+  return subChapter.target_date || null;
+}
+
+function getProgramSubChapterCount(program: ProgramWithChildren) {
+  return program.chapters.reduce(
+    (total, chapter) => total + chapter.sub_chapters.length,
+    0
   );
 }
 
@@ -309,6 +306,18 @@ export default function TeacherProgramSemesterPage() {
         .select("*")
         .order("sub_chapter_order", { ascending: true }),
     ]);
+
+    if (programsRes.error) {
+      alert(`Gagal mengambil Program Semester: ${programsRes.error.message}`);
+    }
+
+    if (chaptersRes.error) {
+      alert(`Gagal mengambil Bab: ${chaptersRes.error.message}`);
+    }
+
+    if (subChaptersRes.error) {
+      alert(`Gagal mengambil Sub Bab: ${subChaptersRes.error.message}`);
+    }
 
     const programsData = (programsRes.data || []) as CurriculumProgram[];
     const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
@@ -397,7 +406,19 @@ export default function TeacherProgramSemesterPage() {
         normalizeText(program.level).includes(q) ||
         normalizeText(program.grade).includes(q) ||
         normalizeText(program.semester).includes(q) ||
-        normalizeText(program.academic_year).includes(q);
+        normalizeText(program.academic_year).includes(q) ||
+        program.chapters.some((chapter) => {
+          return (
+            normalizeText(chapter.chapter_title).includes(q) ||
+            chapter.sub_chapters.some((subChapter) => {
+              return (
+                normalizeText(subChapter.sub_chapter_title).includes(q) ||
+                normalizeText(subChapter.target_date).includes(q) ||
+                normalizeText(subChapter.notes).includes(q)
+              );
+            })
+          );
+        });
 
       const matchStatus =
         statusFilter === "Semua Status" || program.status === statusFilter;
@@ -430,6 +451,11 @@ export default function TeacherProgramSemesterPage() {
   }
 
   function openEditModal(program: ProgramWithChildren) {
+    if (!canEditProgram(program.status)) {
+      alert("Program Semester yang sudah submitted/approved tidak bisa diedit.");
+      return;
+    }
+
     setForm({
       id: program.id,
       program_type: program.program_type || "Program Semester",
@@ -443,36 +469,36 @@ export default function TeacherProgramSemesterPage() {
       chapters:
         program.chapters.length > 0
           ? program.chapters.map((chapter) => ({
-            id: chapter.id,
-            chapter_title: chapter.chapter_title || "",
-            sub_chapters:
-              chapter.sub_chapters.length > 0
-                ? chapter.sub_chapters.map((subChapter) => ({
-                  id: subChapter.id,
-                  sub_chapter_title: subChapter.sub_chapter_title || "",
-                  target_month: subChapter.target_month || "Juli",
-                  planned_week: String(subChapter.planned_week || 1),
-                }))
-                : [
+              id: chapter.id,
+              chapter_title: chapter.chapter_title || "",
+              sub_chapters:
+                chapter.sub_chapters.length > 0
+                  ? chapter.sub_chapters.map((subChapter) => ({
+                      id: subChapter.id,
+                      sub_chapter_title: subChapter.sub_chapter_title || "",
+                      target_date: subChapter.target_date || "",
+                      notes: subChapter.notes || "",
+                    }))
+                  : [
+                      {
+                        sub_chapter_title: "",
+                        target_date: "",
+                        notes: "",
+                      },
+                    ],
+            }))
+          : [
+              {
+                chapter_title: "",
+                sub_chapters: [
                   {
                     sub_chapter_title: "",
-                    target_month: "Juli",
-                    planned_week: "1",
+                    target_date: "",
+                    notes: "",
                   },
                 ],
-          }))
-          : [
-            {
-              chapter_title: "",
-              sub_chapters: [
-                {
-                  sub_chapter_title: "",
-                  target_month: "Juli",
-                  planned_week: "1",
-                },
-              ],
-            },
-          ],
+              },
+            ],
     });
 
     setSelectedFile(null);
@@ -527,6 +553,15 @@ export default function TeacherProgramSemesterPage() {
 
       if (validSubChapters.length === 0) {
         alert("Setiap Bab minimal punya 1 Sub Bab.");
+        return false;
+      }
+
+      const missingTargetDate = validSubChapters.find(
+        (subChapter) => !subChapter.target_date
+      );
+
+      if (missingTargetDate) {
+        alert("Setiap Sub Bab wajib memiliki Target Tanggal.");
         return false;
       }
     }
@@ -604,7 +639,8 @@ export default function TeacherProgramSemesterPage() {
         const { error } = await supabase
           .from("curriculum_programs")
           .update(programPayload)
-          .eq("id", form.id);
+          .eq("id", form.id)
+          .eq("teacher_id", teacher.id);
 
         if (error) throw new Error(error.message);
       } else {
@@ -718,8 +754,10 @@ export default function TeacherProgramSemesterPage() {
             curriculum_chapter_id: chapterId,
             sub_chapter_title: subChapter.sub_chapter_title.trim(),
             sub_chapter_order: subIndex + 1,
-            target_month: subChapter.target_month,
-            planned_week: Number(subChapter.planned_week || 1),
+            target_date: subChapter.target_date || null,
+            target_month: null,
+            planned_week: null,
+            notes: subChapter.notes.trim() || null,
           };
 
           if (subChapter.id) {
@@ -752,15 +790,22 @@ export default function TeacherProgramSemesterPage() {
     } catch (error) {
       setSaving(false);
       alert(
-        `Gagal simpan Program Semester: ${error instanceof Error ? error.message : "Terjadi kesalahan"
+        `Gagal simpan Program Semester: ${
+          error instanceof Error ? error.message : "Terjadi kesalahan"
         }`
       );
     }
   }
 
   async function handleDelete(program: ProgramWithChildren) {
+    if (!canDeleteProgram(program.status)) {
+      alert("Program Semester yang sudah submitted/approved tidak bisa dihapus.");
+      return;
+    }
+
     const confirmDelete = confirm(
-      `Hapus Program Semester ${program.subject_name || ""} ${program.level || ""
+      `Hapus Program Semester ${program.subject_name || ""} ${
+        program.level || ""
       } ${program.grade || ""}?`
     );
 
@@ -769,7 +814,8 @@ export default function TeacherProgramSemesterPage() {
     const { error } = await supabase
       .from("curriculum_programs")
       .delete()
-      .eq("id", program.id);
+      .eq("id", program.id)
+      .eq("teacher_id", teacher?.id);
 
     if (error) {
       alert(`Gagal hapus Program Semester: ${error.message}`);
@@ -796,8 +842,8 @@ export default function TeacherProgramSemesterPage() {
           sub_chapters: [
             {
               sub_chapter_title: "",
-              target_month: "Juli",
-              planned_week: "1",
+              target_date: "",
+              notes: "",
             },
           ],
         },
@@ -827,16 +873,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-            ...chapter,
-            sub_chapters: [
-              ...chapter.sub_chapters,
-              {
-                sub_chapter_title: "",
-                target_month: "Juli",
-                planned_week: "1",
-              },
-            ],
-          }
+              ...chapter,
+              sub_chapters: [
+                ...chapter.sub_chapters,
+                {
+                  sub_chapter_title: "",
+                  target_date: "",
+                  notes: "",
+                },
+              ],
+            }
           : chapter
       ),
     }));
@@ -848,11 +894,11 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-            ...chapter,
-            sub_chapters: chapter.sub_chapters.filter(
-              (_, itemIndex) => itemIndex !== subIndex
-            ),
-          }
+              ...chapter,
+              sub_chapters: chapter.sub_chapters.filter(
+                (_, itemIndex) => itemIndex !== subIndex
+              ),
+            }
           : chapter
       ),
     }));
@@ -869,16 +915,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-            ...chapter,
-            sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
-              itemIndex === subIndex
-                ? {
-                  ...subChapter,
-                  [field]: value,
-                }
-                : subChapter
-            ),
-          }
+              ...chapter,
+              sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
+                itemIndex === subIndex
+                  ? {
+                      ...subChapter,
+                      [field]: value,
+                    }
+                  : subChapter
+              ),
+            }
           : chapter
       ),
     }));
@@ -903,8 +949,9 @@ export default function TeacherProgramSemesterPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Kelola Program Semester, Bab, Sub Bab, target bulan, W1 sampai W5,
-              dan upload dokumen pendukung.
+              Kelola Program Semester sebagai menu mandiri. Program ini tidak
+              terhubung ke rombel, jadwal, atau absensi. Target pembelajaran
+              dibuat berdasarkan tanggal.
             </p>
           </div>
 
@@ -960,7 +1007,7 @@ export default function TeacherProgramSemesterPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari mapel, level, kelas, semester, atau tahun ajaran..."
+                placeholder="Cari mapel, level, kelas, semester, tahun ajaran, bab, sub bab, atau target tanggal..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -1073,14 +1120,18 @@ function ProgramCard({
       <div className="space-y-4 px-6 py-5">
         <div className="grid grid-cols-3 gap-3">
           <MiniStat label="Bab" value={program.chapters.length} />
-          <MiniStat
-            label="Sub Bab"
-            value={program.chapters.reduce(
-              (total, chapter) => total + chapter.sub_chapters.length,
-              0
-            )}
-          />
+          <MiniStat label="Sub Bab" value={getProgramSubChapterCount(program)} />
           <MiniStat label="Update" value={formatDateTime(program.updated_at)} />
+        </div>
+
+        <div className="rounded-2xl border border-[#EADACA] bg-[#FFF8EF] px-4 py-3">
+          <p className="text-[13px] font-extrabold text-[#2B1B18]">
+            Target Terdekat
+          </p>
+
+          <p className="mt-1 text-[13px] text-[#6F5549]">
+            {getNearestTarget(program)}
+          </p>
         </div>
 
         {program.rejection_note ? (
@@ -1116,7 +1167,7 @@ function ProgramCard({
             </a>
           ) : null}
 
-          {program.status !== "approved" ? (
+          {canEditProgram(program.status) ? (
             <>
               <button
                 type="button"
@@ -1184,10 +1235,21 @@ function ProgramModal({
   return (
     <ModalShell
       title={form.id ? "Edit Program Semester" : "Tambah Program Semester"}
-      subtitle="Isi Program Semester, Bab, Sub Bab, Bulan, W1 sampai W5, dan upload dokumen jika ada."
+      subtitle="Isi Program Semester, Bab, Sub Bab, target tanggal, dan upload dokumen jika ada."
       onClose={onClose}
     >
       <div className="space-y-5">
+        <div className="rounded-2xl border border-[#EADACA] bg-white px-5 py-4">
+          <p className="text-[14px] font-extrabold text-[#2B1B18]">
+            Catatan Flow
+          </p>
+          <p className="mt-1 text-[13px] leading-6 text-[#6F5549]">
+            Program Semester ini berdiri sendiri. Tidak terhubung ke rombel,
+            jadwal, atau absensi. Target pembelajaran cukup ditandai berdasarkan
+            tanggal.
+          </p>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-3">
           <FormGroup label="Mata Pelajaran">
             {teacherSubjects.length > 0 ? (
@@ -1322,7 +1384,7 @@ function ProgramModal({
                 Bab dan Sub Bab
               </h3>
               <p className="text-[13px] text-[#6F5549]">
-                Target week sudah tersedia sampai W5.
+                Target pembelajaran menggunakan tanggal, bukan Week/checklist.
               </p>
             </div>
 
@@ -1385,7 +1447,7 @@ function ProgramModal({
                 {chapter.sub_chapters.map((subChapter, subIndex) => (
                   <div
                     key={subIndex}
-                    className="grid gap-3 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-3 md:grid-cols-[1fr_150px_120px_70px]"
+                    className="grid gap-3 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-3 md:grid-cols-[1fr_170px_1fr_70px]"
                   >
                     <input
                       value={subChapter.sub_chapter_title}
@@ -1401,41 +1463,33 @@ function ProgramModal({
                       className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                     />
 
-                    <select
-                      value={subChapter.target_month}
+                    <input
+                      type="date"
+                      value={subChapter.target_date}
                       onChange={(event) =>
                         updateSubChapter(
                           chapterIndex,
                           subIndex,
-                          "target_month",
+                          "target_date",
                           event.target.value
                         )
                       }
                       className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                    >
-                      {monthOptions.map((month) => (
-                        <option key={month}>{month}</option>
-                      ))}
-                    </select>
+                    />
 
-                    <select
-                      value={subChapter.planned_week}
+                    <input
+                      value={subChapter.notes}
                       onChange={(event) =>
                         updateSubChapter(
                           chapterIndex,
                           subIndex,
-                          "planned_week",
+                          "notes",
                           event.target.value
                         )
                       }
+                      placeholder="Catatan target / rencana"
                       className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                    >
-                      {weekOptions.map((week) => (
-                        <option key={week.value} value={week.value}>
-                          {week.label}
-                        </option>
-                      ))}
-                    </select>
+                    />
 
                     <button
                       type="button"
@@ -1488,8 +1542,9 @@ function ProgramDetailModal({
   return (
     <ModalShell
       title="Detail Program Semester"
-      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${program.grade || ""
-        }`}
+      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${
+        program.grade || ""
+      }`}
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -1575,8 +1630,14 @@ function ProgramDetailModal({
                     </span>
 
                     <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-                      {subChapter.target_month} • W{subChapter.planned_week}
+                      Target: {formatDate(getTargetDate(subChapter))}
                     </span>
+
+                    {subChapter.notes ? (
+                      <span className="text-[12px] font-semibold text-[#6F5549]">
+                        {subChapter.notes}
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -1589,131 +1650,122 @@ function ProgramDetailModal({
 }
 
 function ProgramPlanTable({ program }: { program: ProgramWithChildren }) {
-  const totalColumns = monthOptions.length * weekOptions.length + 1;
-
   return (
     <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
       <div className="flex flex-wrap items-center gap-4 border-b border-[#E1CFBE] bg-[#FFF8EF] px-5 py-4">
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-sm border border-[#EF4444] bg-[#FCA5A5]" />
           <span className="text-[12px] font-bold text-[#7F1D1D]">
-            Target Rencana
+            Warna merah = Target Tanggal
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#C7F0DA] text-[10px] font-bold text-[#158A58]">
-            ✓
-          </span>
-          <span className="text-[12px] font-bold text-[#158A58]">
-            Sudah Terealisasi dari Absensi KBM
-          </span>
-        </div>
+        <span className="text-[12px] font-bold text-[#6F5549]">
+          Tidak ada checklist dan tidak terhubung absensi.
+        </span>
       </div>
 
       <div className="max-h-[58vh] overflow-auto">
-        <table className="w-full min-w-[1800px] border-collapse text-left">
+        <table className="w-full min-w-[980px] border-collapse text-left">
           <thead>
-            <tr className="bg-[#FFF8EF]">
-              <th className="w-[280px] border-b border-r border-[#E1CFBE] px-3 py-3 text-[12px] font-extrabold text-[#6F5549]">
-                Bab / Sub Bab
+            <tr className="bg-[#FFF8EF] text-[13px] font-extrabold text-[#6F5549]">
+              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
+                Bab
               </th>
-
-              {monthOptions.map((month) => (
-                <th
-                  key={month}
-                  colSpan={5}
-                  className="border-b border-r border-[#E1CFBE] px-3 py-3 text-center text-[12px] font-extrabold text-[#6F5549]"
-                >
-                  {month}
-                </th>
-              ))}
-            </tr>
-
-            <tr className="bg-[#FFF8EF]">
-              <th className="border-b border-r border-[#E1CFBE] px-3 py-2 text-[11px] font-bold text-[#8A5A48]">
-                Target per minggu
+              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
+                Sub Bab
               </th>
-
-              {monthOptions.map((month) =>
-                weekOptions.map((week) => (
-                  <th
-                    key={`${month}-${week.value}`}
-                    className="h-9 w-[36px] border-b border-r border-[#E1CFBE] text-center text-[11px] font-extrabold text-[#6F5549]"
-                  >
-                    {week.label}
-                  </th>
-                ))
-              )}
+              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
+                Target Tanggal
+              </th>
+              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
+                Catatan
+              </th>
+              <th className="border-b border-[#E1CFBE] px-4 py-3 text-center">
+                Penanda
+              </th>
             </tr>
           </thead>
 
-          {program.chapters.map((chapter) => (
-            <tbody key={chapter.id}>
+          <tbody>
+            {program.chapters.length === 0 ? (
               <tr>
                 <td
-                  colSpan={totalColumns}
-                  className="border-b border-[#E1CFBE] bg-[#FFF8EF] px-3 py-3 text-[13px] font-extrabold text-[#2B1B18]"
+                  colSpan={5}
+                  className="px-4 py-10 text-center text-[14px] text-[#6F5549]"
                 >
-                  Bab {chapter.chapter_order}. {chapter.chapter_title}
-                  <span className="ml-2 text-[11px] font-bold text-[#8A5A48]">
-                    {chapter.sub_chapters.length} Sub Bab
-                  </span>
+                  Belum ada Bab/Sub Bab.
                 </td>
               </tr>
+            ) : null}
 
-              {chapter.sub_chapters.map((subChapter) => (
-                <tr key={subChapter.id} className="hover:bg-[#FFFCF8]">
-                  <td className="min-w-[280px] border-b border-r border-[#E1CFBE] px-3 py-3 align-top">
-                    <p className="text-[13px] font-bold text-[#2B1B18]">
+            {program.chapters.map((chapter) =>
+              chapter.sub_chapters.length === 0 ? (
+                <tr key={chapter.id}>
+                  <td className="border-b border-r border-[#E1CFBE] px-4 py-3 font-bold text-[#2B1B18]">
+                    Bab {chapter.chapter_order}. {chapter.chapter_title}
+                  </td>
+                  <td
+                    colSpan={4}
+                    className="border-b border-[#E1CFBE] px-4 py-3 text-[#6F5549]"
+                  >
+                    Belum ada Sub Bab.
+                  </td>
+                </tr>
+              ) : (
+                chapter.sub_chapters.map((subChapter, subIndex) => (
+                  <tr key={subChapter.id} className="hover:bg-[#FFFCF8]">
+                    {subIndex === 0 ? (
+                      <td
+                        rowSpan={chapter.sub_chapters.length}
+                        className="min-w-[240px] border-b border-r border-[#E1CFBE] px-4 py-3 align-top font-bold text-[#2B1B18]"
+                      >
+                        Bab {chapter.chapter_order}. {chapter.chapter_title}
+                      </td>
+                    ) : null}
+
+                    <td className="min-w-[260px] border-b border-r border-[#E1CFBE] px-4 py-3 text-[#2B1B18]">
                       {subChapter.sub_chapter_order}.{" "}
                       {subChapter.sub_chapter_title}
-                    </p>
+                    </td>
 
-                    <p className="mt-1 text-[11px] text-[#8A5A48]">
-                      Target: {subChapter.target_month || "-"} Minggu{" "}
-                      {subChapter.planned_week || "-"}
-                    </p>
-                  </td>
+                    <td className="whitespace-nowrap border-b border-r border-[#E1CFBE] bg-[#FCA5A5] px-4 py-3 font-extrabold text-[#7F1D1D]">
+                      {formatDate(getTargetDate(subChapter))}
+                    </td>
 
-                  {monthOptions.map((month) =>
-                    weekOptions.map((week) => {
-                      const isTarget = isTargetPlanCell(
-                        subChapter,
-                        month,
-                        week.value
-                      );
+                    <td className="min-w-[260px] border-b border-r border-[#E1CFBE] px-4 py-3 text-[#6F5549]">
+                      {subChapter.notes || "-"}
+                    </td>
 
-                      return (
-                        <td
-                          key={`${subChapter.id}-${month}-${week.value}`}
-                          title={
-                            isTarget
-                              ? `Target Rencana: ${month} ${week.label}`
-                              : undefined
-                          }
-                          className={`h-10 w-[36px] border-b border-r border-[#E1CFBE] text-center ${isTarget
-                              ? "bg-[#FCA5A5]"
-                              : "bg-white"
-                            }`}
-                        >
-                          {!isTarget ? (
-                            <span className="text-[11px] text-[#E8D6C1]">
-                              -
-                            </span>
-                          ) : null}
-                        </td>
-                      );
-                    })
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          ))}
+                    <td className="border-b border-[#E1CFBE] px-4 py-3 text-center">
+                      <span className="inline-flex h-6 w-12 items-center justify-center rounded-md border border-[#EF4444] bg-[#FCA5A5]" />
+                    </td>
+                  </tr>
+                ))
+              )
+            )}
+          </tbody>
         </table>
       </div>
     </div>
   );
+}
+
+function getNearestTarget(program: ProgramWithChildren) {
+  const targets = program.chapters
+    .flatMap((chapter) => chapter.sub_chapters)
+    .filter((subChapter) => subChapter.target_date)
+    .sort((a, b) =>
+      (a.target_date || "").localeCompare(b.target_date || "")
+    );
+
+  if (targets.length === 0) return "Belum ada target tanggal.";
+
+  const nearest = targets[0];
+
+  return `${nearest.sub_chapter_title || "-"} • ${formatDate(
+    nearest.target_date
+  )}`;
 }
 
 function SummaryCard({

@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { CheckCircle2, Eye, FileText, Search, Send, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Eye,
+  FileText,
+  Search,
+  Send,
+  X,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
@@ -14,20 +22,28 @@ type TeacherRow = {
 type RppRow = {
   id: string;
 
-  // kolom lama
   title?: string | null;
 
   teacher_id: string | null;
-  curriculum_program_id: string | null;
-  curriculum_chapter_id: string | null;
-  curriculum_sub_chapter_id: string | null;
+  curriculum_program_id?: string | null;
+  curriculum_chapter_id?: string | null;
+  curriculum_sub_chapter_id?: string | null;
+
+  manual_program_semester?: string | null;
+  manual_chapter?: string | null;
+  manual_sub_chapter?: string | null;
+
+  student_id?: string | null;
+  student_name?: string | null;
+  student_class?: string | null;
+  student_nis?: string | null;
+
   subject_name: string | null;
   level: string | null;
   grade: string | null;
   semester: string | null;
   academic_year: string | null;
 
-  // kolom lama tetap ada untuk compatibility, tapi tidak ditampilkan lagi
   meeting_date: string | null;
   meeting_number: number | null;
   opening_activity: string | null;
@@ -64,13 +80,17 @@ function normalizeText(value?: string | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function getRppTitle(rpp: RppRow) {
@@ -91,10 +111,38 @@ function getStatusClass(status?: string | null) {
   return "bg-[#F1F5F9] text-[#64748B]";
 }
 
+function canReviewRpp(status?: string | null) {
+  return status === "submitted";
+}
+
 function isPdfUrl(url?: string | null) {
   if (!url) return false;
 
   return url.toLowerCase().split("?")[0].endsWith(".pdf");
+}
+
+function getRppStudentClass(rpp: RppRow) {
+  return rpp.student_class || rpp.grade || "-";
+}
+
+function getRppStudentName(rpp: RppRow) {
+  return rpp.student_name || "-";
+}
+
+function getRppStudentNis(rpp: RppRow) {
+  return rpp.student_nis || "-";
+}
+
+function getManualProgram(rpp: RppRow) {
+  return rpp.manual_program_semester || "-";
+}
+
+function getManualChapter(rpp: RppRow) {
+  return rpp.manual_chapter || "-";
+}
+
+function getManualSubChapter(rpp: RppRow) {
+  return rpp.manual_sub_chapter || "-";
 }
 
 export default function KepalaSekolahRppPage() {
@@ -102,6 +150,11 @@ export default function KepalaSekolahRppPage() {
   const [rpps, setRpps] = useState<EnrichedRpp[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
   const [selectedRpp, setSelectedRpp] = useState<EnrichedRpp | null>(null);
 
   const [search, setSearch] = useState("");
@@ -113,31 +166,47 @@ export default function KepalaSekolahRppPage() {
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const [teachersRes, rppRes] = await Promise.all([
-      supabase.from("teachers").select("*").order("full_name"),
-      supabase.from("rpp").select("*").order("updated_at", { ascending: false }),
-    ]);
+    try {
+      const [teachersRes, rppRes] = await Promise.all([
+        supabase.from("teachers").select("*").order("full_name"),
+        supabase.from("rpp").select("*").order("updated_at", { ascending: false }),
+      ]);
 
-    const teachersData = (teachersRes.data || []) as TeacherRow[];
-    const rppData = (rppRes.data || []) as RppRow[];
+      if (teachersRes.error) throw new Error(teachersRes.error.message);
+      if (rppRes.error) throw new Error(rppRes.error.message);
 
-    const teacherMap = new Map(
-      teachersData.map((teacher) => [teacher.id, teacher])
-    );
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const rppData = (rppRes.data || []) as RppRow[];
 
-    const enriched: EnrichedRpp[] = rppData.map((rpp) => {
-      const teacher = rpp.teacher_id ? teacherMap.get(rpp.teacher_id) : null;
+      const teacherMap = new Map(
+        teachersData.map((teacher) => [teacher.id, teacher])
+      );
 
-      return {
-        ...rpp,
-        teacher_name: teacher?.full_name || "-",
-      };
-    });
+      const enriched: EnrichedRpp[] = rppData.map((rpp) => {
+        const teacher = rpp.teacher_id ? teacherMap.get(rpp.teacher_id) : null;
 
-    setTeachers(teachersData);
-    setRpps(enriched);
-    setLoading(false);
+        return {
+          ...rpp,
+          teacher_name: teacher?.full_name || "-",
+        };
+      });
+
+      setTeachers(teachersData);
+      setRpps(enriched);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data RPP.");
+      }
+
+      setTeachers([]);
+      setRpps([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -158,7 +227,7 @@ export default function KepalaSekolahRppPage() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -174,7 +243,13 @@ export default function KepalaSekolahRppPage() {
         normalizeText(rpp.indicator).includes(q) ||
         normalizeText(rpp.subject_material).includes(q) ||
         normalizeText(rpp.learning_objectives).includes(q) ||
-        normalizeText(rpp.notes).includes(q);
+        normalizeText(rpp.notes).includes(q) ||
+        normalizeText(rpp.manual_program_semester).includes(q) ||
+        normalizeText(rpp.manual_chapter).includes(q) ||
+        normalizeText(rpp.manual_sub_chapter).includes(q) ||
+        normalizeText(rpp.student_name).includes(q) ||
+        normalizeText(rpp.student_class).includes(q) ||
+        normalizeText(rpp.student_nis).includes(q);
 
       const matchTeacher =
         teacherFilter === "Semua Guru" || rpp.teacher_id === teacherFilter;
@@ -189,6 +264,7 @@ export default function KepalaSekolahRppPage() {
   const summary = useMemo(() => {
     return {
       total: rpps.length,
+      draft: rpps.filter((rpp) => rpp.status === "draft").length,
       submitted: rpps.filter((rpp) => rpp.status === "submitted").length,
       approved: rpps.filter((rpp) => rpp.status === "approved").length,
       rejected: rpps.filter((rpp) => rpp.status === "rejected").length,
@@ -196,62 +272,102 @@ export default function KepalaSekolahRppPage() {
   }, [rpps]);
 
   async function handleApprove(rpp: EnrichedRpp) {
-    const confirmApprove = confirm(`Approve RPP "${getRppTitle(rpp)}"?`);
-
-    if (!confirmApprove) return;
-
-    const now = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("rpp")
-      .update({
-        status: "approved",
-        approved_at: now,
-        rejected_at: null,
-        rejection_note: null,
-        updated_at: now,
-      })
-      .eq("id", rpp.id);
-
-    if (error) {
-      alert(`Gagal approve RPP: ${error.message}`);
+    if (!canReviewRpp(rpp.status)) {
+      setErrorMessage("Hanya RPP dengan status submitted yang bisa di-approve.");
       return;
     }
 
-    await fetchData();
-    setSelectedRpp(null);
+    const confirmApprove = window.confirm(`Approve RPP "${getRppTitle(rpp)}"?`);
+
+    if (!confirmApprove) return;
+
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const now = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("rpp")
+        .update({
+          status: "approved",
+          approved_at: now,
+          rejected_at: null,
+          rejection_note: null,
+          updated_at: now,
+        })
+        .eq("id", rpp.id);
+
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("RPP berhasil di-approve.");
+      setSelectedRpp(null);
+      await fetchData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal approve RPP.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openRejectModal(rpp: EnrichedRpp) {
+    if (!canReviewRpp(rpp.status)) {
+      setErrorMessage("Hanya RPP dengan status submitted yang bisa direvisi.");
+      return;
+    }
+
+    setRejectingRpp(rpp);
+    setRejectionNote("");
+    setErrorMessage("");
+    setSuccessMessage("");
   }
 
   async function handleReject() {
     if (!rejectingRpp) return;
 
     if (!rejectionNote.trim()) {
-      alert("Isi catatan revisi terlebih dahulu.");
+      setErrorMessage("Isi catatan revisi terlebih dahulu.");
       return;
     }
 
-    const now = new Date().toISOString();
+    setSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
 
-    const { error } = await supabase
-      .from("rpp")
-      .update({
-        status: "rejected",
-        rejected_at: now,
-        rejection_note: rejectionNote.trim(),
-        updated_at: now,
-      })
-      .eq("id", rejectingRpp.id);
+    try {
+      const now = new Date().toISOString();
 
-    if (error) {
-      alert(`Gagal reject RPP: ${error.message}`);
-      return;
+      const { error } = await supabase
+        .from("rpp")
+        .update({
+          status: "rejected",
+          rejected_at: now,
+          rejection_note: rejectionNote.trim(),
+          updated_at: now,
+        })
+        .eq("id", rejectingRpp.id);
+
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("RPP berhasil dikembalikan untuk revisi.");
+      setRejectingRpp(null);
+      setSelectedRpp(null);
+      setRejectionNote("");
+      await fetchData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengirim revisi RPP.");
+      }
+    } finally {
+      setSaving(false);
     }
-
-    await fetchData();
-
-    setRejectingRpp(null);
-    setSelectedRpp(null);
-    setRejectionNote("");
   }
 
   return (
@@ -267,17 +383,32 @@ export default function KepalaSekolahRppPage() {
           </h1>
 
           <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-            Review RPP yang dibuat guru. Format terbaru menampilkan Indikator,
-            Materi Pelajaran, Tujuan Pembelajaran, dan dokumen RPP.
+            Review RPP yang dibuat guru. Admin/Kepala Sekolah hanya melihat
+            detail, membuka dokumen, approve, atau meminta revisi.
           </p>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            <div className="flex gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>{errorMessage}</p>
+            </div>
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] leading-6 text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
             icon={<FileText className="h-5 w-5" />}
             label="Total RPP"
             value={summary.total}
-            info="Data"
+            info={`${summary.draft} Draft`}
             tone="pink"
           />
 
@@ -314,7 +445,7 @@ export default function KepalaSekolahRppPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, guru, mapel, indikator, materi, atau tujuan..."
+                placeholder="Cari judul, guru, siswa, NIPD, mapel, program, bab, indikator..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -348,15 +479,16 @@ export default function KepalaSekolahRppPage() {
 
         <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1220px] border-collapse">
+            <table className="w-full min-w-[1400px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="px-6 py-4">RPP</th>
                   <th className="px-6 py-4">Guru</th>
+                  <th className="px-6 py-4">Siswa</th>
                   <th className="px-6 py-4">Mapel</th>
-                  <th className="px-6 py-4">Kelas</th>
+                  <th className="px-6 py-4">Program / Bab</th>
                   <th className="px-6 py-4">Indikator</th>
-                  <th className="px-6 py-4">Materi Pelajaran</th>
+                  <th className="px-6 py-4">Materi</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Aksi</th>
                 </tr>
@@ -366,7 +498,7 @@ export default function KepalaSekolahRppPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat data RPP...
@@ -375,7 +507,7 @@ export default function KepalaSekolahRppPage() {
                 ) : filteredRpps.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada data RPP.
@@ -396,21 +528,32 @@ export default function KepalaSekolahRppPage() {
 
                       <td className="px-6 py-4">{rpp.teacher_name}</td>
 
+                      <td className="px-6 py-4">
+                        <p className="font-bold">{getRppStudentName(rpp)}</p>
+                        <p className="mt-1 text-[12px] text-[#6F5549]">
+                          {getRppStudentClass(rpp)} • NIPD: {getRppStudentNis(rpp)}
+                        </p>
+                      </td>
+
                       <td className="px-6 py-4">{rpp.subject_name || "-"}</td>
 
                       <td className="px-6 py-4">
-                        {[rpp.level, rpp.grade].filter(Boolean).join(" — ") ||
-                          "-"}
+                        <p className="line-clamp-1 max-w-[220px] font-bold">
+                          {getManualProgram(rpp)}
+                        </p>
+                        <p className="mt-1 line-clamp-1 max-w-[220px] text-[12px] text-[#6F5549]">
+                          {getManualChapter(rpp)} • {getManualSubChapter(rpp)}
+                        </p>
                       </td>
 
                       <td className="px-6 py-4">
-                        <p className="line-clamp-2 max-w-[240px]">
+                        <p className="line-clamp-2 max-w-[220px]">
                           {rpp.indicator || "-"}
                         </p>
                       </td>
 
                       <td className="px-6 py-4">
-                        <p className="line-clamp-2 max-w-[240px]">
+                        <p className="line-clamp-2 max-w-[220px]">
                           {rpp.subject_material || "-"}
                         </p>
                       </td>
@@ -461,12 +604,10 @@ export default function KepalaSekolahRppPage() {
       {selectedRpp ? (
         <RppDetailModal
           rpp={selectedRpp}
+          saving={saving}
           onClose={() => setSelectedRpp(null)}
           onApprove={() => handleApprove(selectedRpp)}
-          onReject={() => {
-            setRejectingRpp(selectedRpp);
-            setRejectionNote("");
-          }}
+          onReject={() => openRejectModal(selectedRpp)}
         />
       ) : null}
 
@@ -474,8 +615,12 @@ export default function KepalaSekolahRppPage() {
         <RejectModal
           rpp={rejectingRpp}
           note={rejectionNote}
+          saving={saving}
           onChange={setRejectionNote}
-          onClose={() => setRejectingRpp(null)}
+          onClose={() => {
+            setRejectingRpp(null);
+            setRejectionNote("");
+          }}
           onSubmit={handleReject}
         />
       ) : null}
@@ -485,11 +630,13 @@ export default function KepalaSekolahRppPage() {
 
 function RppDetailModal({
   rpp,
+  saving,
   onClose,
   onApprove,
   onReject,
 }: {
   rpp: EnrichedRpp;
+  saving: boolean;
   onClose: () => void;
   onApprove: () => void;
   onReject: () => void;
@@ -505,7 +652,7 @@ function RppDetailModal({
           </span>
 
           <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
-            {[rpp.level, rpp.grade].filter(Boolean).join(" — ") || "-"}
+            {getRppStudentClass(rpp)}
           </span>
 
           <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
@@ -513,12 +660,21 @@ function RppDetailModal({
           </span>
         </div>
 
+        <div className="grid gap-3 md:grid-cols-3">
+          <MiniInfo label="Program Semester" value={getManualProgram(rpp)} />
+          <MiniInfo label="Bab" value={getManualChapter(rpp)} />
+          <MiniInfo label="Sub Bab" value={getManualSubChapter(rpp)} />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <MiniInfo label="Nama Siswa" value={getRppStudentName(rpp)} />
+          <MiniInfo label="Kelas" value={getRppStudentClass(rpp)} />
+          <MiniInfo label="NIS / NIPD" value={getRppStudentNis(rpp)} />
+        </div>
+
         <InfoBlock label="Judul RPP" value={getRppTitle(rpp)} />
-
         <InfoBlock label="Guru" value={rpp.teacher_name || "-"} />
-
         <InfoBlock label="Mapel" value={rpp.subject_name || "-"} />
-
         <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
 
         <InfoBlock
@@ -532,11 +688,8 @@ function RppDetailModal({
         />
 
         <InfoBlock label="Assessment" value={rpp.assessment || "-"} />
-
         <InfoBlock label="Media Pembelajaran" value={rpp.learning_media || "-"} />
-
         <InfoBlock label="Sumber Belajar" value={rpp.learning_resources || "-"} />
-
         <InfoBlock label="Catatan Guru" value={rpp.notes || "-"} />
 
         {rpp.document_url ? (
@@ -578,6 +731,10 @@ function RppDetailModal({
           <InfoBlock label="Catatan Revisi" value={rpp.rejection_note} />
         ) : null}
 
+        {rpp.submitted_at ? (
+          <InfoBlock label="Submitted At" value={formatDateTime(rpp.submitted_at)} />
+        ) : null}
+
         {rpp.approved_at ? (
           <InfoBlock label="Approved At" value={formatDateTime(rpp.approved_at)} />
         ) : null}
@@ -587,7 +744,8 @@ function RppDetailModal({
             <button
               type="button"
               onClick={onReject}
-              className="h-11 rounded-xl border border-[#FECACA] text-[14px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
+              disabled={saving}
+              className="h-11 rounded-xl border border-[#FECACA] text-[14px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2] disabled:opacity-60"
             >
               Reject / Revisi
             </button>
@@ -595,7 +753,8 @@ function RppDetailModal({
             <button
               type="button"
               onClick={onApprove}
-              className="h-11 rounded-xl bg-[#158A58] text-[14px] font-extrabold text-white transition hover:bg-[#116C46]"
+              disabled={saving}
+              className="h-11 rounded-xl bg-[#158A58] text-[14px] font-extrabold text-white transition hover:bg-[#116C46] disabled:opacity-60"
             >
               Approve RPP
             </button>
@@ -609,12 +768,14 @@ function RppDetailModal({
 function RejectModal({
   rpp,
   note,
+  saving,
   onChange,
   onClose,
   onSubmit,
 }: {
   rpp: EnrichedRpp;
   note: string;
+  saving: boolean;
   onChange: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
@@ -640,13 +801,25 @@ function RejectModal({
           />
         </label>
 
-        <button
-          type="button"
-          onClick={onSubmit}
-          className="h-11 w-full rounded-xl bg-[#DC2626] text-[14px] font-extrabold text-white transition hover:bg-[#B91C1C]"
-        >
-          Kirim Revisi
-        </button>
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="h-11 rounded-xl border border-[#DCC8B6] bg-white text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+          >
+            Batal
+          </button>
+
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={saving}
+            className="h-11 rounded-xl bg-[#DC2626] text-[14px] font-extrabold text-white transition hover:bg-[#B91C1C] disabled:opacity-60"
+          >
+            {saving ? "Mengirim..." : "Kirim Revisi"}
+          </button>
+        </div>
       </div>
     </ModalShell>
   );
@@ -742,6 +915,20 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
 
       <p className="mt-2 whitespace-pre-line text-[14px] leading-6 text-[#2B1B18]">
         {value}
+      </p>
+    </div>
+  );
+}
+
+function MiniInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[#E1CFBE] bg-[#FFF8EF] px-4 py-3">
+      <p className="text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+
+      <p className="mt-1 text-[14px] font-extrabold text-[#2B1B18]">
+        {value || "-"}
       </p>
     </div>
   );

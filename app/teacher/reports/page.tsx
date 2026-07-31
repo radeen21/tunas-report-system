@@ -5,6 +5,7 @@ import {
   BookOpen,
   CheckCircle2,
   ClipboardList,
+  Download,
   Edit3,
   FileText,
   GraduationCap,
@@ -171,6 +172,17 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
 function normalizeSubjects(subjects: TeacherRow["subjects"]) {
   if (!subjects) return [];
 
@@ -266,8 +278,72 @@ function isMathSubject(subject?: SubjectRow | null) {
 }
 
 function getSubjectLabel(subject: SubjectRow) {
+  const level = subject.level ? normalizeLevel(subject.level) : "";
   const grade = subject.grade || "All Grade";
-  return `${subject.name || "-"}${subject.grade || subject.level ? ` — ${subject.level || "-"} ${grade}` : ""}`;
+
+  if (subject.grade || subject.level) {
+    return `${subject.name || "-"} — ${level || "-"} ${grade}`;
+  }
+
+  return subject.name || "-";
+}
+
+function getReportTypeLabel(type?: string | null) {
+  if (type === "mid_semester") return "Mid Semester";
+  if (type === "semester") return "Semester";
+
+  return "Bulanan";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatExportDateName() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function escapeExcelCell(value: string | number | null | undefined) {
+  return String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function downloadHtmlAsExcel(filename: string, html: string) {
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  URL.revokeObjectURL(url);
 }
 
 function calculateFromForm(form: ReportForm) {
@@ -323,6 +399,7 @@ function getStatusLabel(status?: string | null) {
   if (status === "approved") return "Approved";
   if (status === "pending") return "Pending Approval";
   if (status === "rejected") return "Rejected";
+
   return "Draft";
 }
 
@@ -339,7 +416,16 @@ function cleanFileName(fileName: string) {
 }
 
 function isAllowedReportFile(file: File) {
-  const allowedExtensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".jpeg", ".png"];
+  const allowedExtensions = [
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".jpg",
+    ".jpeg",
+    ".png",
+  ];
   const lowerName = file.name.toLowerCase();
 
   return allowedExtensions.some((extension) => lowerName.endsWith(extension));
@@ -376,6 +462,8 @@ export default function TeacherAcademicReportsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [errorMessage, setErrorMessage] = useState("");
+
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<ReportForm>(emptyForm());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -385,121 +473,130 @@ export default function TeacherAcademicReportsPage() {
   const [periodFilter, setPeriodFilter] = useState("Semua Periode");
 
   async function getCurrentTeacher() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    const email =
+    if (authError) {
+      throw new Error(authError.message);
+    }
+
+    const email = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
       "";
 
     if (email) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("teachers")
         .select("*")
-        .eq("email", email)
+        .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (data) return data as TeacherRow;
     }
 
-    const { data } = await supabase
-      .from("teachers")
-      .select("*")
-      .order("teacher_code", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
 
-    return data as TeacherRow | null;
+      if (error) throw new Error(error.message);
+      if (data) return data as TeacherRow;
+    }
+
+    return null;
   }
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const currentTeacher = await getCurrentTeacher();
-    setTeacher(currentTeacher);
+    try {
+      const currentTeacher = await getCurrentTeacher();
 
-    if (!currentTeacher?.id) {
+      setTeacher(currentTeacher);
+
+      if (!currentTeacher?.id) {
+        setStudents([]);
+        setSubjects([]);
+        setReports([]);
+        setErrorMessage(
+          "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
+        );
+        return;
+      }
+
+      const [studentsRes, subjectsRes, reportsRes] = await Promise.all([
+        supabase.from("students").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("academic_reports")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .order("updated_at", { ascending: false }),
+      ]);
+
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (reportsRes.error) throw new Error(reportsRes.error.message);
+
+      const studentsData = (studentsRes.data || []) as StudentRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const reportsData = (reportsRes.data || []) as AcademicReportRow[];
+
+      const studentMap = new Map(
+        studentsData.map((student) => [student.id, student])
+      );
+
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
+
+      const enrichedReports: EnrichedReport[] = reportsData.map((report) => {
+        const student = report.student_id ? studentMap.get(report.student_id) : null;
+        const subject = report.subject_id ? subjectMap.get(report.subject_id) : null;
+
+        return {
+          ...report,
+          student_name: student?.full_name || "-",
+          student_grade: student?.grade || "-",
+          student_level: student?.level || "-",
+          student_nipd: student?.nis || "-",
+          student_nisn: student?.nisn || "-",
+          subject_name: subject ? getSubjectLabel(subject) : "-",
+        };
+      });
+
+      setStudents(studentsData);
+      setSubjects(subjectsData);
+      setReports(enrichedReports);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data laporan akademik.");
+      }
+
+      setTeacher(null);
       setStudents([]);
       setSubjects([]);
       setReports([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const [subjectsRes, reportsRes, schedulesRes] = await Promise.all([
-      supabase.from("subjects").select("*").order("name"),
-      supabase
-        .from("academic_reports")
-        .select("*")
-        .eq("teacher_id", currentTeacher.id)
-        .order("report_period", { ascending: false }),
-      supabase
-        .from("schedules")
-        .select("student_id")
-        .eq("teacher_id", currentTeacher.id),
-    ]);
-
-    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-    const reportsData = (reportsRes.data || []) as AcademicReportRow[];
-    const scheduleStudentIds = Array.from(
-      new Set(
-        (schedulesRes.data || [])
-          .map((item) => item.student_id)
-          .filter(Boolean) as string[]
-      )
-    );
-    const reportStudentIds = Array.from(
-      new Set(
-        reportsData
-          .map((report) => report.student_id)
-          .filter(Boolean) as string[]
-      )
-    );
-
-    const allowedStudentIds = Array.from(
-      new Set([...scheduleStudentIds, ...reportStudentIds])
-    );
-
-    let studentsData: StudentRow[] = [];
-
-    if (allowedStudentIds.length > 0) {
-      const { data: studentsResData, error: studentsError } = await supabase
-        .from("students")
-        .select("*")
-        .in("id", allowedStudentIds)
-        .order("full_name");
-
-      if (studentsError) {
-        alert(studentsError.message);
-      }
-
-      studentsData = (studentsResData || []) as StudentRow[];
-    }
-
-    const studentMap = new Map(studentsData.map((student) => [student.id, student]));
-    const subjectMap = new Map(subjectsData.map((subject) => [subject.id, subject]));
-
-    const enrichedReports: EnrichedReport[] = reportsData.map((report) => {
-      const student = report.student_id ? studentMap.get(report.student_id) : null;
-      const subject = report.subject_id ? subjectMap.get(report.subject_id) : null;
-
-      return {
-        ...report,
-        student_name: student?.full_name || "-",
-        student_grade: student?.grade || "-",
-        student_level: student?.level || "-",
-        student_nipd: student?.nis || "-",
-        student_nisn: student?.nisn || "-",
-        subject_name: subject ? getSubjectLabel(subject) : "-",
-      };
-    });
-
-    setStudents(studentsData);
-    setSubjects(subjectsData);
-    setReports(enrichedReports);
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -510,27 +607,27 @@ export default function TeacherAcademicReportsPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
-        fetchData
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
-        fetchData
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "schedules" },
-        fetchData
+        () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -653,6 +750,7 @@ export default function TeacherAcademicReportsPage() {
   function openCreateModal() {
     setForm(emptyForm());
     setSelectedFile(null);
+    setErrorMessage("");
     setShowModal(true);
   }
 
@@ -692,6 +790,7 @@ export default function TeacherAcademicReportsPage() {
     });
 
     setSelectedFile(null);
+    setErrorMessage("");
     setShowModal(true);
   }
 
@@ -707,40 +806,42 @@ export default function TeacherAcademicReportsPage() {
   }
 
   function validateForm() {
+    setErrorMessage("");
+
     if (!teacher?.id) {
-      alert("Data guru tidak ditemukan.");
+      setErrorMessage("Data guru tidak ditemukan.");
       return false;
     }
 
     if (!form.student_id) {
-      alert("Pilih siswa terlebih dahulu.");
+      setErrorMessage("Pilih siswa terlebih dahulu.");
       return false;
     }
 
     if (!form.subject_id) {
-      alert("Pilih mata pelajaran terlebih dahulu.");
+      setErrorMessage("Pilih mata pelajaran terlebih dahulu.");
       return false;
     }
 
     if (!form.report_period.trim()) {
-      alert("Isi periode laporan terlebih dahulu.");
+      setErrorMessage("Isi periode laporan terlebih dahulu.");
       return false;
     }
 
     if (!calculated.finalGrade && !hasUploadedFile()) {
-      alert(
+      setErrorMessage(
         "Isi minimal salah satu nilai atau upload file laporan akademik/raport."
       );
       return false;
     }
 
     if (selectedFile && !isAllowedReportFile(selectedFile)) {
-      alert("File harus PDF, Word, Excel, JPG, JPEG, atau PNG.");
+      setErrorMessage("File harus PDF, Word, Excel, JPG, JPEG, atau PNG.");
       return false;
     }
 
     if (selectedFile && selectedFile.size > 10 * 1024 * 1024) {
-      alert("Ukuran file maksimal 10MB.");
+      setErrorMessage("Ukuran file maksimal 10MB.");
       return false;
     }
 
@@ -788,6 +889,8 @@ export default function TeacherAcademicReportsPage() {
 
       approval_status: nextStatus,
       submitted_at: nextStatus === "pending" ? now : null,
+      rejected_at: null,
+      rejection_note: null,
       updated_at: now,
 
       uh_score: calculated.averageUh,
@@ -842,17 +945,17 @@ export default function TeacherAcademicReportsPage() {
 
       await fetchData();
 
-      setSaving(false);
       setShowModal(false);
       setForm(emptyForm());
       setSelectedFile(null);
     } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal menyimpan laporan akademik.");
+      }
+    } finally {
       setSaving(false);
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Gagal menyimpan laporan akademik."
-      );
     }
   }
 
@@ -891,6 +994,143 @@ export default function TeacherAcademicReportsPage() {
     await fetchData();
   }
 
+  function handleExportExcel() {
+    if (filteredReports.length === 0) {
+      alert("Tidak ada data laporan akademik yang bisa diexport.");
+      return;
+    }
+
+    const rows = filteredReports.map((report, index) => {
+      const approvalStatus = report.approval_status || report.status || "draft";
+
+      return {
+        No: index + 1,
+        "Nama Siswa": report.student_name,
+        NIPD: report.student_nipd,
+        NISN: report.student_nisn,
+        Level: report.student_level,
+        Kelas: report.student_grade,
+        "Mata Pelajaran": report.subject_name,
+        Periode: report.report_period || "-",
+        "Jenis Laporan": getReportTypeLabel(report.report_type),
+        "UH 1": formatNumber(report.uh_1 ?? report.uh_score),
+        "UH 2": formatNumber(report.uh_2),
+        "UH 3": formatNumber(report.uh_3),
+        "UH 4": formatNumber(report.uh_4),
+        "Rata-rata UH": formatNumber(report.average_uh ?? report.uh_score),
+        "Tugas 1": formatNumber(report.task_1 ?? report.task_score),
+        "Tugas 2": formatNumber(report.task_2),
+        "Tugas 3": formatNumber(report.task_3),
+        "Tugas 4": formatNumber(report.task_4),
+        "Tugas 5": formatNumber(report.task_5),
+        "Rata-rata Tugas": formatNumber(report.average_task ?? report.task_score),
+        UTS: formatNumber(report.mid_score ?? report.uts_score),
+        UAS: formatNumber(report.final_exam_score ?? report.uas_score),
+        "Nilai Proses": formatNumber(report.process_score),
+        "Nilai Akhir": formatNumber(report.final_grade ?? report.final_score),
+        Predikat: report.predicate || report.description || "-",
+        "Catatan Guru": report.teacher_comment || "-",
+        "File Laporan": report.report_file_url || "-",
+        Status: getStatusLabel(approvalStatus),
+        "Submitted At": formatDateTime(report.submitted_at),
+        "Approved At": formatDateTime(report.approved_at),
+        "Rejected At": formatDateTime(report.rejected_at),
+        "Catatan Rejection": report.rejection_note || "-",
+      };
+    });
+
+    const headers = Object.keys(rows[0]);
+
+    const tableRows = rows
+      .map((row) => {
+        return `
+          <tr>
+            ${headers
+              .map((header) => {
+                const value = row[header as keyof typeof row];
+                return `<td>${escapeExcelCell(value)}</td>`;
+              })
+              .join("")}
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <style>
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              font-family: Arial, sans-serif;
+              font-size: 12px;
+            }
+
+            th {
+              background: #7A1F2B;
+              color: #ffffff;
+              font-weight: bold;
+              border: 1px solid #dddddd;
+              padding: 8px;
+              text-align: left;
+              white-space: nowrap;
+            }
+
+            td {
+              border: 1px solid #dddddd;
+              padding: 8px;
+              vertical-align: top;
+              mso-number-format: "\\@";
+            }
+
+            .title {
+              font-size: 18px;
+              font-weight: bold;
+              color: #2B1B18;
+              margin-bottom: 6px;
+            }
+
+            .subtitle {
+              font-size: 12px;
+              color: #6B4A3A;
+              margin-bottom: 16px;
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="title">Laporan Akademik Guru</div>
+          <div class="subtitle">
+            Guru: ${escapeExcelCell(teacher?.full_name || "-")} |
+            Export tanggal ${formatDateTime(new Date().toISOString())} |
+            Total data: ${filteredReports.length}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                ${headers
+                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
+                  .join("")}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    downloadHtmlAsExcel(
+      `laporan-akademik-guru-${formatExportDateName()}.xls`,
+      html
+    );
+  }
+
   return (
     <TeacherLayout
       activeMenu="Laporan Akademik"
@@ -915,14 +1155,32 @@ export default function TeacherAcademicReportsPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D]"
-          >
-            + Input / Upload Laporan
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="flex h-11 w-fit items-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] shadow-sm transition hover:bg-[#FFF8EF]"
+            >
+              <Download className="h-4 w-4" />
+              Export Excel
+            </button>
+
+            <button
+              type="button"
+              onClick={openCreateModal}
+              disabled={!teacher || saving}
+              className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
+            >
+              + Input / Upload Laporan
+            </button>
+          </div>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            {errorMessage}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -1056,7 +1314,9 @@ export default function TeacherAcademicReportsPage() {
                             </div>
 
                             <div>
-                              <p className="font-extrabold">{report.student_name}</p>
+                              <p className="font-extrabold">
+                                {report.student_name}
+                              </p>
                               <p className="mt-1 text-[12px] text-[#6F5549]">
                                 {report.student_level} — {report.student_grade}
                               </p>
@@ -1073,9 +1333,11 @@ export default function TeacherAcademicReportsPage() {
                         <td className="px-6 py-4">{report.subject_name}</td>
 
                         <td className="px-6 py-4">
-                          <p className="font-bold">{report.report_period || "-"}</p>
+                          <p className="font-bold">
+                            {report.report_period || "-"}
+                          </p>
                           <p className="mt-1 text-[12px] text-[#6F5549]">
-                            {report.report_type || "monthly"}
+                            {getReportTypeLabel(report.report_type)}
                           </p>
                         </td>
 
@@ -1084,7 +1346,9 @@ export default function TeacherAcademicReportsPage() {
                         </td>
 
                         <td className="px-6 py-4">
-                          {formatNumber(report.average_task ?? report.task_score)}
+                          {formatNumber(
+                            report.average_task ?? report.task_score
+                          )}
                         </td>
 
                         <td className="px-6 py-4">
@@ -1103,7 +1367,9 @@ export default function TeacherAcademicReportsPage() {
 
                         <td className="px-6 py-4">
                           <span className="font-extrabold">
-                            {formatNumber(report.final_grade ?? report.final_score)}
+                            {formatNumber(
+                              report.final_grade ?? report.final_score
+                            )}
                           </span>
                         </td>
 
@@ -1180,7 +1446,9 @@ export default function TeacherAcademicReportsPage() {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
               <div>
                 <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
-                  {form.id ? "Edit Laporan Akademik" : "Input / Upload Laporan Akademik"}
+                  {form.id
+                    ? "Edit Laporan Akademik"
+                    : "Input / Upload Laporan Akademik"}
                 </h2>
 
                 <p className="mt-1 text-[14px] text-[#6F5549]">
@@ -1198,6 +1466,12 @@ export default function TeacherAcademicReportsPage() {
             </div>
 
             <div className="space-y-5 px-6 py-6">
+              {errorMessage ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+                  {errorMessage}
+                </div>
+              ) : null}
+
               <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
                 <p className="text-[14px] font-extrabold text-[#2B1B18]">
                   Pilihan Pengisian
@@ -1222,8 +1496,8 @@ export default function TeacherAcademicReportsPage() {
                     <option value="">Pilih siswa</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.level} {student.grade} — NIPD:{" "}
-                        {student.nis || "-"}
+                        {student.full_name} — {student.level} {student.grade} —
+                        NIPD: {student.nis || "-"}
                       </option>
                     ))}
                   </select>
@@ -1232,7 +1506,9 @@ export default function TeacherAcademicReportsPage() {
                 <FormGroup label="Mata Pelajaran">
                   <select
                     value={form.subject_id}
-                    onChange={(event) => updateForm("subject_id", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("subject_id", event.target.value)
+                    }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih mata pelajaran</option>
@@ -1260,7 +1536,9 @@ export default function TeacherAcademicReportsPage() {
                 <FormGroup label="Jenis Laporan">
                   <select
                     value={form.report_type}
-                    onChange={(event) => updateForm("report_type", event.target.value)}
+                    onChange={(event) =>
+                      updateForm("report_type", event.target.value)
+                    }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     {reportTypeOptions.map((type) => (
@@ -1281,7 +1559,8 @@ export default function TeacherAcademicReportsPage() {
                     </p>
 
                     <p className="mt-1 text-[13px] text-[#6F5549]">
-                      Format PDF, Word, Excel, JPG, JPEG, atau PNG. Maksimal 10MB.
+                      Format PDF, Word, Excel, JPG, JPEG, atau PNG. Maksimal
+                      10MB.
                     </p>
 
                     {form.report_file_url ? (
@@ -1318,34 +1597,85 @@ export default function TeacherAcademicReportsPage() {
               </div>
 
               <ScoreSection title="Nilai UH" icon={<BookOpen className="h-5 w-5" />}>
-                <ScoreInput label="UH 1" value={form.uh_1} onChange={(value) => updateForm("uh_1", value)} />
-                <ScoreInput label="UH 2" value={form.uh_2} onChange={(value) => updateForm("uh_2", value)} />
-                <ScoreInput label="UH 3" value={form.uh_3} onChange={(value) => updateForm("uh_3", value)} />
-                <ScoreInput label="UH 4" value={form.uh_4} onChange={(value) => updateForm("uh_4", value)} />
+                <ScoreInput
+                  label="UH 1"
+                  value={form.uh_1}
+                  onChange={(value) => updateForm("uh_1", value)}
+                />
+                <ScoreInput
+                  label="UH 2"
+                  value={form.uh_2}
+                  onChange={(value) => updateForm("uh_2", value)}
+                />
+                <ScoreInput
+                  label="UH 3"
+                  value={form.uh_3}
+                  onChange={(value) => updateForm("uh_3", value)}
+                />
+                <ScoreInput
+                  label="UH 4"
+                  value={form.uh_4}
+                  onChange={(value) => updateForm("uh_4", value)}
+                />
               </ScoreSection>
 
               <ScoreSection
                 title="Nilai Tugas"
                 icon={<ClipboardList className="h-5 w-5" />}
               >
-                <ScoreInput label="Tugas 1" value={form.task_1} onChange={(value) => updateForm("task_1", value)} />
-                <ScoreInput label="Tugas 2" value={form.task_2} onChange={(value) => updateForm("task_2", value)} />
-                <ScoreInput label="Tugas 3" value={form.task_3} onChange={(value) => updateForm("task_3", value)} />
-                <ScoreInput label="Tugas 4" value={form.task_4} onChange={(value) => updateForm("task_4", value)} />
-                <ScoreInput label="Tugas 5" value={form.task_5} onChange={(value) => updateForm("task_5", value)} />
+                <ScoreInput
+                  label="Tugas 1"
+                  value={form.task_1}
+                  onChange={(value) => updateForm("task_1", value)}
+                />
+                <ScoreInput
+                  label="Tugas 2"
+                  value={form.task_2}
+                  onChange={(value) => updateForm("task_2", value)}
+                />
+                <ScoreInput
+                  label="Tugas 3"
+                  value={form.task_3}
+                  onChange={(value) => updateForm("task_3", value)}
+                />
+                <ScoreInput
+                  label="Tugas 4"
+                  value={form.task_4}
+                  onChange={(value) => updateForm("task_4", value)}
+                />
+                <ScoreInput
+                  label="Tugas 5"
+                  value={form.task_5}
+                  onChange={(value) => updateForm("task_5", value)}
+                />
               </ScoreSection>
 
               <ScoreSection
                 title="Nilai Ujian dan Proses KBM"
                 icon={<GraduationCap className="h-5 w-5" />}
               >
-                <ScoreInput label="UTS" value={form.mid_score} onChange={(value) => updateForm("mid_score", value)} />
-                <ScoreInput label="UAS" value={form.final_exam_score} onChange={(value) => updateForm("final_exam_score", value)} />
-                <ScoreInput label="Proses KBM" value={form.process_score} onChange={(value) => updateForm("process_score", value)} />
+                <ScoreInput
+                  label="UTS"
+                  value={form.mid_score}
+                  onChange={(value) => updateForm("mid_score", value)}
+                />
+                <ScoreInput
+                  label="UAS"
+                  value={form.final_exam_score}
+                  onChange={(value) => updateForm("final_exam_score", value)}
+                />
+                <ScoreInput
+                  label="Proses KBM"
+                  value={form.process_score}
+                  onChange={(value) => updateForm("process_score", value)}
+                />
               </ScoreSection>
 
               <div className="grid gap-4 md:grid-cols-4">
-                <ResultCard label="Rata-rata UH" value={formatNumber(calculated.averageUh)} />
+                <ResultCard
+                  label="Rata-rata UH"
+                  value={formatNumber(calculated.averageUh)}
+                />
                 <ResultCard
                   label="Rata-rata Tugas"
                   value={formatNumber(calculated.averageTask)}
@@ -1515,13 +1845,15 @@ function StatusBadge({ status }: { status?: string | null }) {
     safe === "approved"
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "pending"
-      ? "bg-[#FFF2B8] text-[#B26A00]"
-      : safe === "rejected"
-      ? "bg-[#FFE4E6] text-[#BE123C]"
-      : "bg-[#F1F5F9] text-[#64748B]";
+        ? "bg-[#FFF2B8] text-[#B26A00]"
+        : safe === "rejected"
+          ? "bg-[#FFE4E6] text-[#BE123C]"
+          : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
-    <span className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}>
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+    >
       {getStatusLabel(safe)}
     </span>
   );
@@ -1534,15 +1866,17 @@ function PredicateBadge({ predicate }: { predicate?: string | null }) {
     safe === "Sangat Baik"
       ? "bg-[#C7F0DA] text-[#158A58]"
       : safe === "Baik"
-      ? "bg-[#D7ECFA] text-[#1779B8]"
-      : safe === "Cukup"
-      ? "bg-[#FFF2B8] text-[#B26A00]"
-      : safe === "Kurang"
-      ? "bg-[#FFE4E6] text-[#BE123C]"
-      : "bg-[#F1F5F9] text-[#64748B]";
+        ? "bg-[#D7ECFA] text-[#1779B8]"
+        : safe === "Cukup"
+          ? "bg-[#FFF2B8] text-[#B26A00]"
+          : safe === "Kurang"
+            ? "bg-[#FFE4E6] text-[#BE123C]"
+            : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
-    <span className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}>
+    <span
+      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+    >
       {safe}
     </span>
   );

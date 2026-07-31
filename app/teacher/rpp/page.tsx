@@ -24,52 +24,44 @@ type TeacherRow = {
   id: string;
   full_name: string | null;
   email?: string | null;
+  teacher_code?: string | null;
   subjects?: string[] | string | null;
 };
 
-type CurriculumProgram = {
+type StudentRow = {
   id: string;
-  teacher_id: string | null;
-  program_type: string | null;
+  full_name: string | null;
   level: string | null;
   grade: string | null;
-  subject_name: string | null;
-  semester: string | null;
-  academic_year: string | null;
-  status: string | null;
+  nis?: string | null;
+  nisn?: string | null;
 };
 
-type CurriculumChapter = {
+type SubjectRow = {
   id: string;
-  curriculum_program_id: string | null;
-  chapter_title: string | null;
-  chapter_order: number | null;
-};
-
-type CurriculumSubChapter = {
-  id: string;
-  curriculum_chapter_id: string | null;
-  sub_chapter_title: string | null;
-  sub_chapter_order: number | null;
-  target_month: string | null;
-  planned_week: number | null;
-};
-
-type ProgramWithChildren = CurriculumProgram & {
-  chapters: Array<
-    CurriculumChapter & {
-      sub_chapters: CurriculumSubChapter[];
-    }
-  >;
+  name: string | null;
+  level?: string | null;
+  grade?: string | null;
 };
 
 type RppRow = {
   id: string;
   title?: string | null;
   teacher_id: string | null;
-  curriculum_program_id: string | null;
-  curriculum_chapter_id: string | null;
-  curriculum_sub_chapter_id: string | null;
+
+  curriculum_program_id?: string | null;
+  curriculum_chapter_id?: string | null;
+  curriculum_sub_chapter_id?: string | null;
+
+  manual_program_semester?: string | null;
+  manual_chapter?: string | null;
+  manual_sub_chapter?: string | null;
+
+  student_id?: string | null;
+  student_name?: string | null;
+  student_class?: string | null;
+  student_nis?: string | null;
+
   subject_name: string | null;
   level: string | null;
   grade: string | null;
@@ -102,9 +94,20 @@ type RppRow = {
 
 type RppForm = {
   id: string;
-  curriculum_program_id: string;
-  curriculum_chapter_id: string;
-  curriculum_sub_chapter_id: string;
+
+  manual_program_semester: string;
+  manual_chapter: string;
+  manual_sub_chapter: string;
+
+  student_id: string;
+  student_name: string;
+  student_class: string;
+  student_nis: string;
+
+  subject_id: string;
+  subject_name: string;
+  semester: string;
+
   rpp_title: string;
   indicator: string;
   subject_material: string;
@@ -120,9 +123,20 @@ type RppForm = {
 function emptyForm(): RppForm {
   return {
     id: "",
-    curriculum_program_id: "",
-    curriculum_chapter_id: "",
-    curriculum_sub_chapter_id: "",
+
+    manual_program_semester: "",
+    manual_chapter: "",
+    manual_sub_chapter: "",
+
+    student_id: "",
+    student_name: "",
+    student_class: "",
+    student_nis: "",
+
+    subject_id: "",
+    subject_name: "",
+    semester: "Ganjil",
+
     rpp_title: "",
     indicator: "",
     subject_material: "",
@@ -140,6 +154,28 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function normalizeSubjects(subjects: TeacherRow["subjects"]) {
   if (!subjects) return [];
 
@@ -153,23 +189,13 @@ function normalizeSubjects(subjects: TeacherRow["subjects"]) {
     .filter(Boolean);
 }
 
-function isTeacherSubjectMatch(
-  teacherSubjects: string[],
-  programSubject?: string | null
-) {
-  if (teacherSubjects.length === 0) return true;
+function sameSubjectName(a?: string | null, b?: string | null) {
+  if (!a || !b) return false;
 
-  const subjectName = normalizeText(programSubject);
+  const left = normalizeText(a);
+  const right = normalizeText(b);
 
-  if (!subjectName) return false;
-
-  return teacherSubjects.some((teacherSubject) => {
-    return (
-      teacherSubject === subjectName ||
-      teacherSubject.includes(subjectName) ||
-      subjectName.includes(teacherSubject)
-    );
-  });
+  return left === right || left.includes(right) || right.includes(left);
 }
 
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
@@ -185,13 +211,17 @@ function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function getRppTitle(rpp: RppRow) {
@@ -243,13 +273,53 @@ function isAllowedRppFile(file: File) {
   );
 }
 
+function getSubjectLabel(subject?: SubjectRow | null) {
+  if (!subject) return "-";
+
+  const level = subject.level ? normalizeLevel(subject.level) : "";
+  const grade = subject.grade || "";
+
+  if (level && grade) return `${subject.name || "-"} — ${level} ${grade}`;
+  if (grade) return `${subject.name || "-"} — ${grade}`;
+  if (level) return `${subject.name || "-"} — ${level}`;
+
+  return subject.name || "-";
+}
+
+function getManualProgram(rpp: RppRow) {
+  return rpp.manual_program_semester || "-";
+}
+
+function getManualChapter(rpp: RppRow) {
+  return rpp.manual_chapter || "-";
+}
+
+function getManualSubChapter(rpp: RppRow) {
+  return rpp.manual_sub_chapter || "-";
+}
+
+function getRppStudentName(rpp: RppRow) {
+  return rpp.student_name || "-";
+}
+
+function getRppStudentClass(rpp: RppRow) {
+  return rpp.student_class || rpp.grade || "-";
+}
+
+function getRppStudentNis(rpp: RppRow) {
+  return rpp.student_nis || "-";
+}
+
 export default function TeacherRppPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
-  const [programs, setPrograms] = useState<ProgramWithChildren[]>([]);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [rpps, setRpps] = useState<RppRow[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
@@ -260,68 +330,75 @@ export default function TeacherRppPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   async function getCurrentTeacher() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    const email =
+    if (authError) {
+      throw new Error(authError.message);
+    }
+
+    const email = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
       "";
 
     if (email) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("teachers")
         .select("*")
-        .eq("email", email)
+        .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (data) return data as TeacherRow;
     }
 
-    const { data } = await supabase
-      .from("teachers")
-      .select("*")
-      .order("full_name")
-      .limit(1)
-      .maybeSingle();
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
 
-    return data as TeacherRow | null;
+      if (error) throw new Error(error.message);
+      if (data) return data as TeacherRow;
+    }
+
+    return null;
   }
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const currentTeacher = await getCurrentTeacher();
-    setTeacher(currentTeacher);
+    try {
+      const currentTeacher = await getCurrentTeacher();
 
-    if (!currentTeacher?.id) {
-      setPrograms([]);
-      setRpps([]);
-      setLoading(false);
-      return;
-    }
+      setTeacher(currentTeacher);
 
-    const teacherSubjects = normalizeSubjects(currentTeacher.subjects);
+      if (!currentTeacher?.id) {
+        setStudents([]);
+        setSubjects([]);
+        setRpps([]);
+        setErrorMessage(
+          "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
+        );
+        return;
+      }
 
-    const [programsRes, chaptersRes, subChaptersRes, rppRes] =
-      await Promise.all([
-        supabase
-          .from("curriculum_programs")
-          .select("*")
-          .eq("teacher_id", currentTeacher.id)
-          .order("updated_at", { ascending: false }),
-
-        supabase
-          .from("curriculum_chapters")
-          .select("*")
-          .order("chapter_order", { ascending: true }),
-
-        supabase
-          .from("curriculum_sub_chapters")
-          .select("*")
-          .order("sub_chapter_order", { ascending: true }),
-
+      const [studentsRes, subjectsRes, rppRes] = await Promise.all([
+        supabase.from("students").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
         supabase
           .from("rpp")
           .select("*")
@@ -329,109 +406,27 @@ export default function TeacherRppPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-    if (programsRes.error) {
-      alert(`Gagal mengambil Program Semester: ${programsRes.error.message}`);
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (rppRes.error) throw new Error(rppRes.error.message);
+
+      setStudents((studentsRes.data || []) as StudentRow[]);
+      setSubjects((subjectsRes.data || []) as SubjectRow[]);
+      setRpps((rppRes.data || []) as RppRow[]);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data RPP.");
+      }
+
+      setTeacher(null);
+      setStudents([]);
+      setSubjects([]);
+      setRpps([]);
+    } finally {
+      setLoading(false);
     }
-
-    if (chaptersRes.error) {
-      alert(`Gagal mengambil Bab: ${chaptersRes.error.message}`);
-    }
-
-    if (subChaptersRes.error) {
-      alert(`Gagal mengambil Sub Bab: ${subChaptersRes.error.message}`);
-    }
-
-    if (rppRes.error) {
-      alert(`Gagal mengambil RPP: ${rppRes.error.message}`);
-    }
-
-    const rawProgramsData = (programsRes.data || []) as CurriculumProgram[];
-
-    const programsData = rawProgramsData.filter((program) => {
-      const matchTeacher = program.teacher_id === currentTeacher.id;
-
-      const matchSubject = isTeacherSubjectMatch(
-        teacherSubjects,
-        program.subject_name
-      );
-
-      const matchAcademicYear =
-        !program.academic_year || program.academic_year === ACADEMIC_YEAR;
-
-      return matchTeacher && matchSubject && matchAcademicYear;
-    });
-
-    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
-    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
-    const rppData = (rppRes.data || []) as RppRow[];
-
-    const allowedProgramIds = new Set(programsData.map((program) => program.id));
-
-    const allowedChapterIds = new Set(
-      chaptersData
-        .filter((chapter) => {
-          return (
-            chapter.curriculum_program_id &&
-            allowedProgramIds.has(chapter.curriculum_program_id)
-          );
-        })
-        .map((chapter) => chapter.id)
-    );
-
-    const filteredChaptersData = chaptersData.filter((chapter) => {
-      return (
-        chapter.curriculum_program_id &&
-        allowedProgramIds.has(chapter.curriculum_program_id)
-      );
-    });
-
-    const filteredSubChaptersData = subChaptersData.filter((subChapter) => {
-      return (
-        subChapter.curriculum_chapter_id &&
-        allowedChapterIds.has(subChapter.curriculum_chapter_id)
-      );
-    });
-
-    const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
-
-    filteredSubChaptersData.forEach((subChapter) => {
-      if (!subChapter.curriculum_chapter_id) return;
-
-      const current =
-        subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
-
-      current.push(subChapter);
-      subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
-    });
-
-    const chaptersByProgram = new Map<
-      string,
-      Array<CurriculumChapter & { sub_chapters: CurriculumSubChapter[] }>
-    >();
-
-    filteredChaptersData.forEach((chapter) => {
-      if (!chapter.curriculum_program_id) return;
-
-      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
-
-      current.push({
-        ...chapter,
-        sub_chapters: subChaptersByChapter.get(chapter.id) || [],
-      });
-
-      chaptersByProgram.set(chapter.curriculum_program_id, current);
-    });
-
-    const programsWithChildren: ProgramWithChildren[] = programsData.map(
-      (program) => ({
-        ...program,
-        chapters: chaptersByProgram.get(program.id) || [],
-      })
-    );
-
-    setPrograms(programsWithChildren);
-    setRpps(rppData);
-    setLoading(false);
   }
 
   useEffect(() => {
@@ -441,53 +436,50 @@ export default function TeacherRppPage() {
       .channel("teacher-rpp-realtime")
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "rpp" },
         () => fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_programs" },
+        { event: "*", schema: "public", table: "students" },
         () => fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_chapters" },
-        () => fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_sub_chapters" },
+        { event: "*", schema: "public", table: "subjects" },
         () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
-  const selectedProgram = useMemo(() => {
-    return (
-      programs.find((program) => program.id === form.curriculum_program_id) ||
-      null
-    );
-  }, [programs, form.curriculum_program_id]);
+  const teacherSubjectNames = useMemo(() => {
+    return normalizeSubjects(teacher?.subjects);
+  }, [teacher]);
 
-  const selectedChapter = useMemo(() => {
-    return (
-      selectedProgram?.chapters.find(
-        (chapter) => chapter.id === form.curriculum_chapter_id
-      ) || null
-    );
-  }, [selectedProgram, form.curriculum_chapter_id]);
+  const subjectOptions = useMemo(() => {
+    if (teacherSubjectNames.length === 0) return subjects;
 
-  const selectedSubChapter = useMemo(() => {
-    return (
-      selectedChapter?.sub_chapters.find(
-        (subChapter) => subChapter.id === form.curriculum_sub_chapter_id
-      ) || null
-    );
-  }, [selectedChapter, form.curriculum_sub_chapter_id]);
+    const filteredSubjects = subjects.filter((subject) => {
+      return teacherSubjectNames.some((teacherSubject) =>
+        sameSubjectName(teacherSubject, subject.name)
+      );
+    });
+
+    return filteredSubjects.length > 0 ? filteredSubjects : subjects;
+  }, [subjects, teacherSubjectNames]);
+
+  const selectedSubject = useMemo(() => {
+    return subjects.find((subject) => subject.id === form.subject_id) || null;
+  }, [subjects, form.subject_id]);
 
   const filteredRpps = useMemo(() => {
     const q = normalizeText(search);
@@ -500,7 +492,13 @@ export default function TeacherRppPage() {
         normalizeText(rpp.indicator).includes(q) ||
         normalizeText(rpp.subject_material).includes(q) ||
         normalizeText(rpp.learning_objectives).includes(q) ||
-        normalizeText(rpp.notes).includes(q);
+        normalizeText(rpp.notes).includes(q) ||
+        normalizeText(rpp.manual_program_semester).includes(q) ||
+        normalizeText(rpp.manual_chapter).includes(q) ||
+        normalizeText(rpp.manual_sub_chapter).includes(q) ||
+        normalizeText(rpp.student_name).includes(q) ||
+        normalizeText(rpp.student_class).includes(q) ||
+        normalizeText(rpp.student_nis).includes(q);
 
       const matchStatus =
         statusFilter === "Semua Status" || rpp.status === statusFilter;
@@ -525,6 +523,28 @@ export default function TeacherRppPage() {
     }));
   }
 
+  function handleStudentChange(studentId: string) {
+    const student = students.find((item) => item.id === studentId);
+
+    setForm((prev) => ({
+      ...prev,
+      student_id: studentId,
+      student_name: student?.full_name || "",
+      student_class: student ? formatClass(student.level, student.grade) : "",
+      student_nis: student?.nis || "",
+    }));
+  }
+
+  function handleSubjectChange(subjectId: string) {
+    const subject = subjects.find((item) => item.id === subjectId);
+
+    setForm((prev) => ({
+      ...prev,
+      subject_id: subjectId,
+      subject_name: subject?.name || "",
+    }));
+  }
+
   function openCreateModal() {
     setForm(emptyForm());
     setSelectedFile(null);
@@ -537,11 +557,26 @@ export default function TeacherRppPage() {
       return;
     }
 
+    const matchedSubject = subjects.find((subject) =>
+      sameSubjectName(subject.name, rpp.subject_name)
+    );
+
     setForm({
       id: rpp.id,
-      curriculum_program_id: rpp.curriculum_program_id || "",
-      curriculum_chapter_id: rpp.curriculum_chapter_id || "",
-      curriculum_sub_chapter_id: rpp.curriculum_sub_chapter_id || "",
+
+      manual_program_semester: rpp.manual_program_semester || "",
+      manual_chapter: rpp.manual_chapter || "",
+      manual_sub_chapter: rpp.manual_sub_chapter || "",
+
+      student_id: rpp.student_id || "",
+      student_name: rpp.student_name || "",
+      student_class: rpp.student_class || rpp.grade || "",
+      student_nis: rpp.student_nis || "",
+
+      subject_id: matchedSubject?.id || "",
+      subject_name: rpp.subject_name || "",
+      semester: rpp.semester || "Ganjil",
+
       rpp_title: rpp.rpp_title || rpp.title || "",
       indicator: rpp.indicator || "",
       subject_material: rpp.subject_material || "",
@@ -564,38 +599,38 @@ export default function TeacherRppPage() {
       return false;
     }
 
-    if (!selectedProgram) {
-      alert("Pilih Program Semester terlebih dahulu.");
+    if (!form.manual_program_semester.trim()) {
+      alert("Isi Program Semester terlebih dahulu.");
       return false;
     }
 
-    if (selectedProgram.teacher_id !== teacher.id) {
-      alert("Program Semester ini bukan milik guru aktif.");
+    if (!form.manual_chapter.trim()) {
+      alert("Isi Bab terlebih dahulu.");
       return false;
     }
 
-    if (!isTeacherSubjectMatch(normalizeSubjects(teacher.subjects), selectedProgram.subject_name)) {
-      alert("Mapel Program Semester tidak sesuai dengan mapel guru aktif.");
+    if (!form.manual_sub_chapter.trim()) {
+      alert("Isi Sub Bab terlebih dahulu.");
       return false;
     }
 
-    if (!selectedChapter) {
-      alert("Pilih Bab terlebih dahulu.");
+    if (!form.student_name.trim()) {
+      alert("Pilih atau isi nama siswa terlebih dahulu.");
       return false;
     }
 
-    if (selectedChapter.curriculum_program_id !== selectedProgram.id) {
-      alert("Bab tidak sesuai dengan Program Semester yang dipilih.");
+    if (!form.student_class.trim()) {
+      alert("Isi kelas siswa terlebih dahulu.");
       return false;
     }
 
-    if (!selectedSubChapter) {
-      alert("Pilih Sub Bab terlebih dahulu.");
+    if (!form.subject_name.trim()) {
+      alert("Pilih atau isi mata pelajaran terlebih dahulu.");
       return false;
     }
 
-    if (selectedSubChapter.curriculum_chapter_id !== selectedChapter.id) {
-      alert("Sub Bab tidak sesuai dengan Bab yang dipilih.");
+    if (!form.student_nis.trim()) {
+      alert("Isi NIS/NIPD terlebih dahulu.");
       return false;
     }
 
@@ -659,9 +694,7 @@ export default function TeacherRppPage() {
   async function handleSave(statusOverride?: "draft" | "submitted") {
     if (!validateForm()) return;
 
-    if (!teacher?.id || !selectedProgram || !selectedChapter || !selectedSubChapter) {
-      return;
-    }
+    if (!teacher?.id) return;
 
     if (form.id) {
       const existingRpp = rpps.find((rpp) => rpp.id === form.id);
@@ -682,14 +715,25 @@ export default function TeacherRppPage() {
       const payload = {
         title: form.rpp_title.trim(),
         teacher_id: teacher.id,
-        curriculum_program_id: selectedProgram.id,
-        curriculum_chapter_id: selectedChapter.id,
-        curriculum_sub_chapter_id: selectedSubChapter.id,
-        subject_name: selectedProgram.subject_name,
-        level: selectedProgram.level,
-        grade: selectedProgram.grade,
-        semester: selectedProgram.semester,
-        academic_year: selectedProgram.academic_year || ACADEMIC_YEAR,
+
+        curriculum_program_id: null,
+        curriculum_chapter_id: null,
+        curriculum_sub_chapter_id: null,
+
+        manual_program_semester: form.manual_program_semester.trim(),
+        manual_chapter: form.manual_chapter.trim(),
+        manual_sub_chapter: form.manual_sub_chapter.trim(),
+
+        student_id: form.student_id || null,
+        student_name: form.student_name.trim(),
+        student_class: form.student_class.trim(),
+        student_nis: form.student_nis.trim(),
+
+        subject_name: form.subject_name.trim(),
+        level: null,
+        grade: form.student_class.trim(),
+        semester: form.semester,
+        academic_year: ACADEMIC_YEAR,
 
         meeting_date: null,
         meeting_number: null,
@@ -801,20 +845,27 @@ export default function TeacherRppPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Buat RPP berdasarkan Program Semester, Bab, dan Sub Bab milik guru
-              aktif. Format baru menggunakan Indikator dan Materi Pelajaran.
+              Buat RPP secara manual berdasarkan Program Semester, Bab, Sub Bab,
+              nama siswa, kelas, mapel, NIS/NIPD, dan upload file RPP.
             </p>
           </div>
 
           <button
             type="button"
             onClick={openCreateModal}
-            className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D]"
+            disabled={!teacher || saving}
+            className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             <Plus className="h-4 w-4" />
             Tambah RPP
           </button>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            {errorMessage}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -855,7 +906,7 @@ export default function TeacherRppPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, mapel, indikator, materi, tujuan, atau catatan..."
+                placeholder="Cari judul, siswa, NIPD, kelas, mapel, program, bab, indikator, materi..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -890,11 +941,11 @@ export default function TeacherRppPage() {
                     <StatusBadge status={rpp.status} />
 
                     <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-                      {rpp.level} — {rpp.grade}
+                      {getRppStudentClass(rpp)}
                     </span>
 
                     <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
-                      Semester {rpp.semester}
+                      Semester {rpp.semester || "-"}
                     </span>
 
                     {rpp.document_url ? (
@@ -909,11 +960,18 @@ export default function TeacherRppPage() {
                   </h2>
 
                   <p className="mt-2 text-[14px] text-[#6F5549]">
-                    {rpp.subject_name || "-"} • {rpp.academic_year || "-"}
+                    {rpp.subject_name || "-"} • {getRppStudentName(rpp)} • NIPD:{" "}
+                    {getRppStudentNis(rpp)}
                   </p>
                 </div>
 
                 <div className="space-y-4 px-6 py-5">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <MiniInfo label="Program Semester" value={getManualProgram(rpp)} />
+                    <MiniInfo label="Bab" value={getManualChapter(rpp)} />
+                    <MiniInfo label="Sub Bab" value={getManualSubChapter(rpp)} />
+                  </div>
+
                   <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
 
                   <InfoBlock
@@ -998,12 +1056,15 @@ export default function TeacherRppPage() {
       {showModal ? (
         <RppModal
           form={form}
-          programs={programs}
-          selectedProgram={selectedProgram}
-          selectedChapter={selectedChapter}
+          students={students}
+          subjects={subjects}
+          subjectOptions={subjectOptions}
+          selectedSubject={selectedSubject}
           selectedFile={selectedFile}
           saving={saving}
           onChange={updateForm}
+          onStudentChange={handleStudentChange}
+          onSubjectChange={handleSubjectChange}
           onFileChange={setSelectedFile}
           onClose={() => setShowModal(false)}
           onSaveDraft={() => handleSave("draft")}
@@ -1020,26 +1081,29 @@ export default function TeacherRppPage() {
 
 function RppModal({
   form,
-  programs,
-  selectedProgram,
-  selectedChapter,
+  students,
+  subjectOptions,
+  selectedSubject,
   selectedFile,
   saving,
   onChange,
+  onStudentChange,
+  onSubjectChange,
   onFileChange,
   onClose,
   onSaveDraft,
   onSubmit,
 }: {
   form: RppForm;
-  programs: ProgramWithChildren[];
-  selectedProgram: ProgramWithChildren | null;
-  selectedChapter:
-    | (CurriculumChapter & { sub_chapters: CurriculumSubChapter[] })
-    | null;
+  students: StudentRow[];
+  subjects: SubjectRow[];
+  subjectOptions: SubjectRow[];
+  selectedSubject: SubjectRow | null;
   selectedFile: File | null;
   saving: boolean;
   onChange: (field: keyof RppForm, value: string) => void;
+  onStudentChange: (studentId: string) => void;
+  onSubjectChange: (subjectId: string) => void;
   onFileChange: (file: File | null) => void;
   onClose: () => void;
   onSaveDraft: () => void;
@@ -1048,75 +1112,133 @@ function RppModal({
   return (
     <ModalShell
       title={form.id ? "Edit RPP" : "Tambah RPP"}
-      subtitle="Pilih Program Semester, Bab, Sub Bab, lalu isi format RPP terbaru."
+      subtitle="Isi RPP secara manual: Program Semester, Bab, Sub Bab, siswa, kelas, mapel, NIS/NIPD, dan upload file."
       onClose={onClose}
     >
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-3">
           <FormGroup label="Program Semester">
-            <select
-              value={form.curriculum_program_id}
-              onChange={(event) => {
-                onChange("curriculum_program_id", event.target.value);
-                onChange("curriculum_chapter_id", "");
-                onChange("curriculum_sub_chapter_id", "");
-              }}
+            <input
+              value={form.manual_program_semester}
+              onChange={(event) =>
+                onChange("manual_program_semester", event.target.value)
+              }
+              placeholder="Contoh: Program Semester 1 / Ganjil"
               className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            >
-              <option value="">Pilih Program</option>
-              {programs.map((program) => (
-                <option key={program.id} value={program.id}>
-                  {program.subject_name} — {program.level} {program.grade} —
-                  Semester {program.semester || "-"}
-                </option>
-              ))}
-            </select>
+            />
           </FormGroup>
 
           <FormGroup label="Bab">
+            <input
+              value={form.manual_chapter}
+              onChange={(event) => onChange("manual_chapter", event.target.value)}
+              placeholder="Contoh: Bab 1"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+
+          <FormGroup label="Sub Bab">
+            <input
+              value={form.manual_sub_chapter}
+              onChange={(event) =>
+                onChange("manual_sub_chapter", event.target.value)
+              }
+              placeholder="Contoh: Mengubah Bentuk Energi"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <FormGroup label="Nama Siswa">
             <select
-              value={form.curriculum_chapter_id}
-              onChange={(event) => {
-                onChange("curriculum_chapter_id", event.target.value);
-                onChange("curriculum_sub_chapter_id", "");
-              }}
-              disabled={!selectedProgram}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:opacity-60"
+              value={form.student_id}
+              onChange={(event) => onStudentChange(event.target.value)}
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value="">Pilih Bab</option>
-              {selectedProgram?.chapters.map((chapter) => (
-                <option key={chapter.id} value={chapter.id}>
-                  Bab {chapter.chapter_order}. {chapter.chapter_title}
+              <option value="">Pilih siswa</option>
+              {students.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.full_name} — {formatClass(student.level, student.grade)} —
+                  NIPD: {student.nis || "-"}
                 </option>
               ))}
             </select>
           </FormGroup>
 
-          <FormGroup label="Sub Bab">
+          <FormGroup label="Nama Siswa Manual">
+            <input
+              value={form.student_name}
+              onChange={(event) => onChange("student_name", event.target.value)}
+              placeholder="Isi manual jika siswa belum ada di data"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <FormGroup label="Kelas">
+            <input
+              value={form.student_class}
+              onChange={(event) => onChange("student_class", event.target.value)}
+              placeholder="Contoh: SD Grade 4"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+
+          <FormGroup label="Mapel">
             <select
-              value={form.curriculum_sub_chapter_id}
-              onChange={(event) =>
-                onChange("curriculum_sub_chapter_id", event.target.value)
-              }
-              disabled={!selectedChapter}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:opacity-60"
+              value={form.subject_id}
+              onChange={(event) => onSubjectChange(event.target.value)}
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value="">Pilih Sub Bab</option>
-              {selectedChapter?.sub_chapters.map((subChapter) => (
-                <option key={subChapter.id} value={subChapter.id}>
-                  {subChapter.sub_chapter_order}.{" "}
-                  {subChapter.sub_chapter_title}
+              <option value="">Pilih mapel</option>
+              {subjectOptions.map((subject) => (
+                <option key={subject.id} value={subject.id}>
+                  {getSubjectLabel(subject)}
                 </option>
               ))}
+            </select>
+          </FormGroup>
+
+          <FormGroup label="NIS / NIPD">
+            <input
+              value={form.student_nis}
+              onChange={(event) => onChange("student_nis", event.target.value)}
+              placeholder="Contoh: HSTKB-001"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <FormGroup label="Mapel Manual">
+            <input
+              value={form.subject_name}
+              onChange={(event) => onChange("subject_name", event.target.value)}
+              placeholder="Isi manual jika mapel belum ada di data"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
+          </FormGroup>
+
+          <FormGroup label="Semester">
+            <select
+              value={form.semester}
+              onChange={(event) => onChange("semester", event.target.value)}
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Ganjil</option>
+              <option>Genap</option>
             </select>
           </FormGroup>
         </div>
 
-        {programs.length === 0 ? (
-          <div className="rounded-2xl border border-[#FDE68A] bg-[#FFFBEB] px-5 py-4 text-[13px] leading-6 text-[#92400E]">
-            Belum ada Program Semester yang cocok dengan guru/mapel aktif.
-            Pastikan Program Semester dibuat menggunakan guru dan mapel yang
-            sesuai.
+        {selectedSubject ? (
+          <div className="rounded-2xl border border-[#EADACA] bg-[#FFF8EF] px-5 py-4 text-[13px] leading-6 text-[#6F5549]">
+            Mapel terpilih:{" "}
+            <span className="font-extrabold text-[#2B1B18]">
+              {getSubjectLabel(selectedSubject)}
+            </span>
           </div>
         ) : null}
 
@@ -1124,7 +1246,7 @@ function RppModal({
           <input
             value={form.rpp_title}
             onChange={(event) => onChange("rpp_title", event.target.value)}
-            placeholder="Contoh: RPP IPA - Besaran dan Pengukuran"
+            placeholder="Contoh: RPP IPAS - Mengubah Bentuk Energi"
             className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
           />
         </FormGroup>
@@ -1164,6 +1286,7 @@ function RppModal({
             onChange={(value) => onChange("learning_media", value)}
             placeholder="Tuliskan media pembelajaran..."
           />
+
           <TextArea
             label="Sumber Belajar"
             value={form.learning_resources}
@@ -1268,12 +1391,24 @@ function RppDetailModal({ rpp, onClose }: { rpp: RppRow; onClose: () => void }) 
           <StatusBadge status={rpp.status} />
 
           <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-            {rpp.subject_name}
+            {rpp.subject_name || "-"}
           </span>
 
           <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
-            {rpp.level} — {rpp.grade}
+            {getRppStudentClass(rpp)}
           </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <MiniInfo label="Program Semester" value={getManualProgram(rpp)} />
+          <MiniInfo label="Bab" value={getManualChapter(rpp)} />
+          <MiniInfo label="Sub Bab" value={getManualSubChapter(rpp)} />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <MiniInfo label="Nama Siswa" value={getRppStudentName(rpp)} />
+          <MiniInfo label="Kelas" value={getRppStudentClass(rpp)} />
+          <MiniInfo label="NIS / NIPD" value={getRppStudentNis(rpp)} />
         </div>
 
         <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
@@ -1353,6 +1488,7 @@ function SummaryCard({
       <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
         {value}
       </p>
+
       <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
     </div>
   );
@@ -1438,6 +1574,19 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
       </p>
       <p className="mt-2 whitespace-pre-line text-[14px] leading-6 text-[#2B1B18]">
         {value}
+      </p>
+    </div>
+  );
+}
+
+function MiniInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-[#E1CFBE] bg-[#FFF8EF] px-4 py-3">
+      <p className="text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+      <p className="mt-1 text-[14px] font-extrabold text-[#2B1B18]">
+        {value || "-"}
       </p>
     </div>
   );

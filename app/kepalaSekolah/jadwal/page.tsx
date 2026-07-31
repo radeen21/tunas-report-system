@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertCircle,
   CalendarDays,
   Clock,
   FileText,
@@ -45,33 +46,6 @@ type SubjectRow = {
   grade?: string | null;
 };
 
-type CurriculumProgramRow = {
-  id: string;
-  teacher_id: string | null;
-  subject_name: string | null;
-  level: string | null;
-  grade: string | null;
-  semester: string | null;
-  academic_year: string | null;
-  status: string | null;
-};
-
-type CurriculumChapterRow = {
-  id: string;
-  curriculum_program_id: string | null;
-  chapter_title: string | null;
-  chapter_order: number | null;
-};
-
-type CurriculumSubChapterRow = {
-  id: string;
-  curriculum_chapter_id: string | null;
-  sub_chapter_title: string | null;
-  sub_chapter_order: number | null;
-  target_month: string | null;
-  planned_week: number | null;
-};
-
 type ScheduleRow = {
   id: string;
   student_id: string | null;
@@ -88,9 +62,6 @@ type ScheduleRow = {
   notes?: string | null;
   temporary_schedule_url?: string | null;
   academic_year?: string | null;
-  curriculum_program_id?: string | null;
-  curriculum_chapter_id?: string | null;
-  curriculum_sub_chapter_id?: string | null;
 };
 
 type EnrichedSchedule = ScheduleRow & {
@@ -101,9 +72,6 @@ type EnrichedSchedule = ScheduleRow & {
   student_nisn: string;
   teacher_name: string;
   subject_name: string;
-  program_title: string;
-  chapter_title: string;
-  sub_chapter_title: string;
 };
 
 type ScheduleGroup = {
@@ -123,14 +91,22 @@ type ScheduleGroup = {
   notes: string | null;
   temporary_schedule_url: string | null;
   academic_year: string | null;
-  curriculum_program_id?: string | null;
-  curriculum_chapter_id?: string | null;
-  curriculum_sub_chapter_id?: string | null;
-  program_title: string;
-  chapter_title: string;
-  sub_chapter_title: string;
   students: EnrichedSchedule[];
   total_students: number;
+};
+
+type ScheduleForm = {
+  teacher_id: string;
+  subject_id: string;
+  schedule_date: string;
+  day_name: string;
+  start_time: string;
+  end_time: string;
+  session_name: string;
+  material_topic: string;
+  semester: string;
+  notes: string;
+  temporary_schedule_url: string;
 };
 
 const dayOptions = [
@@ -145,7 +121,7 @@ const dayOptions = [
 
 const semesterOptions = ["Ganjil", "Genap"];
 
-const initialForm = {
+const initialForm: ScheduleForm = {
   teacher_id: "",
   subject_id: "",
   schedule_date: "",
@@ -157,9 +133,6 @@ const initialForm = {
   semester: "Ganjil",
   notes: "",
   temporary_schedule_url: "",
-  curriculum_program_id: "",
-  curriculum_chapter_id: "",
-  curriculum_sub_chapter_id: "",
 };
 
 function normalizeText(value?: string | null) {
@@ -219,11 +192,15 @@ function formatClass(level?: string | null, grade?: string | null) {
 function formatDate(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(date);
 }
 
 function formatTime(value?: string | null) {
@@ -234,9 +211,11 @@ function formatTime(value?: string | null) {
 function getDayName(dateString: string) {
   if (!dateString) return "Senin";
 
-  return new Intl.DateTimeFormat("id-ID", { weekday: "long" }).format(
-    new Date(`${dateString}T00:00:00`)
-  );
+  const date = new Date(`${dateString}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "Senin";
+
+  return new Intl.DateTimeFormat("id-ID", { weekday: "long" }).format(date);
 }
 
 function getInitials(name?: string | null) {
@@ -314,15 +293,6 @@ async function uploadScheduleDocument(file: File) {
   return data.publicUrl;
 }
 
-function getProgramLabel(program: CurriculumProgramRow) {
-  return [
-    program.subject_name || "-",
-    program.level || "-",
-    program.grade || "-",
-    `Semester ${program.semester || "-"}`,
-  ].join(" • ");
-}
-
 function getScheduleGroupKey(schedule: EnrichedSchedule) {
   return [
     schedule.teacher_id || "",
@@ -336,9 +306,6 @@ function getScheduleGroupKey(schedule: EnrichedSchedule) {
     normalizeText(schedule.notes),
     schedule.temporary_schedule_url || "",
     schedule.academic_year || "",
-    schedule.curriculum_program_id || "",
-    schedule.curriculum_chapter_id || "",
-    schedule.curriculum_sub_chapter_id || "",
   ].join("__");
 }
 
@@ -375,12 +342,6 @@ function groupSchedules(schedules: EnrichedSchedule[]) {
       notes: first.notes || null,
       temporary_schedule_url: first.temporary_schedule_url || null,
       academic_year: first.academic_year || null,
-      curriculum_program_id: first.curriculum_program_id,
-      curriculum_chapter_id: first.curriculum_chapter_id,
-      curriculum_sub_chapter_id: first.curriculum_sub_chapter_id,
-      program_title: first.program_title,
-      chapter_title: first.chapter_title,
-      sub_chapter_title: first.sub_chapter_title,
       students: rows.sort((a, b) => a.student_name.localeCompare(b.student_name)),
       total_students: rows.length,
     };
@@ -400,13 +361,12 @@ export default function KepalaSekolahJadwalPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
-  const [programs, setPrograms] = useState<CurriculumProgramRow[]>([]);
-  const [chapters, setChapters] = useState<CurriculumChapterRow[]>([]);
-  const [subChapters, setSubChapters] = useState<CurriculumSubChapterRow[]>([]);
   const [schedules, setSchedules] = useState<EnrichedSchedule[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [showModal, setShowModal] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<ScheduleGroup | null>(null);
@@ -416,7 +376,7 @@ export default function KepalaSekolahJadwalPage() {
   const [dayFilter, setDayFilter] = useState(ALL);
   const [subjectFilter, setSubjectFilter] = useState(ALL);
 
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState<ScheduleForm>(initialForm);
   const [temporaryScheduleFile, setTemporaryScheduleFile] =
     useState<File | null>(null);
 
@@ -425,122 +385,86 @@ export default function KepalaSekolahJadwalPage() {
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const [
-      teachersRes,
-      studentsRes,
-      subjectsRes,
-      programsRes,
-      chaptersRes,
-      subChaptersRes,
-      schedulesRes,
-    ] = await Promise.all([
-      supabase.from("teachers").select("*").order("full_name"),
-      supabase.from("students").select("*").order("full_name"),
-      supabase.from("subjects").select("*").order("name"),
-      supabase
-        .from("curriculum_programs")
-        .select("*")
-        .order("subject_name", { ascending: true }),
-      supabase
-        .from("curriculum_chapters")
-        .select("*")
-        .order("chapter_order", { ascending: true }),
-      supabase
-        .from("curriculum_sub_chapters")
-        .select("*")
-        .order("sub_chapter_order", { ascending: true }),
-      supabase
-        .from("schedules")
-        .select("*")
-        .order("schedule_date", { ascending: false })
-        .order("start_time", { ascending: true }),
-    ]);
+    try {
+      const [teachersRes, studentsRes, subjectsRes, schedulesRes] =
+        await Promise.all([
+          supabase.from("teachers").select("*").order("full_name"),
+          supabase.from("students").select("*").order("full_name"),
+          supabase.from("subjects").select("*").order("name"),
+          supabase
+            .from("schedules")
+            .select("*")
+            .order("schedule_date", { ascending: false })
+            .order("start_time", { ascending: true }),
+        ]);
 
-    if (teachersRes.error) alert(teachersRes.error.message);
-    if (studentsRes.error) alert(studentsRes.error.message);
-    if (subjectsRes.error) alert(subjectsRes.error.message);
-    if (programsRes.error) alert(programsRes.error.message);
-    if (chaptersRes.error) alert(chaptersRes.error.message);
-    if (subChaptersRes.error) alert(subChaptersRes.error.message);
-    if (schedulesRes.error) alert(schedulesRes.error.message);
+      if (teachersRes.error) throw new Error(teachersRes.error.message);
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (schedulesRes.error) throw new Error(schedulesRes.error.message);
 
-    const teachersData = (teachersRes.data || []) as TeacherRow[];
-    const studentsData = (studentsRes.data || []) as StudentRow[];
-    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-    const programsData = (programsRes.data || []) as CurriculumProgramRow[];
-    const chaptersData = (chaptersRes.data || []) as CurriculumChapterRow[];
-    const subChaptersData = (subChaptersRes.data ||
-      []) as CurriculumSubChapterRow[];
-    const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const studentsData = (studentsRes.data || []) as StudentRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
 
-    const teacherMap = new Map(
-      teachersData.map((teacher) => [teacher.id, teacher])
-    );
-    const studentMap = new Map(
-      studentsData.map((student) => [student.id, student])
-    );
-    const subjectMap = new Map(
-      subjectsData.map((subject) => [subject.id, subject])
-    );
-    const programMap = new Map(
-      programsData.map((program) => [program.id, program])
-    );
-    const chapterMap = new Map(
-      chaptersData.map((chapter) => [chapter.id, chapter])
-    );
-    const subChapterMap = new Map(
-      subChaptersData.map((subChapter) => [subChapter.id, subChapter])
-    );
+      const teacherMap = new Map(
+        teachersData.map((teacher) => [teacher.id, teacher])
+      );
 
-    const enriched: EnrichedSchedule[] = schedulesData.map((schedule) => {
-      const teacher = schedule.teacher_id
-        ? teacherMap.get(schedule.teacher_id)
-        : null;
+      const studentMap = new Map(
+        studentsData.map((student) => [student.id, student])
+      );
 
-      const student = schedule.student_id
-        ? studentMap.get(schedule.student_id)
-        : null;
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
 
-      const subject = schedule.subject_id
-        ? subjectMap.get(schedule.subject_id)
-        : null;
+      const enriched: EnrichedSchedule[] = schedulesData.map((schedule) => {
+        const teacher = schedule.teacher_id
+          ? teacherMap.get(schedule.teacher_id)
+          : null;
 
-      const program = schedule.curriculum_program_id
-        ? programMap.get(schedule.curriculum_program_id)
-        : null;
+        const student = schedule.student_id
+          ? studentMap.get(schedule.student_id)
+          : null;
 
-      const chapter = schedule.curriculum_chapter_id
-        ? chapterMap.get(schedule.curriculum_chapter_id)
-        : null;
+        const subject = schedule.subject_id
+          ? subjectMap.get(schedule.subject_id)
+          : null;
 
-      const subChapter = schedule.curriculum_sub_chapter_id
-        ? subChapterMap.get(schedule.curriculum_sub_chapter_id)
-        : null;
+        return {
+          ...schedule,
+          teacher_name: teacher?.full_name || "-",
+          student_name: student?.full_name || "-",
+          student_grade: student?.grade || "-",
+          student_level: student?.level || "-",
+          student_nipd: student?.nis || "-",
+          student_nisn: student?.nisn || "-",
+          subject_name: subject ? getSubjectLabel(subject) : "-",
+        };
+      });
 
-      return {
-        ...schedule,
-        teacher_name: teacher?.full_name || "-",
-        student_name: student?.full_name || "-",
-        student_grade: student?.grade || "-",
-        student_level: student?.level || "-",
-        student_nipd: student?.nis || "-",
-        student_nisn: student?.nisn || "-",
-        subject_name: subject ? getSubjectLabel(subject) : "-",
-        program_title: program ? getProgramLabel(program) : "-",
-        chapter_title: chapter?.chapter_title || "-",
-        sub_chapter_title: subChapter?.sub_chapter_title || "-",
-      };
-    });
+      setTeachers(teachersData);
+      setStudents(studentsData);
+      setSubjects(subjectsData);
+      setSchedules(enriched);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil data jadwal.");
+      }
 
-    setTeachers(teachersData);
-    setStudents(studentsData);
-    setSubjects(subjectsData);
-    setPrograms(programsData);
-    setChapters(chaptersData);
-    setSubChapters(subChaptersData);
-    setSchedules(enriched);
-    setLoading(false);
+      setTeachers([]);
+      setStudents([]);
+      setSubjects([]);
+      setSchedules([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -551,42 +475,27 @@ export default function KepalaSekolahJadwalPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "schedules" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
-        fetchData
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_programs" },
-        fetchData
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_chapters" },
-        fetchData
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "curriculum_sub_chapters" },
-        fetchData
+        () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -635,72 +544,10 @@ export default function KepalaSekolahJadwalPage() {
       setForm((prev) => ({
         ...prev,
         subject_id: "",
-        curriculum_program_id: "",
-        curriculum_chapter_id: "",
-        curriculum_sub_chapter_id: "",
         material_topic: "",
       }));
     }
   }, [form.subject_id, subjectOptionsForSchedule]);
-
-  const selectedSubject = useMemo(() => {
-    return subjects.find((subject) => subject.id === form.subject_id) || null;
-  }, [subjects, form.subject_id]);
-
-  const programOptions = useMemo(() => {
-    return programs.filter((program) => {
-      const matchTeacher =
-        !form.teacher_id || program.teacher_id === form.teacher_id;
-
-      const matchSubject =
-        !selectedSubject?.name ||
-        normalizeText(program.subject_name) === normalizeText(selectedSubject.name);
-
-      const matchSemester =
-        !form.semester || program.semester === form.semester;
-
-      const matchAcademicYear =
-        !program.academic_year || program.academic_year === ACADEMIC_YEAR;
-
-      const matchGrade =
-        selectedStudentGradeNumbers.length === 0 ||
-        selectedStudentGradeNumbers.some((gradeNumber) => {
-          return getGradeNumber(program.grade) === gradeNumber;
-        }) ||
-        !program.grade;
-
-      return (
-        matchTeacher &&
-        matchSubject &&
-        matchSemester &&
-        matchAcademicYear &&
-        matchGrade
-      );
-    });
-  }, [
-    programs,
-    form.teacher_id,
-    form.semester,
-    selectedSubject,
-    selectedStudentGradeNumbers,
-  ]);
-
-  const chapterOptions = useMemo(() => {
-    if (!form.curriculum_program_id) return [];
-
-    return chapters.filter(
-      (chapter) => chapter.curriculum_program_id === form.curriculum_program_id
-    );
-  }, [chapters, form.curriculum_program_id]);
-
-  const subChapterOptions = useMemo(() => {
-    if (!form.curriculum_chapter_id) return [];
-
-    return subChapters.filter(
-      (subChapter) =>
-        subChapter.curriculum_chapter_id === form.curriculum_chapter_id
-    );
-  }, [subChapters, form.curriculum_chapter_id]);
 
   const groupedSchedules = useMemo(() => {
     const q = normalizeText(search);
@@ -714,9 +561,6 @@ export default function KepalaSekolahJadwalPage() {
         normalizeText(group.material_topic).includes(q) ||
         normalizeText(group.session_name).includes(q) ||
         normalizeText(group.notes).includes(q) ||
-        normalizeText(group.program_title).includes(q) ||
-        normalizeText(group.chapter_title).includes(q) ||
-        normalizeText(group.sub_chapter_title).includes(q) ||
         group.students.some((student) => {
           return (
             normalizeText(student.student_name).includes(q) ||
@@ -809,35 +653,6 @@ export default function KepalaSekolahJadwalPage() {
     setSelectedStudentIds([]);
   }
 
-  function handleSelectProgram(programId: string) {
-    setForm((prev) => ({
-      ...prev,
-      curriculum_program_id: programId,
-      curriculum_chapter_id: "",
-      curriculum_sub_chapter_id: "",
-      material_topic: "",
-    }));
-  }
-
-  function handleSelectChapter(chapterId: string) {
-    setForm((prev) => ({
-      ...prev,
-      curriculum_chapter_id: chapterId,
-      curriculum_sub_chapter_id: "",
-      material_topic: "",
-    }));
-  }
-
-  function handleSelectSubChapter(subChapterId: string) {
-    const subChapter = subChapters.find((item) => item.id === subChapterId);
-
-    setForm((prev) => ({
-      ...prev,
-      curriculum_sub_chapter_id: subChapterId,
-      material_topic: subChapter?.sub_chapter_title || prev.material_topic,
-    }));
-  }
-
   function handlePrintSchedule() {
     window.print();
   }
@@ -865,6 +680,7 @@ export default function KepalaSekolahJadwalPage() {
       }
 
       const mathGradeNumber = getGradeNumber(selectedSubjectForSave.grade);
+
       const selectedGrades = Array.from(
         new Set(
           selectedStudentIds
@@ -949,9 +765,6 @@ export default function KepalaSekolahJadwalPage() {
         notes: form.notes.trim() || null,
         temporary_schedule_url: temporaryScheduleUrl,
         academic_year: ACADEMIC_YEAR,
-        curriculum_program_id: form.curriculum_program_id || null,
-        curriculum_chapter_id: form.curriculum_chapter_id || null,
-        curriculum_sub_chapter_id: form.curriculum_sub_chapter_id || null,
       }));
 
       const { error } = await supabase.from("schedules").insert(payload);
@@ -976,7 +789,7 @@ export default function KepalaSekolahJadwalPage() {
   }
 
   async function handleDeleteGroup(group: ScheduleGroup) {
-    const confirmDelete = confirm(
+    const confirmDelete = window.confirm(
       `Hapus jadwal ${group.subject_name} - ${group.teacher_name} untuk ${group.total_students} siswa?`
     );
 
@@ -1011,9 +824,10 @@ export default function KepalaSekolahJadwalPage() {
             </h1>
 
             <p className="mt-2 max-w-[880px] text-[15px] leading-6 text-[#6F5549]">
-              Format jadwal mengikuti template Excel sekolah: Hari, Tanggal,
-              Nama Guru, Datang, Pulang, Jam, Sesi, Kelas, Mapel, Materi,
-              Siswa, dan Keterangan.
+              Format jadwal mengikuti template sekolah: Hari, Tanggal, Nama
+              Guru, Datang, Pulang, Jam, Sesi, Kelas, Mapel, Materi, Siswa, dan
+              Keterangan. Jadwal ini tidak terhubung otomatis ke Program
+              Semester atau Absensi.
             </p>
           </div>
 
@@ -1046,6 +860,15 @@ export default function KepalaSekolahJadwalPage() {
             Academic Year {ACADEMIC_YEAR}
           </p>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700 print:hidden">
+            <div className="flex gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>{errorMessage}</p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 print:hidden">
           <SummaryCard
@@ -1146,69 +969,42 @@ export default function KepalaSekolahJadwalPage() {
           </div>
 
           <div className="overflow-x-auto print:overflow-visible">
-            <table className="w-full min-w-[1680px] border-collapse print:min-w-0 print:text-[10px]">
+            <table className="w-full min-w-[1540px] border-collapse print:min-w-0 print:text-[10px]">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549] print:text-[10px]">
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     No
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Hari
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Tanggal
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Nama Guru
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Datang
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Pulang
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Durasi
                   </th>
 
-                  <th
-                    colSpan={6}
-                    className="border-r border-[#EADACA] px-4 py-4 text-center print:px-2 print:py-2"
-                  >
+                  <th colSpan={6} className="border-r border-[#EADACA] px-4 py-4 text-center print:px-2 print:py-2">
                     Jadwal Kegiatan Belajar Mengajar
                   </th>
 
-                  <th
-                    rowSpan={2}
-                    className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2"
-                  >
+                  <th rowSpan={2} className="border-r border-[#EADACA] px-4 py-4 print:px-2 print:py-2">
                     Keterangan
                   </th>
 
@@ -1332,12 +1128,6 @@ export default function KepalaSekolahJadwalPage() {
                           <p className="line-clamp-2 font-bold">
                             {group.material_topic || "-"}
                           </p>
-
-                          {group.sub_chapter_title !== "-" ? (
-                            <p className="mt-1 line-clamp-1 text-[12px] text-[#6F5549] print:text-[10px]">
-                              {group.chapter_title} • {group.sub_chapter_title}
-                            </p>
-                          ) : null}
                         </td>
 
                         <td className="max-w-[280px] border-r border-[#F0E1D4] px-4 py-4 print:px-2 print:py-2">
@@ -1407,7 +1197,7 @@ export default function KepalaSekolahJadwalPage() {
                   Tambah Jadwal Rombel
                 </h2>
                 <p className="mt-1 text-[13px] text-[#6F5549]">
-                  Data ini akan menjadi sumber untuk Jadwal Guru dan Absensi KBM.
+                  Jadwal ini berdiri sendiri dan tidak otomatis membuat absensi.
                 </p>
               </div>
 
@@ -1429,10 +1219,6 @@ export default function KepalaSekolahJadwalPage() {
                       setForm((prev) => ({
                         ...prev,
                         teacher_id: event.target.value,
-                        curriculum_program_id: "",
-                        curriculum_chapter_id: "",
-                        curriculum_sub_chapter_id: "",
-                        material_topic: "",
                       }))
                     }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
@@ -1453,10 +1239,6 @@ export default function KepalaSekolahJadwalPage() {
                       setForm((prev) => ({
                         ...prev,
                         subject_id: event.target.value,
-                        curriculum_program_id: "",
-                        curriculum_chapter_id: "",
-                        curriculum_sub_chapter_id: "",
-                        material_topic: "",
                       }))
                     }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
@@ -1583,10 +1365,6 @@ export default function KepalaSekolahJadwalPage() {
                       setForm((prev) => ({
                         ...prev,
                         semester: event.target.value,
-                        curriculum_program_id: "",
-                        curriculum_chapter_id: "",
-                        curriculum_sub_chapter_id: "",
-                        material_topic: "",
                       }))
                     }
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
@@ -1596,76 +1374,6 @@ export default function KepalaSekolahJadwalPage() {
                     ))}
                   </select>
                 </FormGroup>
-              </div>
-
-              <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
-                <h3 className="text-[16px] font-extrabold text-[#2B1B18]">
-                  Materi Pokok dari Program Semester
-                </h3>
-
-                <p className="mt-1 text-[13px] text-[#6F5549]">
-                  Pilih Program Semester, Bab, dan Sub Bab agar jadwal terhubung
-                  dengan Absensi KBM dan progress belajar.
-                </p>
-
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
-                  <FormGroup label="Program Semester">
-                    <select
-                      value={form.curriculum_program_id}
-                      onChange={(event) => handleSelectProgram(event.target.value)}
-                      className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                    >
-                      <option value="">Pilih program</option>
-                      {programOptions.map((program) => (
-                        <option key={program.id} value={program.id}>
-                          {getProgramLabel(program)}
-                        </option>
-                      ))}
-                    </select>
-                  </FormGroup>
-
-                  <FormGroup label="Bab">
-                    <select
-                      value={form.curriculum_chapter_id}
-                      onChange={(event) => handleSelectChapter(event.target.value)}
-                      disabled={!form.curriculum_program_id}
-                      className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA]"
-                    >
-                      <option value="">Pilih bab</option>
-                      {chapterOptions.map((chapter) => (
-                        <option key={chapter.id} value={chapter.id}>
-                          Bab {chapter.chapter_order || "-"} -{" "}
-                          {chapter.chapter_title || "-"}
-                        </option>
-                      ))}
-                    </select>
-                  </FormGroup>
-
-                  <FormGroup label="Sub Bab / Materi Pokok">
-                    <select
-                      value={form.curriculum_sub_chapter_id}
-                      onChange={(event) => handleSelectSubChapter(event.target.value)}
-                      disabled={!form.curriculum_chapter_id}
-                      className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA]"
-                    >
-                      <option value="">Pilih sub bab</option>
-                      {subChapterOptions.map((subChapter) => (
-                        <option key={subChapter.id} value={subChapter.id}>
-                          {subChapter.sub_chapter_order || "-"} -{" "}
-                          {subChapter.sub_chapter_title || "-"}
-                        </option>
-                      ))}
-                    </select>
-                  </FormGroup>
-                </div>
-
-                {programOptions.length === 0 && form.teacher_id && form.subject_id ? (
-                  <p className="mt-3 rounded-xl bg-[#FFF8EF] px-4 py-3 text-[13px] text-[#8A5A48]">
-                    Belum ada Program Semester yang cocok untuk guru, mapel,
-                    semester, dan kelas siswa yang dipilih. Materi tetap bisa
-                    diisi manual di bawah.
-                  </p>
-                ) : null}
               </div>
 
               <FormGroup label="Materi">
@@ -1882,14 +1590,20 @@ export default function KepalaSekolahJadwalPage() {
                     value={formatDuration(selectedGroup.duration_minutes)}
                   />
 
-                  <InfoItem label="Sesi" value={selectedGroup.session_name || "-"} />
+                  <InfoItem
+                    label="Sesi"
+                    value={selectedGroup.session_name || "-"}
+                  />
 
                   <InfoItem
                     label="Nama Guru"
                     value={selectedGroup.teacher_name || "-"}
                   />
 
-                  <InfoItem label="Mapel" value={selectedGroup.subject_name || "-"} />
+                  <InfoItem
+                    label="Mapel"
+                    value={selectedGroup.subject_name || "-"}
+                  />
 
                   <InfoItem
                     label="Semester"
@@ -1909,21 +1623,6 @@ export default function KepalaSekolahJadwalPage() {
                   <InfoItem
                     label="Jumlah Siswa"
                     value={`${selectedGroup.total_students} siswa`}
-                  />
-
-                  <InfoItem
-                    label="Program Semester"
-                    value={selectedGroup.program_title || "-"}
-                  />
-
-                  <InfoItem
-                    label="Bab"
-                    value={selectedGroup.chapter_title || "-"}
-                  />
-
-                  <InfoItem
-                    label="Sub Bab"
-                    value={selectedGroup.sub_chapter_title || "-"}
                   />
                 </div>
 
@@ -1996,7 +1695,10 @@ export default function KepalaSekolahJadwalPage() {
                           </td>
 
                           <td className="px-5 py-4 text-[#6F5549]">
-                            {formatClass(student.student_level, student.student_grade)}
+                            {formatClass(
+                              student.student_level,
+                              student.student_grade
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -2080,12 +1782,19 @@ function FormGroup({
   );
 }
 
-function InfoItem({ label, value }: { label: string; value: string }) {
+function InfoItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   return (
     <div>
       <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8A5A48]">
         {label}
       </p>
+
       <p className="mt-1 whitespace-pre-line font-extrabold text-[#2B1B18]">
         {value}
       </p>
