@@ -25,7 +25,7 @@ type Teacher = {
   full_name: string | null;
   email: string | null;
   teacher_code: string | null;
-  subjects: string[] | null;
+  subjects: string[] | string | null;
 };
 
 type Parent = {
@@ -34,6 +34,27 @@ type Parent = {
   email: string | null;
   phone: string | null;
   relation: string | null;
+};
+
+type Subject = {
+  id: string;
+  name: string | null;
+  level: string | null;
+  grade: string | null;
+};
+
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
+};
+
+type TeacherSubjectForm = {
+  teacher_id: string;
+  subject_id: string;
 };
 
 type StudentForm = {
@@ -53,6 +74,7 @@ type StudentForm = {
   parent_manual_phone: string;
   parent_manual_email: string;
   homeroom_teacher_id: string;
+  teacher_subjects: TeacherSubjectForm[];
   progress: string;
   attendance: string;
   description: string;
@@ -71,7 +93,7 @@ const initialForm: StudentForm = {
   full_name: "",
   nis: "",
   nisn: "",
-  level: "Primary Level",
+  level: "SD",
   grade: "",
   academic_year: "2026/2027",
   status: "active",
@@ -84,6 +106,7 @@ const initialForm: StudentForm = {
   parent_manual_phone: "",
   parent_manual_email: "",
   homeroom_teacher_id: "",
+  teacher_subjects: [{ teacher_id: "", subject_id: "" }],
   progress: "0",
   attendance: "0",
   description: "",
@@ -98,12 +121,7 @@ const initialForm: StudentForm = {
   birth_certificate_url: "",
 };
 
-const levelOptions = [
-  "Early Learning",
-  "Primary Level",
-  "Secondary Level",
-  "High School",
-];
+const levelOptions = ["SD", "SMP", "SMA"];
 
 const religionOptions = [
   "",
@@ -191,6 +209,28 @@ function genderLabel(gender?: string | null) {
   return "-";
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function getSubjectLabel(subject: Subject) {
+  const level = subject.level ? normalizeLevel(subject.level) : "";
+  const grade = subject.grade || "";
+
+  if (subject.level || subject.grade) {
+    return `${subject.name || "-"} — ${level || "-"} ${grade || "All Grade"}`;
+  }
+
+  return subject.name || "-";
+}
+
 async function uploadStudentDocument(
   file: File,
   studentName: string,
@@ -249,6 +289,7 @@ export default function KepalaSekolahStudentEditPage() {
   const [form, setForm] = useState<StudentForm>(initialForm);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [parents, setParents] = useState<Parent[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [documentFiles, setDocumentFiles] = useState<
     Partial<Record<DocumentKey, File>>
   >({});
@@ -268,56 +309,69 @@ export default function KepalaSekolahStudentEditPage() {
         return;
       }
 
-      const [studentRes, teachersRes, parentsRes] = await Promise.all([
-        supabase
-          .from("students")
-          .select(
+      const [studentRes, teachersRes, parentsRes, subjectsRes, relationsRes] =
+        await Promise.all([
+          supabase
+            .from("students")
+            .select(
+              `
+              id,
+              full_name,
+              nis,
+              nisn,
+              level,
+              grade,
+              academic_year,
+              status,
+              birth_date,
+              birth_place,
+              gender,
+              religion,
+              parent_id,
+              homeroom_teacher_id,
+              progress,
+              attendance,
+              description,
+              family_card_url,
+              diploma_url,
+              father_ktp_url,
+              mother_ktp_url,
+              report_card_url,
+              student_photo_url,
+              registration_form_url,
+              skkb_url,
+              birth_certificate_url
             `
-            id,
-            full_name,
-            nis,
-            nisn,
-            level,
-            grade,
-            academic_year,
-            status,
-            birth_date,
-            birth_place,
-            gender,
-            religion,
-            parent_id,
-            homeroom_teacher_id,
-            progress,
-            attendance,
-            description,
-            family_card_url,
-            diploma_url,
-            father_ktp_url,
-            mother_ktp_url,
-            report_card_url,
-            student_photo_url,
-            registration_form_url,
-            skkb_url,
-            birth_certificate_url
-          `
-          )
-          .eq("id", studentId)
-          .maybeSingle(),
+            )
+            .eq("id", studentId)
+            .maybeSingle(),
 
-        supabase
-          .from("teachers")
-          .select("id, full_name, email, teacher_code, subjects")
-          .order("full_name", { ascending: true }),
+          supabase
+            .from("teachers")
+            .select("id, full_name, email, teacher_code, subjects")
+            .order("full_name", { ascending: true }),
 
-        supabase
-          .from("parents")
-          .select("id, full_name, email, phone, relation")
-          .order("full_name", { ascending: true }),
-      ]);
+          supabase
+            .from("parents")
+            .select("id, full_name, email, phone, relation")
+            .order("full_name", { ascending: true }),
+
+          supabase
+            .from("subjects")
+            .select("id, name, level, grade")
+            .order("name", { ascending: true }),
+
+          supabase
+            .from("student_teachers")
+            .select("*")
+            .eq("student_id", studentId),
+        ]);
 
       if (studentRes.error) throw new Error(studentRes.error.message);
       if (teachersRes.error) throw new Error(teachersRes.error.message);
       if (parentsRes.error) throw new Error(parentsRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (relationsRes.error) throw new Error(relationsRes.error.message);
 
       if (!studentRes.data) {
         setErrorMessage("Data siswa tidak ditemukan.");
@@ -326,12 +380,21 @@ export default function KepalaSekolahStudentEditPage() {
       }
 
       const student = studentRes.data;
+      const relations = (relationsRes.data || []) as StudentTeacherRow[];
+
+      const teacherSubjectRows =
+        relations.length > 0
+          ? relations.map((relation) => ({
+              teacher_id: relation.teacher_id || "",
+              subject_id: relation.subject_id || "",
+            }))
+          : [{ teacher_id: "", subject_id: "" }];
 
       setForm({
         full_name: student.full_name || "",
         nis: student.nis || "",
         nisn: student.nisn || "",
-        level: student.level || "Primary Level",
+        level: student.level || "SD",
         grade: student.grade || "",
         academic_year: student.academic_year || "2026/2027",
         status: student.status || "active",
@@ -344,6 +407,7 @@ export default function KepalaSekolahStudentEditPage() {
         parent_manual_phone: "",
         parent_manual_email: "",
         homeroom_teacher_id: student.homeroom_teacher_id || "",
+        teacher_subjects: teacherSubjectRows,
         progress: String(student.progress ?? 0),
         attendance: String(student.attendance ?? 0),
         description: student.description || "",
@@ -361,6 +425,7 @@ export default function KepalaSekolahStudentEditPage() {
       setDocumentFiles({});
       setTeachers((teachersRes.data || []) as Teacher[]);
       setParents((parentsRes.data || []) as Parent[]);
+      setSubjects((subjectsRes.data || []) as Subject[]);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -381,6 +446,76 @@ export default function KepalaSekolahStudentEditPage() {
       ...prev,
       [key]: value,
     }));
+  }
+
+  function addTeacherSubjectRow() {
+    setForm((prev) => ({
+      ...prev,
+      teacher_subjects: [
+        ...prev.teacher_subjects,
+        {
+          teacher_id: "",
+          subject_id: "",
+        },
+      ],
+    }));
+  }
+
+  function removeTeacherSubjectRow(index: number) {
+    setForm((prev) => {
+      const nextRows = prev.teacher_subjects.filter((_, itemIndex) => {
+        return itemIndex !== index;
+      });
+
+      return {
+        ...prev,
+        teacher_subjects:
+          nextRows.length > 0
+            ? nextRows
+            : [
+                {
+                  teacher_id: "",
+                  subject_id: "",
+                },
+              ],
+      };
+    });
+  }
+
+  function updateTeacherSubjectRow(
+    index: number,
+    field: keyof TeacherSubjectForm,
+    value: string
+  ) {
+    setForm((prev) => {
+      const nextRows = prev.teacher_subjects.map((row, itemIndex) => {
+        if (itemIndex !== index) return row;
+
+        return {
+          ...row,
+          [field]: value,
+        };
+      });
+
+      return {
+        ...prev,
+        teacher_subjects: nextRows,
+      };
+    });
+  }
+
+  function getValidTeacherSubjectRows() {
+    const uniqueMap = new Map<string, TeacherSubjectForm>();
+
+    form.teacher_subjects.forEach((row) => {
+      if (!row.teacher_id || !row.subject_id) return;
+
+      const key = `${row.teacher_id}-${row.subject_id}`;
+
+      uniqueMap.set(key, row);
+    });
+
+    return Array.from(uniqueMap.values());
   }
 
   async function getOrCreateParentId() {
@@ -481,6 +616,13 @@ export default function KepalaSekolahStudentEditPage() {
       return;
     }
 
+    const validTeacherSubjects = getValidTeacherSubjectRows();
+
+    if (validTeacherSubjects.length === 0) {
+      setErrorMessage("Pilih minimal satu guru yang mengajar beserta mapelnya.");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -551,6 +693,33 @@ export default function KepalaSekolahStudentEditPage() {
         .eq("id", studentId);
 
       if (error) throw new Error(error.message);
+
+      const { error: deleteRelationError } = await supabase
+        .from("student_teachers")
+        .delete()
+        .eq("student_id", studentId);
+
+      if (deleteRelationError) {
+        throw new Error(deleteRelationError.message);
+      }
+
+      const relationPayload = validTeacherSubjects.map((row) => ({
+        student_id: studentId,
+        teacher_id: row.teacher_id,
+        subject_id: row.subject_id,
+        academic_year: form.academic_year.trim() || "2026/2027",
+        notes: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error: insertRelationError } = await supabase
+        .from("student_teachers")
+        .insert(relationPayload);
+
+      if (insertRelationError) {
+        throw new Error(insertRelationError.message);
+      }
 
       router.push("/kepalaSekolah/students");
       router.refresh();
@@ -883,7 +1052,7 @@ export default function KepalaSekolahStudentEditPage() {
 
                   <div>
                     <label className="text-sm font-bold text-[#2B1B18]">
-                      Guru Mapel
+                      Guru Pendamping
                     </label>
                     <select
                       value={form.homeroom_teacher_id}
@@ -902,6 +1071,86 @@ export default function KepalaSekolahStudentEditPage() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="text-sm font-bold text-[#2B1B18]">
+                      Guru yang Mengajar / Mapel
+                    </label>
+
+                    <div className="mt-2 space-y-3 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] p-4">
+                      <p className="text-[12px] leading-5 text-[#7D5E50]">
+                        Satu siswa bisa memiliki lebih dari satu guru. Pilih
+                        guru dan mapel yang diajarkan agar data siswa sinkron ke
+                        halaman guru.
+                      </p>
+
+                      {form.teacher_subjects.map((row, index) => (
+                        <div
+                          key={`teacher-subject-${index}`}
+                          className="grid gap-3 md:grid-cols-[1fr_1fr_auto]"
+                        >
+                          <select
+                            value={row.teacher_id}
+                            onChange={(event) =>
+                              updateTeacherSubjectRow(
+                                index,
+                                "teacher_id",
+                                event.target.value
+                              )
+                            }
+                            className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                          >
+                            <option value="">Pilih guru</option>
+                            {teachers.map((teacher) => (
+                              <option key={teacher.id} value={teacher.id}>
+                                {teacher.full_name ||
+                                  teacher.email ||
+                                  "Tanpa Nama"}
+                                {teacher.teacher_code
+                                  ? ` — ${teacher.teacher_code}`
+                                  : ""}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            value={row.subject_id}
+                            onChange={(event) =>
+                              updateTeacherSubjectRow(
+                                index,
+                                "subject_id",
+                                event.target.value
+                              )
+                            }
+                            className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                          >
+                            <option value="">Pilih mapel</option>
+                            {subjects.map((subject) => (
+                              <option key={subject.id} value={subject.id}>
+                                {getSubjectLabel(subject)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => removeTeacherSubjectRow(index)}
+                            className="h-11 rounded-xl border border-red-200 bg-white px-4 text-[13px] font-bold text-red-600 transition hover:bg-red-50"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={addTeacherSubjectRow}
+                        className="h-10 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[13px] font-bold text-[#7A1F2B] transition hover:bg-[#F7EDE2]"
+                      >
+                        + Tambah Guru / Mapel
+                      </button>
+                    </div>
                   </div>
 
                   <div>

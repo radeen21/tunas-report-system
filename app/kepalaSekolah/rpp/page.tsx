@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertCircle,
   CheckCircle2,
+  Download,
   Eye,
   FileText,
   Search,
@@ -71,6 +72,7 @@ type RppRow = {
 
 type EnrichedRpp = RppRow & {
   teacher_name: string;
+  teacher_email: string;
 };
 
 function normalizeText(value?: string | null) {
@@ -145,6 +147,41 @@ function getManualSubChapter(rpp: RppRow) {
   return rpp.manual_sub_chapter || "-";
 }
 
+function escapeExcelCell(value: string | number | null | undefined) {
+  return String(value ?? "-")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatExportDateName() {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function downloadHtmlAsExcel(filename: string, html: string) {
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename;
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  URL.revokeObjectURL(url);
+}
+
 export default function KepalaSekolahRppPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [rpps, setRpps] = useState<EnrichedRpp[]>([]);
@@ -170,8 +207,15 @@ export default function KepalaSekolahRppPage() {
 
     try {
       const [teachersRes, rppRes] = await Promise.all([
-        supabase.from("teachers").select("*").order("full_name"),
-        supabase.from("rpp").select("*").order("updated_at", { ascending: false }),
+        supabase
+          .from("teachers")
+          .select("id, full_name, email")
+          .order("full_name"),
+
+        supabase
+          .from("rpp")
+          .select("*")
+          .order("updated_at", { ascending: false }),
       ]);
 
       if (teachersRes.error) throw new Error(teachersRes.error.message);
@@ -190,6 +234,7 @@ export default function KepalaSekolahRppPage() {
         return {
           ...rpp,
           teacher_name: teacher?.full_name || "-",
+          teacher_email: teacher?.email || "-",
         };
       });
 
@@ -224,6 +269,11 @@ export default function KepalaSekolahRppPage() {
         { event: "*", schema: "public", table: "teachers" },
         () => fetchData()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchData()
+      )
       .subscribe();
 
     return () => {
@@ -239,6 +289,7 @@ export default function KepalaSekolahRppPage() {
         !q ||
         normalizeText(getRppTitle(rpp)).includes(q) ||
         normalizeText(rpp.teacher_name).includes(q) ||
+        normalizeText(rpp.teacher_email).includes(q) ||
         normalizeText(rpp.subject_name).includes(q) ||
         normalizeText(rpp.indicator).includes(q) ||
         normalizeText(rpp.subject_material).includes(q) ||
@@ -370,22 +421,157 @@ export default function KepalaSekolahRppPage() {
     }
   }
 
+  function handleExportExcel() {
+    if (filteredRpps.length === 0) {
+      alert("Tidak ada data RPP yang bisa diexport.");
+      return;
+    }
+
+    const rows = filteredRpps.map((rpp, index) => ({
+      No: index + 1,
+      "Judul RPP": getRppTitle(rpp),
+      Guru: rpp.teacher_name || "-",
+      "Email Guru": rpp.teacher_email || "-",
+      "Nama Siswa": getRppStudentName(rpp),
+      "Kelas": getRppStudentClass(rpp),
+      "NIS / NIPD": getRppStudentNis(rpp),
+      "Mata Pelajaran": rpp.subject_name || "-",
+      Semester: rpp.semester || "-",
+      "Tahun Ajaran": rpp.academic_year || "-",
+      "Program Semester": getManualProgram(rpp),
+      Bab: getManualChapter(rpp),
+      "Sub Bab": getManualSubChapter(rpp),
+      Indikator: rpp.indicator || "-",
+      "Materi Pelajaran": rpp.subject_material || "-",
+      "Tujuan Pembelajaran": rpp.learning_objectives || "-",
+      Assessment: rpp.assessment || "-",
+      "Media Pembelajaran": rpp.learning_media || "-",
+      "Sumber Belajar": rpp.learning_resources || "-",
+      "Link Dokumen": rpp.document_url || "-",
+      "Catatan Guru": rpp.notes || "-",
+      Status: getStatusLabel(rpp.status),
+      "Catatan Revisi": rpp.rejection_note || "-",
+      "Submitted At": formatDateTime(rpp.submitted_at),
+      "Approved At": formatDateTime(rpp.approved_at),
+      "Rejected At": formatDateTime(rpp.rejected_at),
+      "Updated At": formatDateTime(rpp.updated_at),
+    }));
+
+    const headers = Object.keys(rows[0]);
+
+    const tableRows = rows
+      .map((row) => {
+        return `
+          <tr>
+            ${headers
+              .map((header) => {
+                const value = row[header as keyof typeof row];
+                return `<td>${escapeExcelCell(value)}</td>`;
+              })
+              .join("")}
+          </tr>
+        `;
+      })
+      .join("");
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="UTF-8" />
+          <style>
+            table {
+              border-collapse: collapse;
+              width: 100%;
+              font-family: Arial, sans-serif;
+              font-size: 12px;
+            }
+
+            th {
+              background: #7A1F2B;
+              color: #ffffff;
+              font-weight: bold;
+              border: 1px solid #dddddd;
+              padding: 8px;
+              text-align: left;
+              white-space: nowrap;
+            }
+
+            td {
+              border: 1px solid #dddddd;
+              padding: 8px;
+              vertical-align: top;
+              mso-number-format: "\\@";
+            }
+
+            .title {
+              font-size: 18px;
+              font-weight: bold;
+              color: #2B1B18;
+              margin-bottom: 6px;
+            }
+
+            .subtitle {
+              font-size: 12px;
+              color: #6B4A3A;
+              margin-bottom: 16px;
+            }
+          </style>
+        </head>
+
+        <body>
+          <div class="title">Monitoring RPP</div>
+          <div class="subtitle">
+            Export tanggal ${formatDateTime(new Date().toISOString())} |
+            Total data: ${filteredRpps.length}
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                ${headers
+                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
+                  .join("")}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    downloadHtmlAsExcel(`monitoring-rpp-${formatExportDateName()}.xls`, html);
+  }
+
   return (
     <KepalaSekolahLayout activeMenu="RPP" searchPlaceholder="Cari RPP...">
       <section className="space-y-7">
-        <div>
-          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
-            Kepala Sekolah
-          </p>
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+          <div>
+            <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+              Kepala Sekolah
+            </p>
 
-          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-            Monitoring RPP
-          </h1>
+            <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+              Monitoring RPP
+            </h1>
 
-          <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-            Review RPP yang dibuat guru. Admin/Kepala Sekolah hanya melihat
-            detail, membuka dokumen, approve, atau meminta revisi.
-          </p>
+            <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
+              Review RPP yang dibuat guru. Admin/Kepala Sekolah hanya melihat
+              detail, membuka dokumen, approve, atau meminta revisi.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="flex h-11 w-fit items-center gap-2 rounded-xl border border-[#E8D6C1] bg-white px-5 text-sm font-semibold text-[#2B1B18] shadow-sm transition hover:bg-[#FFF8EF]"
+          >
+            <Download className="h-4 w-4" />
+            Export Excel
+          </button>
         </div>
 
         {errorMessage ? (
@@ -458,7 +644,7 @@ export default function KepalaSekolahRppPage() {
               <option value="Semua Guru">Semua Guru</option>
               {teachers.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
-                  {teacher.full_name}
+                  {teacher.full_name || "-"}
                 </option>
               ))}
             </select>
@@ -526,12 +712,18 @@ export default function KepalaSekolahRppPage() {
                         </p>
                       </td>
 
-                      <td className="px-6 py-4">{rpp.teacher_name}</td>
+                      <td className="px-6 py-4">
+                        <p className="font-bold">{rpp.teacher_name}</p>
+                        <p className="mt-1 text-[12px] text-[#6F5549]">
+                          {rpp.teacher_email}
+                        </p>
+                      </td>
 
                       <td className="px-6 py-4">
                         <p className="font-bold">{getRppStudentName(rpp)}</p>
                         <p className="mt-1 text-[12px] text-[#6F5549]">
-                          {getRppStudentClass(rpp)} • NIPD: {getRppStudentNis(rpp)}
+                          {getRppStudentClass(rpp)} • NIPD:{" "}
+                          {getRppStudentNis(rpp)}
                         </p>
                       </td>
 
@@ -674,6 +866,7 @@ function RppDetailModal({
 
         <InfoBlock label="Judul RPP" value={getRppTitle(rpp)} />
         <InfoBlock label="Guru" value={rpp.teacher_name || "-"} />
+        <InfoBlock label="Email Guru" value={rpp.teacher_email || "-"} />
         <InfoBlock label="Mapel" value={rpp.subject_name || "-"} />
         <InfoBlock label="Indikator" value={rpp.indicator || "-"} />
 

@@ -66,6 +66,24 @@ type RppRow = {
   updated_at?: string | null;
 };
 
+type KbmReportRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  report_date: string | null;
+  class_level: string | null;
+  semester: string | null;
+  chapter: string | null;
+  material_topic: string | null;
+  learning_issue: string | null;
+  solution: string | null;
+  teacher_note: string | null;
+  status: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 type AcademicReportRow = {
   id: string;
   student_id: string | null;
@@ -103,6 +121,12 @@ type RombelToday = {
 
 type EnrichedRpp = RppRow & {
   teacher_name: string;
+};
+
+type EnrichedKbmReport = KbmReportRow & {
+  teacher_name: string;
+  student_name: string;
+  subject_name: string;
 };
 
 type EnrichedAcademicReport = AcademicReportRow & {
@@ -166,11 +190,15 @@ function getStatusClass(status?: string | null) {
     return "bg-[#C7F0DA] text-[#158A58]";
   }
 
-  if (status === "submitted" || status === "pending") {
+  if (
+    status === "submitted" ||
+    status === "pending" ||
+    status === "pending_review"
+  ) {
     return "bg-[#FFF2B8] text-[#B26A00]";
   }
 
-  if (status === "rejected") {
+  if (status === "rejected" || status === "revision") {
     return "bg-[#FFE4E6] text-[#BE123C]";
   }
 
@@ -182,7 +210,9 @@ function getStatusLabel(status?: string | null) {
   if (status === "approved") return "Approved";
   if (status === "published") return "Published";
   if (status === "pending") return "Pending";
+  if (status === "pending_review") return "Pending Review";
   if (status === "rejected") return "Rejected";
+  if (status === "revision") return "Revision";
 
   return "Draft";
 }
@@ -199,7 +229,11 @@ function getAcademicStatus(report: AcademicReportRow) {
 }
 
 function isPendingStatus(status?: string | null) {
-  return status === "submitted" || status === "pending";
+  return (
+    status === "submitted" ||
+    status === "pending" ||
+    status === "pending_review"
+  );
 }
 
 function isApprovedStatus(status?: string | null) {
@@ -213,6 +247,7 @@ export default function KepalaSekolahDashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [rpps, setRpps] = useState<EnrichedRpp[]>([]);
+  const [kbmReports, setKbmReports] = useState<EnrichedKbmReport[]>([]);
   const [academicReports, setAcademicReports] = useState<
     EnrichedAcademicReport[]
   >([]);
@@ -233,15 +268,26 @@ export default function KepalaSekolahDashboardPage() {
         schedulesRes,
         attendanceRes,
         rppRes,
+        kbmReportsRes,
         academicReportsRes,
         frameworksRes,
       ] = await Promise.all([
         supabase.from("teachers").select("id, full_name").order("full_name"),
-        supabase.from("students").select("id, full_name, level, grade").order("full_name"),
+        supabase
+          .from("students")
+          .select("id, full_name, level, grade")
+          .order("full_name"),
         supabase.from("subjects").select("id, name").order("name"),
         supabase.from("schedules").select("*"),
         supabase.from("attendance").select("*"),
-        supabase.from("rpp").select("*").order("updated_at", { ascending: false }),
+        supabase
+          .from("rpp")
+          .select("*")
+          .order("updated_at", { ascending: false }),
+        supabase
+          .from("kbm_reports")
+          .select("*")
+          .order("updated_at", { ascending: false }),
         supabase
           .from("academic_reports")
           .select("*")
@@ -258,9 +304,12 @@ export default function KepalaSekolahDashboardPage() {
       if (schedulesRes.error) throw new Error(schedulesRes.error.message);
       if (attendanceRes.error) throw new Error(attendanceRes.error.message);
       if (rppRes.error) throw new Error(rppRes.error.message);
+      if (kbmReportsRes.error) throw new Error(kbmReportsRes.error.message);
+
       if (academicReportsRes.error) {
         throw new Error(academicReportsRes.error.message);
       }
+
       if (frameworksRes.error) throw new Error(frameworksRes.error.message);
 
       const teachersData = (teachersRes.data || []) as TeacherRow[];
@@ -269,8 +318,10 @@ export default function KepalaSekolahDashboardPage() {
       const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
       const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
       const rppData = (rppRes.data || []) as RppRow[];
+      const kbmData = (kbmReportsRes.data || []) as KbmReportRow[];
       const academicData = (academicReportsRes.data || []) as AcademicReportRow[];
-      const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
+      const frameworksData = (frameworksRes.data ||
+        []) as MaterialFrameworkRow[];
 
       const teacherMap = new Map(
         teachersData.map((teacher) => [teacher.id, teacher])
@@ -290,6 +341,27 @@ export default function KepalaSekolahDashboardPage() {
         return {
           ...rpp,
           teacher_name: teacher?.full_name || "-",
+        };
+      });
+
+      const enrichedKbmReports: EnrichedKbmReport[] = kbmData.map((report) => {
+        const teacher = report.teacher_id
+          ? teacherMap.get(report.teacher_id)
+          : null;
+
+        const student = report.student_id
+          ? studentMap.get(report.student_id)
+          : null;
+
+        const subject = report.subject_id
+          ? subjectMap.get(report.subject_id)
+          : null;
+
+        return {
+          ...report,
+          teacher_name: teacher?.full_name || "-",
+          student_name: student?.full_name || "-",
+          subject_name: subject?.name || "-",
         };
       });
 
@@ -340,6 +412,7 @@ export default function KepalaSekolahDashboardPage() {
       setSchedules(schedulesData);
       setAttendance(attendanceData);
       setRpps(enrichedRpps);
+      setKbmReports(enrichedKbmReports);
       setAcademicReports(enrichedAcademic);
       setFrameworks(enrichedFrameworks);
     } catch (error) {
@@ -355,6 +428,7 @@ export default function KepalaSekolahDashboardPage() {
       setSchedules([]);
       setAttendance([]);
       setRpps([]);
+      setKbmReports([]);
       setAcademicReports([]);
       setFrameworks([]);
     } finally {
@@ -399,12 +473,22 @@ export default function KepalaSekolahDashboardPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "kbm_reports" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
         () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "material_frameworks" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
         () => fetchData()
       )
       .subscribe();
@@ -479,12 +563,18 @@ export default function KepalaSekolahDashboardPage() {
   }, [schedules, attendance, teachers, subjects]);
 
   const summary = useMemo(() => {
-    const rppSubmitted = rpps.filter((rpp) =>
-      isPendingStatus(rpp.status)
-    ).length;
+    const rppSubmitted = rpps.filter((rpp) => rpp.status === "submitted").length;
 
     const rppApproved = rpps.filter((rpp) =>
       isApprovedStatus(rpp.status)
+    ).length;
+
+    const kbmPending = kbmReports.filter(
+      (report) => report.status === "pending_review"
+    ).length;
+
+    const kbmApproved = kbmReports.filter((report) =>
+      isApprovedStatus(report.status)
     ).length;
 
     const academicPending = academicReports.filter((report) => {
@@ -519,16 +609,31 @@ export default function KepalaSekolahDashboardPage() {
       todayPending,
       rppSubmitted,
       rppApproved,
+      kbmPending,
+      kbmApproved,
       academicPending,
       academicApproved,
       totalFrameworks: frameworks.length,
       frameworkSubmitted,
       frameworkApproved,
     };
-  }, [students, teachers, schedules, todayRombels, rpps, academicReports, frameworks]);
+  }, [
+    students,
+    teachers,
+    schedules,
+    todayRombels,
+    rpps,
+    kbmReports,
+    academicReports,
+    frameworks,
+  ]);
 
   const latestRppSubmitted = rpps
-    .filter((rpp) => isPendingStatus(rpp.status))
+    .filter((rpp) => rpp.status === "submitted")
+    .slice(0, 4);
+
+  const latestKbmPending = kbmReports
+    .filter((report) => report.status === "pending_review")
     .slice(0, 4);
 
   const latestAcademicPending = academicReports
@@ -555,8 +660,8 @@ export default function KepalaSekolahDashboardPage() {
           </h1>
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
-            Pantau data siswa, guru, jadwal, absensi harian, RPP, laporan
-            akademik, dan kerangka materi dalam satu dashboard.
+            Pantau data siswa, guru, jadwal, absensi harian, RPP, laporan KBM,
+            laporan akademik, dan kerangka materi dalam satu dashboard.
           </p>
         </div>
 
@@ -659,6 +764,12 @@ export default function KepalaSekolahDashboardPage() {
               />
 
               <SmallMetric
+                label="Laporan KBM Pending"
+                value={summary.kbmPending}
+                icon={<ClipboardCheck className="h-4 w-4" />}
+              />
+
+              <SmallMetric
                 label="Laporan Akademik Pending"
                 value={summary.academicPending}
                 icon={<GraduationCap className="h-4 w-4" />}
@@ -671,12 +782,6 @@ export default function KepalaSekolahDashboardPage() {
               />
 
               <SmallMetric
-                label="Kerangka Materi Approved"
-                value={summary.frameworkApproved}
-                icon={<CheckCircle2 className="h-4 w-4" />}
-              />
-
-              <SmallMetric
                 label="Absensi Belum Selesai"
                 value={summary.todayPending}
                 icon={<ClipboardCheck className="h-4 w-4" />}
@@ -685,7 +790,7 @@ export default function KepalaSekolahDashboardPage() {
           </DashboardPanel>
         </div>
 
-        <div className="grid gap-5 xl:grid-cols-3">
+        <div className="grid gap-5 xl:grid-cols-4">
           <DashboardPanel
             title="RPP Menunggu Review"
             subtitle="RPP submitted dari guru."
@@ -702,6 +807,30 @@ export default function KepalaSekolahDashboardPage() {
                     title={getRppTitle(rpp)}
                     subtitle={`${rpp.teacher_name} • ${rpp.subject_name || "-"}`}
                     status={rpp.status || "submitted"}
+                  />
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
+
+          <DashboardPanel
+            title="Laporan KBM Pending"
+            subtitle="Laporan KBM yang perlu review."
+          >
+            {loading ? (
+              <EmptyText text="Memuat laporan KBM..." />
+            ) : latestKbmPending.length === 0 ? (
+              <EmptyText text="Tidak ada laporan KBM pending." />
+            ) : (
+              <div className="space-y-3">
+                {latestKbmPending.map((report) => (
+                  <MiniCard
+                    key={report.id}
+                    title={`${report.student_name} • ${report.subject_name}`}
+                    subtitle={`${report.teacher_name} • ${
+                      report.material_topic || "-"
+                    }`}
+                    status={report.status || "pending_review"}
                   />
                 ))}
               </div>
@@ -834,7 +963,7 @@ function StatusBadge({
 }) {
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+      className={`inline-flex w-fit min-w-[86px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${getStatusClass(
         status
       )}`}
     >
@@ -888,8 +1017,12 @@ function MiniCard({
     <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
       <div className="mb-2 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[14px] font-extrabold text-[#2B1B18]">{title}</p>
-          <p className="mt-1 text-[12px] text-[#6F5549]">{subtitle}</p>
+          <p className="line-clamp-2 text-[14px] font-extrabold text-[#2B1B18]">
+            {title}
+          </p>
+          <p className="mt-1 line-clamp-2 text-[12px] text-[#6F5549]">
+            {subtitle}
+          </p>
         </div>
 
         <StatusBadge status={status} />

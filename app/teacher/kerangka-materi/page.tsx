@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   BookOpen,
-  Clock,
   Edit,
   Eye,
   FileText,
@@ -58,27 +57,8 @@ type MaterialFrameworkRow = {
   updated_at?: string | null;
 };
 
-type TimeAllocationRow = {
-  id: string;
-  material_framework_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  level: string | null;
-  grade: string | null;
-  semester: string | null;
-  academic_year: string | null;
-  total_meetings: number | null;
-  minutes_per_meeting: number | null;
-  total_minutes: number | null;
-  weeks_count: number | null;
-  allocation_notes: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
 type EnrichedFramework = MaterialFrameworkRow & {
   subject_name: string;
-  allocation: TimeAllocationRow | null;
 };
 
 type FormState = {
@@ -95,10 +75,6 @@ type FormState = {
   learning_resources: string;
   assessment_plan: string;
   notes: string;
-  total_meetings: string;
-  minutes_per_meeting: string;
-  weeks_count: string;
-  allocation_notes: string;
 };
 
 const ACADEMIC_YEAR = "2026/2027";
@@ -117,21 +93,11 @@ const initialForm: FormState = {
   learning_resources: "",
   assessment_plan: "",
   notes: "",
-  total_meetings: "",
-  minutes_per_meeting: "",
-  weeks_count: "",
-  allocation_notes: "",
 };
 
-const levelOptions = [
-  "Semua Tingkat",
-  "SD",
-  "SMP",
-  "SMA",
-  "Bimbel/Kursus",
-];
+const levelOptions = ["Semua Tingkat", "SD", "SMP", "SMA"];
 
-const formLevelOptions = ["SD", "SMP", "SMA", "Bimbel/Kursus"];
+const formLevelOptions = ["SD", "SMP", "SMA"];
 
 const gradeOptions = [
   "Semua Kelas",
@@ -183,9 +149,6 @@ function normalizeLevel(value?: string | null) {
   if (level === "sd" || level.includes("primary")) return "SD";
   if (level === "smp" || level.includes("secondary")) return "SMP";
   if (level === "sma" || level.includes("high")) return "SMA";
-  if (level.includes("early") || level.includes("bimbel")) {
-    return "Bimbel/Kursus";
-  }
 
   return value || "-";
 }
@@ -201,6 +164,28 @@ function normalizeGrade(value?: string | null) {
   return grade;
 }
 
+function normalizeSubjects(subjects: TeacherRow["subjects"]) {
+  if (!subjects) return [];
+
+  if (Array.isArray(subjects)) {
+    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
+  }
+
+  return subjects
+    .split(",")
+    .map((subject) => normalizeText(subject))
+    .filter(Boolean);
+}
+
+function sameSubjectName(a?: string | null, b?: string | null) {
+  if (!a || !b) return false;
+
+  const left = normalizeText(a);
+  const right = normalizeText(b);
+
+  return left === right || left.includes(right) || right.includes(left);
+}
+
 function formatLevelGrade(level?: string | null, grade?: string | null) {
   return `${normalizeLevel(level)} — ${normalizeGrade(grade)}`;
 }
@@ -213,12 +198,6 @@ function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   }
 
   return `Guru — ${subjects}`;
-}
-
-function formatNumber(value?: number | null) {
-  if (value === null || value === undefined || Number.isNaN(value)) return "-";
-
-  return Number(value).toFixed(2).replace(".00", "");
 }
 
 function formatDateTime(value?: string | null) {
@@ -244,23 +223,21 @@ function getStatusLabel(status?: string | null) {
   return "Draft";
 }
 
+function getStatusClass(status?: string | null) {
+  const safe = status || "draft";
+
+  if (safe === "approved" || safe === "published") {
+    return "bg-[#C7F0DA] text-[#158A58]";
+  }
+
+  if (safe === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
+  if (safe === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
+
+  return "bg-[#F1F5F9] text-[#64748B]";
+}
+
 function canEditFramework(status?: string | null) {
   return !status || status === "draft" || status === "rejected";
-}
-
-function parseNumber(value: string) {
-  const parsed = Number(value);
-
-  if (Number.isNaN(parsed)) return null;
-
-  return parsed;
-}
-
-function calculateTotalMinutes(totalMeetings: string, minutesPerMeeting: string) {
-  const meetings = parseNumber(totalMeetings) || 0;
-  const minutes = parseNumber(minutesPerMeeting) || 0;
-
-  return meetings * minutes;
 }
 
 export default function TeacherKerangkaMateriPage() {
@@ -359,38 +336,23 @@ export default function TeacherKerangkaMateriPage() {
         return;
       }
 
-      const [subjectsRes, frameworksRes, allocationsRes] = await Promise.all([
+      const [subjectsRes, frameworksRes] = await Promise.all([
         supabase.from("subjects").select("*").order("name"),
         supabase
           .from("material_frameworks")
           .select("*")
           .eq("teacher_id", currentTeacher.id)
           .order("updated_at", { ascending: false }),
-        supabase
-          .from("time_allocations")
-          .select("*")
-          .eq("teacher_id", currentTeacher.id),
       ]);
 
       if (subjectsRes.error) throw new Error(subjectsRes.error.message);
       if (frameworksRes.error) throw new Error(frameworksRes.error.message);
-      if (allocationsRes.error) throw new Error(allocationsRes.error.message);
 
       const subjectsData = (subjectsRes.data || []) as SubjectRow[];
       const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
-      const allocationsData = (allocationsRes.data || []) as TimeAllocationRow[];
 
       const subjectMap = new Map(
         subjectsData.map((subject) => [subject.id, subject])
-      );
-
-      const allocationMap = new Map(
-        allocationsData
-          .filter((allocation) => allocation.material_framework_id)
-          .map((allocation) => [
-            allocation.material_framework_id as string,
-            allocation,
-          ])
       );
 
       const enriched: EnrichedFramework[] = frameworksData.map((framework) => {
@@ -401,7 +363,6 @@ export default function TeacherKerangkaMateriPage() {
         return {
           ...framework,
           subject_name: subject?.name || "-",
-          allocation: allocationMap.get(framework.id) || null,
         };
       });
 
@@ -438,11 +399,6 @@ export default function TeacherKerangkaMateriPage() {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "time_allocations" },
-        () => fetchData()
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
         () => fetchData()
       )
@@ -453,9 +409,30 @@ export default function TeacherKerangkaMateriPage() {
     };
   }, []);
 
+  const teacherSubjectNames = useMemo(() => {
+    return normalizeSubjects(teacher?.subjects);
+  }, [teacher]);
+
+  const subjectOptions = useMemo(() => {
+    if (teacherSubjectNames.length === 0) return subjects;
+
+    const filteredSubjects = subjects.filter((subject) => {
+      return teacherSubjectNames.some((teacherSubject) =>
+        sameSubjectName(teacherSubject, subject.name)
+      );
+    });
+
+    return filteredSubjects.length > 0 ? filteredSubjects : subjects;
+  }, [subjects, teacherSubjectNames]);
+
   function openCreateForm() {
+    const firstSubject = subjectOptions[0];
+
     setEditingFramework(null);
-    setForm(initialForm);
+    setForm({
+      ...initialForm,
+      subject_id: firstSubject?.id || "",
+    });
     setIsFormOpen(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -484,10 +461,6 @@ export default function TeacherKerangkaMateriPage() {
       learning_resources: framework.learning_resources || "",
       assessment_plan: framework.assessment_plan || "",
       notes: framework.notes || "",
-      total_meetings: String(framework.allocation?.total_meetings || ""),
-      minutes_per_meeting: String(framework.allocation?.minutes_per_meeting || ""),
-      weeks_count: String(framework.allocation?.weeks_count || ""),
-      allocation_notes: framework.allocation?.allocation_notes || "",
     });
     setIsFormOpen(true);
     setErrorMessage("");
@@ -516,15 +489,22 @@ export default function TeacherKerangkaMateriPage() {
       return;
     }
 
+    if (!form.core_materials.trim()) {
+      setErrorMessage("Materi pokok wajib diisi.");
+      return;
+    }
+
+    if (!form.learning_objectives.trim()) {
+      setErrorMessage("Tujuan pembelajaran wajib diisi.");
+      return;
+    }
+
     setSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
 
     try {
-      const totalMinutes = calculateTotalMinutes(
-        form.total_meetings,
-        form.minutes_per_meeting
-      );
+      const now = new Date().toISOString();
 
       const frameworkPayload = {
         teacher_id: teacher.id,
@@ -541,61 +521,24 @@ export default function TeacherKerangkaMateriPage() {
         learning_resources: form.learning_resources.trim() || null,
         assessment_plan: form.assessment_plan.trim() || null,
         notes: form.notes.trim() || null,
-        status: editingFramework?.status === "rejected" ? "draft" : "draft",
-        updated_at: new Date().toISOString(),
+        status: "draft",
+        rejected_at: null,
+        rejection_note: null,
+        updated_at: now,
       };
-
-      let frameworkId = editingFramework?.id || "";
 
       if (editingFramework) {
         const { error } = await supabase
           .from("material_frameworks")
           .update(frameworkPayload)
-          .eq("id", editingFramework.id);
+          .eq("id", editingFramework.id)
+          .eq("teacher_id", teacher.id);
 
         if (error) throw new Error(error.message);
       } else {
-        const { data, error } = await supabase
-          .from("material_frameworks")
-          .insert({
-            ...frameworkPayload,
-            created_at: new Date().toISOString(),
-          })
-          .select("id")
-          .single();
-
-        if (error) throw new Error(error.message);
-
-        frameworkId = data.id;
-      }
-
-      const allocationPayload = {
-        material_framework_id: frameworkId,
-        teacher_id: teacher.id,
-        subject_id: form.subject_id,
-        level: form.level,
-        grade: form.grade,
-        semester: form.semester,
-        academic_year: form.academic_year,
-        total_meetings: parseNumber(form.total_meetings),
-        minutes_per_meeting: parseNumber(form.minutes_per_meeting),
-        total_minutes: totalMinutes || null,
-        weeks_count: parseNumber(form.weeks_count),
-        allocation_notes: form.allocation_notes.trim() || null,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (editingFramework?.allocation?.id) {
-        const { error } = await supabase
-          .from("time_allocations")
-          .update(allocationPayload)
-          .eq("id", editingFramework.allocation.id);
-
-        if (error) throw new Error(error.message);
-      } else {
-        const { error } = await supabase.from("time_allocations").insert({
-          ...allocationPayload,
-          created_at: new Date().toISOString(),
+        const { error } = await supabase.from("material_frameworks").insert({
+          ...frameworkPayload,
+          created_at: now,
         });
 
         if (error) throw new Error(error.message);
@@ -632,14 +575,19 @@ export default function TeacherKerangkaMateriPage() {
     setSuccessMessage("");
 
     try {
+      const now = new Date().toISOString();
+
       const { error } = await supabase
         .from("material_frameworks")
         .update({
           status: "submitted",
-          submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          submitted_at: now,
+          rejected_at: null,
+          rejection_note: null,
+          updated_at: now,
         })
-        .eq("id", framework.id);
+        .eq("id", framework.id)
+        .eq("teacher_id", teacher?.id);
 
       if (error) throw new Error(error.message);
 
@@ -675,19 +623,11 @@ export default function TeacherKerangkaMateriPage() {
     setSuccessMessage("");
 
     try {
-      if (framework.allocation?.id) {
-        const { error: allocationError } = await supabase
-          .from("time_allocations")
-          .delete()
-          .eq("id", framework.allocation.id);
-
-        if (allocationError) throw new Error(allocationError.message);
-      }
-
       const { error } = await supabase
         .from("material_frameworks")
         .delete()
-        .eq("id", framework.id);
+        .eq("id", framework.id)
+        .eq("teacher_id", teacher?.id);
 
       if (error) throw new Error(error.message);
 
@@ -731,8 +671,10 @@ export default function TeacherKerangkaMateriPage() {
         normalizeText(framework.framework_title).includes(q) ||
         normalizeText(framework.subject_name).includes(q) ||
         normalizeText(framework.core_materials).includes(q) ||
+        normalizeText(framework.learning_outcomes).includes(q) ||
         normalizeText(framework.learning_objectives).includes(q) ||
         normalizeText(framework.learning_methods).includes(q) ||
+        normalizeText(framework.assessment_plan).includes(q) ||
         normalizeText(frameworkLevel).includes(q) ||
         normalizeText(frameworkGrade).includes(q);
 
@@ -786,22 +728,12 @@ export default function TeacherKerangkaMateriPage() {
       (framework) => !framework.status || framework.status === "draft"
     ).length;
 
-    const totalMeetings = frameworks.reduce((sum, framework) => {
-      return sum + Number(framework.allocation?.total_meetings || 0);
-    }, 0);
-
-    const totalMinutes = frameworks.reduce((sum, framework) => {
-      return sum + Number(framework.allocation?.total_minutes || 0);
-    }, 0);
-
     return {
       total,
       approved,
       submitted,
       rejected,
       draft,
-      totalMeetings,
-      totalMinutes,
     };
   }, [frameworks]);
 
@@ -824,9 +756,8 @@ export default function TeacherKerangkaMateriPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Guru dapat membuat kerangka materi, mengatur capaian pembelajaran,
-              tujuan, materi pokok, metode, assessment, dan alokasi waktu. Setelah
-              selesai, kirim untuk review Admin/Kepala Sekolah.
+              Guru membuat kerangka materi secara mandiri. Setelah selesai,
+              submit ke Admin/Kepala Sekolah untuk direview.
             </p>
           </div>
 
@@ -874,15 +805,15 @@ export default function TeacherKerangkaMateriPage() {
             icon={<FileText className="h-5 w-5" />}
             label="Approved"
             value={summary.approved}
-            info={`${summary.rejected} Revisi`}
+            info="Disetujui"
             tone="green"
           />
 
           <SummaryCard
-            icon={<Clock className="h-5 w-5" />}
-            label="Total Menit"
-            value={formatNumber(summary.totalMinutes)}
-            info={`${formatNumber(summary.totalMeetings)} Meeting`}
+            icon={<BookOpen className="h-5 w-5" />}
+            label="Revisi"
+            value={summary.rejected}
+            info="Perlu diperbaiki"
             tone="blue"
           />
         </div>
@@ -965,11 +896,11 @@ export default function TeacherKerangkaMateriPage() {
                         <div className="mb-3 flex flex-wrap gap-2">
                           <StatusBadge status={framework.status} />
 
-                          <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+                          <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
                             {formatLevelGrade(framework.level, framework.grade)}
                           </span>
 
-                          <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+                          <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
                             Semester {framework.semester}
                           </span>
                         </div>
@@ -1048,24 +979,15 @@ export default function TeacherKerangkaMateriPage() {
                       value={framework.learning_objectives || "-"}
                     />
 
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-2">
                       <MiniInfo
-                        label="Pertemuan"
-                        value={`${formatNumber(
-                          framework.allocation?.total_meetings
-                        )}x`}
+                        label="Metode Pembelajaran"
+                        value={framework.learning_methods || "-"}
                       />
+
                       <MiniInfo
-                        label="Menit / Pertemuan"
-                        value={`${formatNumber(
-                          framework.allocation?.minutes_per_meeting
-                        )} menit`}
-                      />
-                      <MiniInfo
-                        label="Total Alokasi"
-                        value={`${formatNumber(
-                          framework.allocation?.total_minutes
-                        )} menit`}
+                        label="Rencana Assessment"
+                        value={framework.assessment_plan || "-"}
                       />
                     </div>
                   </div>
@@ -1086,7 +1008,7 @@ export default function TeacherKerangkaMateriPage() {
       {isFormOpen ? (
         <FrameworkFormModal
           form={form}
-          subjects={subjects}
+          subjects={subjectOptions}
           saving={saving}
           editingFramework={editingFramework}
           onChange={updateForm}
@@ -1115,11 +1037,6 @@ function FrameworkFormModal({
   onSave: () => void;
   onClose: () => void;
 }) {
-  const totalMinutes = calculateTotalMinutes(
-    form.total_meetings,
-    form.minutes_per_meeting
-  );
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
       <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
@@ -1144,6 +1061,16 @@ function FrameworkFormModal({
         </div>
 
         <div className="space-y-5 px-6 py-6">
+          <div className="rounded-2xl border border-[#EADACA] bg-white px-5 py-4">
+            <p className="text-[14px] font-extrabold text-[#2B1B18]">
+              Catatan
+            </p>
+            <p className="mt-1 text-[13px] leading-6 text-[#6F5549]">
+              Kerangka materi tidak menggunakan menu Alokasi Waktu. Guru cukup
+              mengisi materi, tujuan, metode, sumber belajar, dan assessment.
+            </p>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Mapel">
               <select
@@ -1255,72 +1182,6 @@ function FrameworkFormModal({
             />
           </div>
 
-          <div className="rounded-2xl border border-[#E1CFBE] bg-white p-5">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F8DFD0] text-[#8C0F2D]">
-                <Clock className="h-5 w-5" />
-              </div>
-
-              <h3 className="text-[16px] font-extrabold text-[#2B1B18]">
-                Alokasi Waktu
-              </h3>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-4">
-              <FormField label="Jumlah Pertemuan">
-                <input
-                  type="number"
-                  min="0"
-                  value={form.total_meetings}
-                  onChange={(event) =>
-                    onChange("total_meetings", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                />
-              </FormField>
-
-              <FormField label="Menit / Pertemuan">
-                <input
-                  type="number"
-                  min="0"
-                  value={form.minutes_per_meeting}
-                  onChange={(event) =>
-                    onChange("minutes_per_meeting", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                />
-              </FormField>
-
-              <FormField label="Jumlah Minggu">
-                <input
-                  type="number"
-                  min="0"
-                  value={form.weeks_count}
-                  onChange={(event) =>
-                    onChange("weeks_count", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                />
-              </FormField>
-
-              <FormField label="Total Menit">
-                <input
-                  value={totalMinutes ? `${totalMinutes} menit` : "-"}
-                  disabled
-                  className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#F7EFE7] px-4 text-[14px] font-bold text-[#2B1B18] outline-none"
-                />
-              </FormField>
-            </div>
-
-            <div className="mt-4">
-              <FormTextarea
-                label="Catatan Alokasi Waktu"
-                value={form.allocation_notes}
-                onChange={(value) => onChange("allocation_notes", value)}
-              />
-            </div>
-          </div>
-
           <FormTextarea
             label="Catatan Tambahan"
             value={form.notes}
@@ -1389,17 +1250,14 @@ function FrameworkDetailModal({
             <DetailCard label="Tingkat" value={normalizeLevel(framework.level)} />
             <DetailCard label="Kelas" value={normalizeGrade(framework.grade)} />
             <DetailCard label="Semester" value={framework.semester || "-"} />
-            <DetailCard
-              label="Pertemuan"
-              value={`${formatNumber(framework.allocation?.total_meetings)}x`}
-            />
+            <DetailCard label="Status" value={getStatusLabel(framework.status)} />
           </div>
 
           <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
             <div className="mb-3 flex flex-wrap gap-2">
               <StatusBadge status={framework.status} />
 
-              <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+              <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
                 {framework.academic_year || "-"}
               </span>
             </div>
@@ -1449,53 +1307,6 @@ function FrameworkDetailModal({
               label="Rencana Assessment"
               value={framework.assessment_plan || "-"}
             />
-          </div>
-
-          <div className="rounded-2xl border border-[#E1CFBE] bg-white p-5">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F8DFD0] text-[#8C0F2D]">
-                <Clock className="h-5 w-5" />
-              </div>
-
-              <h3 className="text-[16px] font-extrabold text-[#2B1B18]">
-                Alokasi Waktu
-              </h3>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-4">
-              <MiniInfo
-                label="Jumlah Pertemuan"
-                value={`${formatNumber(framework.allocation?.total_meetings)}x`}
-              />
-
-              <MiniInfo
-                label="Menit / Pertemuan"
-                value={`${formatNumber(
-                  framework.allocation?.minutes_per_meeting
-                )} menit`}
-              />
-
-              <MiniInfo
-                label="Jumlah Minggu"
-                value={`${formatNumber(
-                  framework.allocation?.weeks_count
-                )} minggu`}
-              />
-
-              <MiniInfo
-                label="Total Menit"
-                value={`${formatNumber(
-                  framework.allocation?.total_minutes
-                )} menit`}
-              />
-            </div>
-
-            <div className="mt-4">
-              <InfoBlock
-                label="Catatan Alokasi Waktu"
-                value={framework.allocation?.allocation_notes || "-"}
-              />
-            </div>
           </div>
 
           <InfoBlock label="Catatan Tambahan" value={framework.notes || "-"} />
@@ -1615,7 +1426,7 @@ function MiniInfo({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
       <p className="text-[12px] font-bold text-[#6F5549]">{label}</p>
-      <p className="mt-1 text-[16px] font-extrabold text-[#2B1B18]">
+      <p className="mt-1 text-[14px] font-extrabold text-[#2B1B18]">
         {value}
       </p>
     </div>
@@ -1626,7 +1437,7 @@ function DetailCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
       <p className="text-[13px] text-[#6F5549]">{label}</p>
-      <p className="mt-2 text-[20px] font-extrabold text-[#2B1B18]">
+      <p className="mt-2 text-[18px] font-extrabold text-[#2B1B18]">
         {value}
       </p>
     </div>
@@ -1636,18 +1447,11 @@ function DetailCard({ label, value }: { label: string; value: string }) {
 function StatusBadge({ status }: { status?: string | null }) {
   const safe = status || "draft";
 
-  const className =
-    safe === "approved" || safe === "published"
-      ? "bg-[#C7F0DA] text-[#158A58]"
-      : safe === "submitted"
-        ? "bg-[#FFF2B8] text-[#B26A00]"
-        : safe === "rejected"
-          ? "bg-[#FFE4E6] text-[#BE123C]"
-          : "bg-[#F1F5F9] text-[#64748B]";
-
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+      className={`inline-flex w-fit min-w-[82px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${getStatusClass(
+        safe
+      )}`}
     >
       {getStatusLabel(safe)}
     </span>

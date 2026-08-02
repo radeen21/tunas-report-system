@@ -10,7 +10,7 @@ type Teacher = {
   email: string | null;
   phone: string | null;
   teacher_code: string | null;
-  subjects: string[] | null;
+  subjects?: string[] | string | null;
 };
 
 type Parent = {
@@ -59,11 +59,22 @@ type Student = {
   parents: Parent | null;
 };
 
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
+};
+
 type AcademicReportRow = {
   id: string;
   student_id: string | null;
   teacher_id: string | null;
+  subject_id?: string | null;
   final_score: number | null;
+  final_grade?: number | null;
   status: string | null;
 };
 
@@ -71,6 +82,7 @@ type AttendanceRow = {
   id: string;
   student_id: string | null;
   teacher_id: string | null;
+  subject_id?: string | null;
   attendance_status: string | null;
 };
 
@@ -79,15 +91,6 @@ type Subject = {
   name: string;
   level: string | null;
   grade: string | null;
-};
-
-type ScheduleRow = {
-  id: string;
-  teacher_id: string | null;
-  student_id: string | null;
-  subject_id: string | null;
-  schedule_date: string | null;
-  academic_year: string | null;
 };
 
 type KbmForm = {
@@ -105,8 +108,6 @@ type KbmForm = {
 };
 
 const ACADEMIC_YEAR = "2026/2027";
-const ACADEMIC_YEAR_START = "2026-07-01";
-const ACADEMIC_YEAR_END = "2027-06-30";
 
 const initialKbmForm: KbmForm = {
   student_id: "",
@@ -131,6 +132,28 @@ function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
 function getInitials(name: string) {
   return name
     .split(" ")
@@ -145,6 +168,8 @@ function formatDate(date: string | null) {
   if (!date) return "-";
 
   const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "-";
 
   return parsedDate.toLocaleDateString("id-ID", {
     day: "2-digit",
@@ -173,9 +198,39 @@ function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function getSubjectLabel(subject?: Subject | null) {
+  if (!subject) return "-";
+
+  const level = subject.level ? normalizeLevel(subject.level) : "";
+  const grade = subject.grade || "";
+
+  if (level && grade) return `${subject.name || "-"} — ${level} ${grade}`;
+  if (grade) return `${subject.name || "-"} — ${grade}`;
+  if (level) return `${subject.name || "-"} — ${level}`;
+
+  return subject.name || "-";
+}
+
+function formatTeacherSubjects(subjects?: string[] | string | null) {
+  if (!subjects) return "-";
+
+  if (Array.isArray(subjects)) {
+    return subjects.join(", ") || "-";
+  }
+
+  return subjects || "-";
+}
+
 export default function TeacherStudentsPage() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
+    []
+  );
   const [academicReports, setAcademicReports] = useState<AcademicReportRow[]>(
     []
   );
@@ -194,19 +249,29 @@ export default function TeacherStudentsPage() {
   const [reportForm, setReportForm] = useState<KbmForm>(initialKbmForm);
 
   async function fetchActiveTeacher() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    const email =
+    if (authError) throw new Error(authError.message);
+
+    const email = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
       "";
 
     if (email) {
       const { data, error } = await supabase
         .from("teachers")
         .select("id, full_name, email, phone, teacher_code, subjects")
-        .eq("email", email)
+        .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
@@ -217,11 +282,6 @@ export default function TeacherStudentsPage() {
         return data as Teacher;
       }
     }
-
-    const teacherCode =
-      localStorage.getItem("hstkb_teacher_code") ||
-      localStorage.getItem("teacher_code") ||
-      "";
 
     if (teacherCode) {
       const { data, error } = await supabase
@@ -239,93 +299,82 @@ export default function TeacherStudentsPage() {
       }
     }
 
-    const { data, error } = await supabase
-      .from("teachers")
-      .select("id, full_name, email, phone, teacher_code, subjects")
-      .order("teacher_code", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-
-    setTeacher((data as Teacher) || null);
-
-    return (data as Teacher) || null;
+    setTeacher(null);
+    return null;
   }
 
-  async function fetchStudents(teacherId: string) {
-    const { data: scheduleData, error: scheduleError } = await supabase
-      .from("schedules")
-      .select("id, teacher_id, student_id, subject_id, schedule_date, academic_year")
+  async function fetchStudentsByRelation(teacherId: string) {
+    const { data: relationData, error: relationError } = await supabase
+      .from("student_teachers")
+      .select("*")
       .eq("teacher_id", teacherId)
-      .gte("schedule_date", ACADEMIC_YEAR_START)
-      .lte("schedule_date", ACADEMIC_YEAR_END);
+      .eq("academic_year", ACADEMIC_YEAR);
 
-    if (scheduleError) throw new Error(scheduleError.message);
+    if (relationError) throw new Error(relationError.message);
 
-    const schedules = (scheduleData || []) as ScheduleRow[];
+    const relations = (relationData || []) as StudentTeacherRow[];
 
-    const validSchedules = schedules.filter((schedule) => {
-      if (!schedule.student_id) return false;
-      if (!schedule.schedule_date) return false;
+    setStudentTeachers(relations);
 
-      const isAcademicYearDate =
-        schedule.schedule_date >= ACADEMIC_YEAR_START &&
-        schedule.schedule_date <= ACADEMIC_YEAR_END;
+    const studentIds = uniqueStrings(
+      relations.map((relation) => relation.student_id || "")
+    );
 
-      const isAcademicYearMatch =
-        !schedule.academic_year || schedule.academic_year === ACADEMIC_YEAR;
-
-      return isAcademicYearDate && isAcademicYearMatch;
-    });
-
-    const studentIds = Array.from(
-      new Set(
-        validSchedules
-          .map((schedule) => schedule.student_id)
-          .filter(Boolean) as string[]
-      )
+    const subjectIds = uniqueStrings(
+      relations.map((relation) => relation.subject_id || "")
     );
 
     if (studentIds.length === 0) {
       setStudents([]);
+      setSubjects([]);
       return;
     }
 
-    const { data, error } = await supabase
-      .from("students")
-      .select(
-        `
-        id,
-        user_id,
-        parent_id,
-        homeroom_teacher_id,
-        nis,
-        nisn,
-        full_name,
-        level,
-        grade,
-        academic_year,
-        status,
-        birth_date,
-        progress,
-        attendance,
-        created_at,
-        parents (
+    const [studentsRes, subjectsRes] = await Promise.all([
+      supabase
+        .from("students")
+        .select(
+          `
           id,
+          user_id,
+          parent_id,
+          homeroom_teacher_id,
+          nis,
+          nisn,
           full_name,
-          email,
-          phone,
-          relation
+          level,
+          grade,
+          academic_year,
+          status,
+          birth_date,
+          progress,
+          attendance,
+          created_at,
+          parents (
+            id,
+            full_name,
+            email,
+            phone,
+            relation
+          )
+        `
         )
-      `
-      )
-      .in("id", studentIds)
-      .order("full_name", { ascending: true });
+        .in("id", studentIds)
+        .order("full_name", { ascending: true }),
 
-    if (error) throw new Error(error.message);
+      subjectIds.length > 0
+        ? supabase
+          .from("subjects")
+          .select("id, name, level, grade")
+          .in("id", subjectIds)
+          .order("name", { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+    ]);
 
-    const rows = (data || []) as StudentRow[];
+    if (studentsRes.error) throw new Error(studentsRes.error.message);
+    if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+
+    const rows = (studentsRes.data || []) as StudentRow[];
 
     const normalizedStudents: Student[] = rows.map((item) => ({
       id: item.id,
@@ -347,39 +396,29 @@ export default function TeacherStudentsPage() {
     }));
 
     setStudents(normalizedStudents);
+    setSubjects((subjectsRes.data || []) as Subject[]);
   }
 
   async function fetchAcademicReports(teacherId: string) {
     const { data, error } = await supabase
       .from("academic_reports")
-      .select("id, student_id, teacher_id, final_score, status")
+      .select("id, student_id, teacher_id, subject_id, final_score, final_grade, status")
       .eq("teacher_id", teacherId);
 
     if (error) throw new Error(error.message);
 
-    setAcademicReports(data || []);
+    setAcademicReports((data || []) as AcademicReportRow[]);
   }
 
   async function fetchAttendance(teacherId: string) {
     const { data, error } = await supabase
       .from("attendance")
-      .select("id, student_id, teacher_id, attendance_status")
+      .select("id, student_id, teacher_id, subject_id, attendance_status")
       .eq("teacher_id", teacherId);
 
     if (error) throw new Error(error.message);
 
-    setAttendanceList(data || []);
-  }
-
-  async function fetchSubjects() {
-    const { data, error } = await supabase
-      .from("subjects")
-      .select("id, name, level, grade")
-      .order("name", { ascending: true });
-
-    if (error) throw new Error(error.message);
-
-    setSubjects(data || []);
+    setAttendanceList((data || []) as AttendanceRow[]);
   }
 
   async function fetchPageData() {
@@ -389,17 +428,22 @@ export default function TeacherStudentsPage() {
     try {
       const activeTeacher = await fetchActiveTeacher();
 
-      if (!activeTeacher) {
-        setErrorMessage("Belum ada data guru di table teachers.");
-        setLoading(false);
+      if (!activeTeacher?.id) {
+        setStudents([]);
+        setStudentTeachers([]);
+        setAcademicReports([]);
+        setAttendanceList([]);
+        setSubjects([]);
+        setErrorMessage(
+          "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
+        );
         return;
       }
 
       await Promise.all([
-        fetchStudents(activeTeacher.id),
+        fetchStudentsByRelation(activeTeacher.id),
         fetchAcademicReports(activeTeacher.id),
         fetchAttendance(activeTeacher.id),
-        fetchSubjects(),
       ]);
     } catch (error) {
       if (error instanceof Error) {
@@ -407,6 +451,12 @@ export default function TeacherStudentsPage() {
       } else {
         setErrorMessage("Gagal mengambil data murid.");
       }
+
+      setStudents([]);
+      setStudentTeachers([]);
+      setAcademicReports([]);
+      setAttendanceList([]);
+      setSubjects([]);
     } finally {
       setLoading(false);
     }
@@ -424,12 +474,17 @@ export default function TeacherStudentsPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchPageData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
         () => fetchPageData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "schedules" },
+        { event: "*", schema: "public", table: "subjects" },
         () => fetchPageData()
       )
       .on(
@@ -445,22 +500,26 @@ export default function TeacherStudentsPage() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
   const filteredStudents = useMemo(() => {
-    const keyword = search.toLowerCase();
+    const keyword = search.toLowerCase().trim();
 
     return students.filter((student) => {
+      const level = normalizeLevel(student.level);
+
       const matchSearch =
+        !keyword ||
         student.full_name.toLowerCase().includes(keyword) ||
         student.nis?.toLowerCase().includes(keyword) ||
         student.nisn?.toLowerCase().includes(keyword) ||
-        student.parents?.full_name?.toLowerCase().includes(keyword);
+        student.parents?.full_name?.toLowerCase().includes(keyword) ||
+        level.toLowerCase().includes(keyword) ||
+        student.grade?.toLowerCase().includes(keyword);
 
-      const matchLevel =
-        levelFilter === "Semua Level" || student.level === levelFilter;
+      const matchLevel = levelFilter === "Semua Level" || level === levelFilter;
 
       const matchStatus =
         statusFilter === "Semua Status" || student.status === statusFilter;
@@ -469,39 +528,37 @@ export default function TeacherStudentsPage() {
     });
   }, [students, search, levelFilter, statusFilter]);
 
-  const teacherSubjectNames = useMemo(() => {
-    return (teacher?.subjects || [])
-      .map((subject) => normalizeText(subject))
-      .filter(Boolean);
-  }, [teacher]);
+  const subjectMap = useMemo(() => {
+    return new Map(subjects.map((subject) => [subject.id, subject]));
+  }, [subjects]);
 
-  const reportSubjectOptions = useMemo(() => {
-    if (teacherSubjectNames.length === 0) return subjects;
+  const subjectOptionsForSelectedStudent = useMemo(() => {
+    if (!reportForm.student_id) return subjects;
 
-    const matchedSubjects = subjects.filter((subject) => {
-      const subjectName = normalizeText(subject.name);
+    const subjectIds = new Set(
+      studentTeachers
+        .filter((relation) => relation.student_id === reportForm.student_id)
+        .map((relation) => relation.subject_id)
+        .filter(Boolean) as string[]
+    );
 
-      return teacherSubjectNames.some((teacherSubject) => {
-        return (
-          teacherSubject.includes(subjectName) ||
-          subjectName.includes(teacherSubject)
-        );
-      });
-    });
-
-    return matchedSubjects.length > 0 ? matchedSubjects : subjects;
-  }, [subjects, teacherSubjectNames]);
+    return subjects.filter((subject) => subjectIds.has(subject.id));
+  }, [subjects, studentTeachers, reportForm.student_id]);
 
   const activeStudents = students.filter(
     (student) => student.status === "active" || !student.status
   ).length;
 
-  const primaryStudents = students.filter(
-    (student) => student.level === "Primary Level"
+  const sdStudents = students.filter(
+    (student) => normalizeLevel(student.level) === "SD"
   ).length;
 
-  const secondaryStudents = students.filter(
-    (student) => student.level === "Secondary Level"
+  const smpStudents = students.filter(
+    (student) => normalizeLevel(student.level) === "SMP"
+  ).length;
+
+  const smaStudents = students.filter(
+    (student) => normalizeLevel(student.level) === "SMA"
   ).length;
 
   const averageScore = useMemo(() => {
@@ -509,7 +566,7 @@ export default function TeacherStudentsPage() {
 
     const scores = academicReports
       .filter((report) => report.student_id && studentIds.has(report.student_id))
-      .map((report) => Number(report.final_score || 0))
+      .map((report) => Number(report.final_grade ?? report.final_score ?? 0))
       .filter((score) => score > 0);
 
     if (scores.length === 0) return 0;
@@ -525,7 +582,7 @@ export default function TeacherStudentsPage() {
     );
 
     const scores = reports
-      .map((report) => Number(report.final_score || 0))
+      .map((report) => Number(report.final_grade ?? report.final_score ?? 0))
       .filter((score) => score > 0);
 
     if (scores.length === 0) return 0;
@@ -549,13 +606,34 @@ export default function TeacherStudentsPage() {
     return Math.round((present / records.length) * 100);
   }
 
+  function getStudentSubjectLabels(studentId: string) {
+    const relationSubjects = studentTeachers
+      .filter((relation) => relation.student_id === studentId)
+      .map((relation) => {
+        if (!relation.subject_id) return null;
+        return subjectMap.get(relation.subject_id) || null;
+      })
+      .filter(Boolean) as Subject[];
+
+    if (relationSubjects.length === 0) return "-";
+
+    return relationSubjects.map((subject) => subject.name || "-").join(", ");
+  }
+
   function openReportModal(student?: Student) {
     setErrorMessage("");
+
+    const studentSubjects = student
+      ? studentTeachers.filter((relation) => relation.student_id === student.id)
+      : [];
+
+    const firstSubjectId = studentSubjects[0]?.subject_id || "";
 
     setReportForm({
       ...initialKbmForm,
       student_id: student?.id || "",
-      class_level: student?.grade || "",
+      subject_id: firstSubjectId,
+      class_level: student ? formatClass(student.level, student.grade) : "",
       report_date: getTodayDate(),
       status: "pending_review",
     });
@@ -577,11 +655,64 @@ export default function TeacherStudentsPage() {
   function handleReportStudentChange(studentId: string) {
     const selectedStudent = students.find((student) => student.id === studentId);
 
+    const studentSubjects = studentTeachers.filter(
+      (relation) => relation.student_id === studentId
+    );
+
+    const firstSubjectId = studentSubjects[0]?.subject_id || "";
+
     setReportForm({
       ...reportForm,
       student_id: studentId,
-      class_level: selectedStudent?.grade || "",
+      subject_id: firstSubjectId,
+      class_level: selectedStudent
+        ? formatClass(selectedStudent.level, selectedStudent.grade)
+        : "",
     });
+  }
+
+  function validateKbmReport() {
+    if (!teacher?.id) {
+      setErrorMessage("Data guru aktif tidak ditemukan.");
+      return false;
+    }
+
+    if (!reportForm.student_id) {
+      setErrorMessage("Murid wajib dipilih.");
+      return false;
+    }
+
+    if (!reportForm.subject_id) {
+      setErrorMessage("Mata pelajaran wajib dipilih.");
+      return false;
+    }
+
+    const allowedRelation = studentTeachers.some((relation) => {
+      return (
+        relation.student_id === reportForm.student_id &&
+        relation.teacher_id === teacher.id &&
+        relation.subject_id === reportForm.subject_id
+      );
+    });
+
+    if (!allowedRelation) {
+      setErrorMessage(
+        "Murid dan mapel ini belum terhubung dengan guru aktif."
+      );
+      return false;
+    }
+
+    if (!reportForm.report_date) {
+      setErrorMessage("Tanggal laporan wajib diisi.");
+      return false;
+    }
+
+    if (!reportForm.material_topic.trim()) {
+      setErrorMessage("Materi KBM wajib diisi.");
+      return false;
+    }
+
+    return true;
   }
 
   async function handleSubmitKbmReport(
@@ -590,30 +721,8 @@ export default function TeacherStudentsPage() {
     event.preventDefault();
     setErrorMessage("");
 
-    if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
-      return;
-    }
-
-    if (!reportForm.student_id) {
-      setErrorMessage("Murid wajib dipilih.");
-      return;
-    }
-
-    if (!reportForm.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
-      return;
-    }
-
-    if (!reportForm.report_date) {
-      setErrorMessage("Tanggal laporan wajib diisi.");
-      return;
-    }
-
-    if (!reportForm.material_topic.trim()) {
-      setErrorMessage("Materi KBM wajib diisi.");
-      return;
-    }
+    if (!validateKbmReport()) return;
+    if (!teacher?.id) return;
 
     setSavingReport(true);
 
@@ -631,6 +740,8 @@ export default function TeacherStudentsPage() {
         solution: reportForm.solution.trim() || null,
         teacher_note: reportForm.teacher_note.trim() || null,
         status: reportForm.status,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       });
 
       if (error) {
@@ -651,9 +762,10 @@ export default function TeacherStudentsPage() {
 
   return (
     <TeacherLayout
-      activeMenu="Murid Saya"
+      activeMenu={"Murid Saya" as any}
+      teacherName={teacher?.full_name || "Guru"}
+      teacherSubject={formatTeacherSubjects(teacher?.subjects ?? null)}
       searchPlaceholder="Cari murid saya..."
-      buttonLabel="+ Buat Laporan"
     >
       <div className="w-full max-w-full overflow-hidden">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -667,18 +779,19 @@ export default function TeacherStudentsPage() {
             </h1>
 
             <p className="mt-1 text-sm text-[#6B4A3A]">
-              Daftar murid yang terhubung dengan jadwal{" "}
+              Daftar murid yang terhubung dengan{" "}
               <span className="font-bold text-[#2B1B18]">
                 {teacher?.full_name || "guru aktif"}
-              </span>
-              .
+              </span>{" "}
+              melalui data siswa.
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => openReportModal()}
-            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D]"
+            disabled={!teacher || students.length === 0}
+            className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             + Buat Laporan
           </button>
@@ -696,6 +809,16 @@ export default function TeacherStudentsPage() {
           </div>
         )}
 
+        {!loading && teacher && students.length === 0 ? (
+          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 text-sm leading-6 text-[#6B4A3A] shadow-sm">
+            Belum ada murid yang terhubung ke guru ini. Hubungkan siswa dari menu{" "}
+            <span className="font-bold text-[#2B1B18]">
+              Kepala Sekolah → Siswa → Edit Siswa → Guru yang Mengajar / Mapel
+            </span>
+            .
+          </div>
+        ) : null}
+
         {!loading && (
           <>
             <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -710,8 +833,10 @@ export default function TeacherStudentsPage() {
               </div>
 
               <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Primary Level</p>
-                <p className="mt-4 text-3xl font-bold">{primaryStudents}</p>
+                <p className="text-sm text-[#6B4A3A]">SD / SMP / SMA</p>
+                <p className="mt-4 text-3xl font-bold">
+                  {sdStudents}/{smpStudents}/{smaStudents}
+                </p>
               </div>
 
               <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
@@ -735,10 +860,9 @@ export default function TeacherStudentsPage() {
                   className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 >
                   <option>Semua Level</option>
-                  <option>Early Learning</option>
-                  <option>Primary Level</option>
-                  <option>Secondary Level</option>
-                  <option>High School</option>
+                  <option>SD</option>
+                  <option>SMP</option>
+                  <option>SMA</option>
                 </select>
 
                 <select
@@ -758,14 +882,14 @@ export default function TeacherStudentsPage() {
                 <div className="border-b border-[#E8D6C1] px-6 py-5">
                   <h2 className="text-lg font-bold">Daftar Murid</h2>
                   <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Murid yang masuk di jadwal mengajar guru.
+                    Murid yang terhubung dengan guru dari relasi siswa-guru-mapel.
                   </p>
                 </div>
 
                 <div className="divide-y divide-[#E8D6C1]">
                   {filteredStudents.length === 0 && (
                     <div className="px-6 py-10 text-center text-sm text-[#6B4A3A]">
-                      Belum ada murid yang terhubung ke jadwal guru ini.
+                      Belum ada murid yang sesuai filter.
                     </div>
                   )}
 
@@ -775,6 +899,7 @@ export default function TeacherStudentsPage() {
                       student.id
                     );
                     const progress = Number(student.progress || score || 0);
+                    const subjectLabels = getStudentSubjectLabels(student.id);
 
                     return (
                       <div
@@ -802,8 +927,15 @@ export default function TeacherStudentsPage() {
                             </div>
 
                             <p className="mt-1 text-sm text-[#6B4A3A]">
-                              {student.level || "-"} • {student.grade || "-"} •{" "}
+                              {formatClass(student.level, student.grade)} •{" "}
                               {student.academic_year || "-"}
+                            </p>
+
+                            <p className="mt-1 text-sm text-[#6B4A3A]">
+                              Mapel:{" "}
+                              <span className="font-semibold text-[#2B1B18]">
+                                {subjectLabels}
+                              </span>
                             </p>
 
                             <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#6B4A3A] md:grid-cols-2">
@@ -925,7 +1057,7 @@ export default function TeacherStudentsPage() {
                       <span className="font-semibold text-[#2B1B18]">
                         Mapel:
                       </span>{" "}
-                      {teacher?.subjects?.join(", ") || "-"}
+                      formatTeacherSubjects(teacher?.subjects ?? null)
                     </p>
                   </div>
                 </div>
@@ -934,43 +1066,26 @@ export default function TeacherStudentsPage() {
                   <h2 className="text-lg font-bold">Ringkasan Level</h2>
 
                   <div className="mt-5 space-y-4">
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Primary Level</span>
-                        <span className="font-bold">{primaryStudents}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-[#7A1F2B]"
-                          style={{
-                            width:
-                              students.length > 0
-                                ? `${(primaryStudents / students.length) * 100}%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <LevelProgress
+                      label="SD"
+                      value={sdStudents}
+                      total={students.length}
+                      color="bg-[#7A1F2B]"
+                    />
 
-                    <div>
-                      <div className="mb-2 flex justify-between text-sm">
-                        <span>Secondary Level</span>
-                        <span className="font-bold">{secondaryStudents}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                        <div
-                          className="h-full rounded-full bg-[#D96B2B]"
-                          style={{
-                            width:
-                              students.length > 0
-                                ? `${
-                                    (secondaryStudents / students.length) * 100
-                                  }%`
-                                : "0%",
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <LevelProgress
+                      label="SMP"
+                      value={smpStudents}
+                      total={students.length}
+                      color="bg-[#D96B2B]"
+                    />
+
+                    <LevelProgress
+                      label="SMA"
+                      value={smaStudents}
+                      total={students.length}
+                      color="bg-[#158A58]"
+                    />
                   </div>
                 </div>
 
@@ -978,9 +1093,11 @@ export default function TeacherStudentsPage() {
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
                     Data murid di halaman ini sekarang diambil dari table{" "}
-                    <span className="font-bold text-[#2B1B18]">schedules</span>.
-                    Jadi guru hanya melihat murid yang masuk ke jadwal mengajar
-                    guru tersebut.
+                    <span className="font-bold text-[#2B1B18]">
+                      student_teachers
+                    </span>
+                    . Jadi guru hanya melihat murid yang memang dihubungkan dari
+                    menu Data Siswa.
                   </p>
                 </div>
               </div>
@@ -1012,9 +1129,8 @@ export default function TeacherStudentsPage() {
               )}
 
               <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
-                Laporan dari menu ini bersifat input manual. Untuk laporan yang
-                otomatis membawa jadwal, Bab, Sub Bab, dan Materi Pokok,
-                gunakan menu Jadwal Mengajar atau Absensi KBM.
+                Laporan dari menu ini bersifat input manual. Murid dan mapel
+                yang muncul hanya yang sudah terhubung dengan guru aktif.
               </div>
 
               <form onSubmit={handleSubmitKbmReport} className="space-y-4 pb-2">
@@ -1030,7 +1146,8 @@ export default function TeacherStudentsPage() {
                     <option value="">Pilih murid</option>
                     {students.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.grade || "-"}
+                        {student.full_name} —{" "}
+                        {formatClass(student.level, student.grade)}
                       </option>
                     ))}
                   </select>
@@ -1046,13 +1163,17 @@ export default function TeacherStudentsPage() {
                         subject_id: event.target.value,
                       })
                     }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                    disabled={!reportForm.student_id}
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
                   >
-                    <option value="">Pilih mata pelajaran</option>
-                    {reportSubjectOptions.map((subject) => (
+                    <option value="">
+                      {reportForm.student_id
+                        ? "Pilih mata pelajaran"
+                        : "Pilih murid dulu"}
+                    </option>
+                    {subjectOptionsForSelectedStudent.map((subject) => (
                       <option key={subject.id} value={subject.id}>
-                        {subject.name}
-                        {subject.grade ? ` — ${subject.grade}` : ""}
+                        {getSubjectLabel(subject)}
                       </option>
                     ))}
                   </select>
@@ -1102,7 +1223,7 @@ export default function TeacherStudentsPage() {
                         class_level: event.target.value,
                       })
                     }
-                    placeholder="Contoh: Grade 4"
+                    placeholder="Contoh: SD Grade 4"
                     className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1148,7 +1269,7 @@ export default function TeacherStudentsPage() {
                       })
                     }
                     rows={3}
-                    placeholder="Contoh: Siswa masih kesulitan menyamakan penyebut"
+                    placeholder="Contoh: Siswa masih kesulitan memahami materi"
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1164,7 +1285,7 @@ export default function TeacherStudentsPage() {
                       })
                     }
                     rows={3}
-                    placeholder="Contoh: Latihan tambahan dengan visual pecahan"
+                    placeholder="Contoh: Latihan tambahan dengan visual"
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>
@@ -1221,5 +1342,34 @@ export default function TeacherStudentsPage() {
         </div>
       )}
     </TeacherLayout>
+  );
+}
+
+function LevelProgress({
+  label,
+  value,
+  total,
+  color,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  color: string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex justify-between text-sm">
+        <span>{label}</span>
+        <span className="font-bold">{value}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{
+            width: total > 0 ? `${(value / total) * 100}%` : "0%",
+          }}
+        />
+      </div>
+    </div>
   );
 }

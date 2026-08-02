@@ -44,6 +44,15 @@ type SubjectRow = {
   grade?: string | null;
 };
 
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
+};
+
 type RppRow = {
   id: string;
   title?: string | null;
@@ -176,19 +185,6 @@ function formatClass(level?: string | null, grade?: string | null) {
   return "-";
 }
 
-function normalizeSubjects(subjects: TeacherRow["subjects"]) {
-  if (!subjects) return [];
-
-  if (Array.isArray(subjects)) {
-    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
-  }
-
-  return subjects
-    .split(",")
-    .map((subject) => normalizeText(subject))
-    .filter(Boolean);
-}
-
 function sameSubjectName(a?: string | null, b?: string | null) {
   if (!a || !b) return false;
 
@@ -198,7 +194,7 @@ function sameSubjectName(a?: string | null, b?: string | null) {
   return left === right || left.includes(right) || right.includes(left);
 }
 
-function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
+function formatTeacherSubject(subjects?: string[] | string | null) {
   if (!subjects) return "Guru";
 
   if (Array.isArray(subjects)) {
@@ -310,10 +306,17 @@ function getRppStudentNis(rpp: RppRow) {
   return rpp.student_nis || "-";
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 export default function TeacherRppPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
+    []
+  );
   const [rpps, setRpps] = useState<RppRow[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -389,6 +392,7 @@ export default function TeacherRppPage() {
       if (!currentTeacher?.id) {
         setStudents([]);
         setSubjects([]);
+        setStudentTeachers([]);
         setRpps([]);
         setErrorMessage(
           "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
@@ -396,9 +400,13 @@ export default function TeacherRppPage() {
         return;
       }
 
-      const [studentsRes, subjectsRes, rppRes] = await Promise.all([
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
+      const [relationsRes, rppRes] = await Promise.all([
+        supabase
+          .from("student_teachers")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .eq("academic_year", ACADEMIC_YEAR),
+
         supabase
           .from("rpp")
           .select("*")
@@ -406,13 +414,58 @@ export default function TeacherRppPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-      if (studentsRes.error) throw new Error(studentsRes.error.message);
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (relationsRes.error) throw new Error(relationsRes.error.message);
       if (rppRes.error) throw new Error(rppRes.error.message);
 
-      setStudents((studentsRes.data || []) as StudentRow[]);
-      setSubjects((subjectsRes.data || []) as SubjectRow[]);
-      setRpps((rppRes.data || []) as RppRow[]);
+      const relationsData = (relationsRes.data || []) as StudentTeacherRow[];
+      const rppData = (rppRes.data || []) as RppRow[];
+
+      const relationStudentIds = relationsData
+        .map((relation) => relation.student_id || "")
+        .filter(Boolean);
+
+      const rppStudentIds = rppData
+        .map((rpp) => rpp.student_id || "")
+        .filter(Boolean);
+
+      const relationSubjectIds = relationsData
+        .map((relation) => relation.subject_id || "")
+        .filter(Boolean);
+
+      const studentIds = uniqueStrings([...relationStudentIds, ...rppStudentIds]);
+      const subjectIds = uniqueStrings(relationSubjectIds);
+
+      let studentsData: StudentRow[] = [];
+      let subjectsData: SubjectRow[] = [];
+
+      if (studentIds.length > 0) {
+        const { data, error } = await supabase
+          .from("students")
+          .select("*")
+          .in("id", studentIds)
+          .order("full_name");
+
+        if (error) throw new Error(error.message);
+
+        studentsData = (data || []) as StudentRow[];
+      }
+
+      if (subjectIds.length > 0) {
+        const { data, error } = await supabase
+          .from("subjects")
+          .select("*")
+          .in("id", subjectIds)
+          .order("name");
+
+        if (error) throw new Error(error.message);
+
+        subjectsData = (data || []) as SubjectRow[];
+      }
+
+      setStudents(studentsData);
+      setSubjects(subjectsData);
+      setStudentTeachers(relationsData);
+      setRpps(rppData);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -423,6 +476,7 @@ export default function TeacherRppPage() {
       setTeacher(null);
       setStudents([]);
       setSubjects([]);
+      setStudentTeachers([]);
       setRpps([]);
     } finally {
       setLoading(false);
@@ -446,6 +500,11 @@ export default function TeacherRppPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "students" },
         () => fetchData()
       )
@@ -461,21 +520,40 @@ export default function TeacherRppPage() {
     };
   }, []);
 
-  const teacherSubjectNames = useMemo(() => {
-    return normalizeSubjects(teacher?.subjects);
-  }, [teacher]);
+  const studentOptionsForForm = useMemo(() => {
+    const studentIdsFromRelation = new Set(
+      studentTeachers
+        .map((relation) => relation.student_id)
+        .filter(Boolean) as string[]
+    );
+
+    return students
+      .filter((student) => studentIdsFromRelation.has(student.id))
+      .sort((a, b) => {
+        return (a.full_name || "").localeCompare(b.full_name || "");
+      });
+  }, [students, studentTeachers]);
 
   const subjectOptions = useMemo(() => {
-    if (teacherSubjectNames.length === 0) return subjects;
-
-    const filteredSubjects = subjects.filter((subject) => {
-      return teacherSubjectNames.some((teacherSubject) =>
-        sameSubjectName(teacherSubject, subject.name)
+    if (!form.student_id) {
+      const subjectIdsFromRelation = new Set(
+        studentTeachers
+          .map((relation) => relation.subject_id)
+          .filter(Boolean) as string[]
       );
-    });
 
-    return filteredSubjects.length > 0 ? filteredSubjects : subjects;
-  }, [subjects, teacherSubjectNames]);
+      return subjects.filter((subject) => subjectIdsFromRelation.has(subject.id));
+    }
+
+    const subjectIdsForStudent = new Set(
+      studentTeachers
+        .filter((relation) => relation.student_id === form.student_id)
+        .map((relation) => relation.subject_id)
+        .filter(Boolean) as string[]
+    );
+
+    return subjects.filter((subject) => subjectIdsForStudent.has(subject.id));
+  }, [subjects, studentTeachers, form.student_id]);
 
   const selectedSubject = useMemo(() => {
     return subjects.find((subject) => subject.id === form.subject_id) || null;
@@ -526,12 +604,22 @@ export default function TeacherRppPage() {
   function handleStudentChange(studentId: string) {
     const student = students.find((item) => item.id === studentId);
 
+    const studentSubjectIds = studentTeachers
+      .filter((relation) => relation.student_id === studentId)
+      .map((relation) => relation.subject_id)
+      .filter(Boolean) as string[];
+
+    const firstSubjectId = studentSubjectIds[0] || "";
+    const firstSubject = subjects.find((subject) => subject.id === firstSubjectId);
+
     setForm((prev) => ({
       ...prev,
       student_id: studentId,
       student_name: student?.full_name || "",
       student_class: student ? formatClass(student.level, student.grade) : "",
       student_nis: student?.nis || "",
+      subject_id: firstSubjectId,
+      subject_name: firstSubject?.name || "",
     }));
   }
 
@@ -614,8 +702,13 @@ export default function TeacherRppPage() {
       return false;
     }
 
+    if (!form.student_id.trim()) {
+      alert("Pilih siswa terlebih dahulu.");
+      return false;
+    }
+
     if (!form.student_name.trim()) {
-      alert("Pilih atau isi nama siswa terlebih dahulu.");
+      alert("Nama siswa belum terisi.");
       return false;
     }
 
@@ -624,13 +717,31 @@ export default function TeacherRppPage() {
       return false;
     }
 
-    if (!form.subject_name.trim()) {
-      alert("Pilih atau isi mata pelajaran terlebih dahulu.");
+    if (!form.student_nis.trim()) {
+      alert("Isi NIS/NIPD terlebih dahulu.");
       return false;
     }
 
-    if (!form.student_nis.trim()) {
-      alert("Isi NIS/NIPD terlebih dahulu.");
+    if (!form.subject_id.trim()) {
+      alert("Pilih mata pelajaran terlebih dahulu.");
+      return false;
+    }
+
+    if (!form.subject_name.trim()) {
+      alert("Mata pelajaran belum terisi.");
+      return false;
+    }
+
+    const allowedRelation = studentTeachers.some((relation) => {
+      return (
+        relation.teacher_id === teacher.id &&
+        relation.student_id === form.student_id &&
+        relation.subject_id === form.subject_id
+      );
+    });
+
+    if (!allowedRelation) {
+      alert("Siswa dan mapel ini belum terhubung dengan guru login.");
       return false;
     }
 
@@ -777,7 +888,6 @@ export default function TeacherRppPage() {
 
       await fetchData();
 
-      setSaving(false);
       setShowModal(false);
       setForm(emptyForm());
       setSelectedFile(null);
@@ -788,12 +898,13 @@ export default function TeacherRppPage() {
           : "RPP berhasil disimpan."
       );
     } catch (error) {
-      setSaving(false);
       alert(
         `Gagal simpan RPP: ${
           error instanceof Error ? error.message : "Terjadi kesalahan"
         }`
       );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -830,7 +941,7 @@ export default function TeacherRppPage() {
     <TeacherLayout
       activeMenu="RPP"
       teacherName={teacher?.full_name || "Guru"}
-      teacherSubject={formatTeacherSubject(teacher?.subjects)}
+      teacherSubject={formatTeacherSubject(teacher?.subjects ?? null)}
       searchPlaceholder="Cari RPP..."
     >
       <section className="space-y-7">
@@ -853,7 +964,7 @@ export default function TeacherRppPage() {
           <button
             type="button"
             onClick={openCreateModal}
-            disabled={!teacher || saving}
+            disabled={!teacher || saving || studentOptionsForForm.length === 0}
             className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             <Plus className="h-4 w-4" />
@@ -864,6 +975,13 @@ export default function TeacherRppPage() {
         {errorMessage ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
             {errorMessage}
+          </div>
+        ) : null}
+
+        {!loading && teacher && studentOptionsForForm.length === 0 ? (
+          <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
+            Belum ada siswa yang terhubung ke guru ini. Hubungkan siswa dengan
+            guru dan mapel dari menu Kepala Sekolah → Siswa → Edit Siswa.
           </div>
         ) : null}
 
@@ -967,7 +1085,10 @@ export default function TeacherRppPage() {
 
                 <div className="space-y-4 px-6 py-5">
                   <div className="grid gap-3 md:grid-cols-3">
-                    <MiniInfo label="Program Semester" value={getManualProgram(rpp)} />
+                    <MiniInfo
+                      label="Program Semester"
+                      value={getManualProgram(rpp)}
+                    />
                     <MiniInfo label="Bab" value={getManualChapter(rpp)} />
                     <MiniInfo label="Sub Bab" value={getManualSubChapter(rpp)} />
                   </div>
@@ -1056,8 +1177,7 @@ export default function TeacherRppPage() {
       {showModal ? (
         <RppModal
           form={form}
-          students={students}
-          subjects={subjects}
+          students={studentOptionsForForm}
           subjectOptions={subjectOptions}
           selectedSubject={selectedSubject}
           selectedFile={selectedFile}
@@ -1096,7 +1216,6 @@ function RppModal({
 }: {
   form: RppForm;
   students: StudentRow[];
-  subjects: SubjectRow[];
   subjectOptions: SubjectRow[];
   selectedSubject: SubjectRow | null;
   selectedFile: File | null;
@@ -1166,12 +1285,12 @@ function RppModal({
             </select>
           </FormGroup>
 
-          <FormGroup label="Nama Siswa Manual">
+          <FormGroup label="Nama Siswa">
             <input
               value={form.student_name}
-              onChange={(event) => onChange("student_name", event.target.value)}
-              placeholder="Isi manual jika siswa belum ada di data"
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+              readOnly
+              placeholder="Otomatis dari pilihan siswa"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-[#FFF8EF] px-4 text-[14px] font-bold text-[#2B1B18] outline-none"
             />
           </FormGroup>
         </div>
@@ -1180,9 +1299,9 @@ function RppModal({
           <FormGroup label="Kelas">
             <input
               value={form.student_class}
-              onChange={(event) => onChange("student_class", event.target.value)}
-              placeholder="Contoh: SD Grade 4"
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+              readOnly
+              placeholder="Otomatis dari data siswa"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-[#FFF8EF] px-4 text-[14px] font-bold text-[#2B1B18] outline-none"
             />
           </FormGroup>
 
@@ -1190,9 +1309,12 @@ function RppModal({
             <select
               value={form.subject_id}
               onChange={(event) => onSubjectChange(event.target.value)}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+              disabled={!form.student_id}
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
             >
-              <option value="">Pilih mapel</option>
+              <option value="">
+                {form.student_id ? "Pilih mapel" : "Pilih siswa dulu"}
+              </option>
               {subjectOptions.map((subject) => (
                 <option key={subject.id} value={subject.id}>
                   {getSubjectLabel(subject)}
@@ -1204,20 +1326,20 @@ function RppModal({
           <FormGroup label="NIS / NIPD">
             <input
               value={form.student_nis}
-              onChange={(event) => onChange("student_nis", event.target.value)}
-              placeholder="Contoh: HSTKB-001"
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+              readOnly
+              placeholder="Otomatis dari data siswa"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-[#FFF8EF] px-4 text-[14px] font-bold text-[#2B1B18] outline-none"
             />
           </FormGroup>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <FormGroup label="Mapel Manual">
+          <FormGroup label="Mapel">
             <input
               value={form.subject_name}
-              onChange={(event) => onChange("subject_name", event.target.value)}
-              placeholder="Isi manual jika mapel belum ada di data"
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+              readOnly
+              placeholder="Otomatis dari pilihan mapel"
+              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-[#FFF8EF] px-4 text-[14px] font-bold text-[#2B1B18] outline-none"
             />
           </FormGroup>
 

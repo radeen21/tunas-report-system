@@ -8,9 +8,12 @@ import {
   ClipboardCheck,
   FileText,
   Layers3,
+  Users,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "./components/TeacherLayout";
+
+const ACADEMIC_YEAR = "2026/2027";
 
 type TeacherRow = {
   id: string;
@@ -30,6 +33,14 @@ type StudentRow = {
 type SubjectRow = {
   id: string;
   name: string | null;
+};
+
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
 };
 
 type ScheduleRow = {
@@ -67,6 +78,20 @@ type RppRow = {
   updated_at?: string | null;
 };
 
+type KbmReportRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  report_date: string | null;
+  class_level: string | null;
+  semester: string | null;
+  chapter: string | null;
+  material_topic: string | null;
+  status: string | null;
+  updated_at?: string | null;
+};
+
 type MaterialFrameworkRow = {
   id: string;
   teacher_id: string | null;
@@ -78,14 +103,6 @@ type MaterialFrameworkRow = {
   framework_title: string | null;
   status: string | null;
   updated_at?: string | null;
-};
-
-type TimeAllocationRow = {
-  id: string;
-  material_framework_id: string | null;
-  teacher_id?: string | null;
-  total_meetings: number | null;
-  total_minutes: number | null;
 };
 
 type AcademicReportRow = {
@@ -116,9 +133,13 @@ type RombelToday = {
   alreadyAttendance: boolean;
 };
 
+type KbmReportSummary = KbmReportRow & {
+  student_name: string;
+  subject_name: string;
+};
+
 type FrameworkSummary = MaterialFrameworkRow & {
   subject_name: string;
-  allocation: TimeAllocationRow | null;
 };
 
 type AcademicReportSummary = AcademicReportRow & {
@@ -154,7 +175,7 @@ function formatTime(value?: string | null) {
   return value.slice(0, 5);
 }
 
-function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
+function formatTeacherSubject(subjects?: string[] | string | null) {
   if (!subjects) return "Guru";
 
   if (Array.isArray(subjects)) {
@@ -192,11 +213,15 @@ function getStatusClass(status?: string | null) {
     return "bg-[#C7F0DA] text-[#158A58]";
   }
 
-  if (status === "submitted" || status === "pending") {
+  if (
+    status === "submitted" ||
+    status === "pending" ||
+    status === "pending_review"
+  ) {
     return "bg-[#FFF2B8] text-[#B26A00]";
   }
 
-  if (status === "rejected") {
+  if (status === "rejected" || status === "revision") {
     return "bg-[#FFE4E6] text-[#BE123C]";
   }
 
@@ -208,7 +233,9 @@ function getStatusLabel(status?: string | null) {
   if (status === "approved") return "Approved";
   if (status === "published") return "Published";
   if (status === "pending") return "Pending";
+  if (status === "pending_review") return "Pending Review";
   if (status === "rejected") return "Rejected";
+  if (status === "revision") return "Revision";
 
   return "Draft";
 }
@@ -224,17 +251,25 @@ function getAcademicStatus(report: AcademicReportRow) {
   return "draft";
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 export default function TeacherDashboardPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
+    []
+  );
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
   const [rpps, setRpps] = useState<RppRow[]>([]);
+  const [kbmReports, setKbmReports] = useState<KbmReportSummary[]>([]);
   const [frameworks, setFrameworks] = useState<FrameworkSummary[]>([]);
-  const [academicReports, setAcademicReports] = useState<AcademicReportSummary[]>(
-    []
-  );
+  const [academicReports, setAcademicReports] = useState<
+    AcademicReportSummary[]
+  >([]);
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -299,46 +334,62 @@ export default function TeacherDashboardPage() {
       if (!currentTeacher?.id) {
         setStudents([]);
         setSubjects([]);
+        setStudentTeachers([]);
         setSchedules([]);
         setAttendance([]);
         setRpps([]);
+        setKbmReports([]);
         setFrameworks([]);
         setAcademicReports([]);
         setErrorMessage(
           "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code di akun guru."
         );
-        setLoading(false);
         return;
       }
 
       const [
-        studentsRes,
-        subjectsRes,
+        relationsRes,
         schedulesRes,
         attendanceRes,
         rppRes,
+        kbmReportsRes,
         frameworksRes,
-        allocationsRes,
         academicReportsRes,
       ] = await Promise.all([
-        supabase.from("students").select("id, full_name, level, grade").order("full_name"),
-        supabase.from("subjects").select("id, name").order("name"),
-        supabase.from("schedules").select("*").eq("teacher_id", currentTeacher.id),
-        supabase.from("attendance").select("*").eq("teacher_id", currentTeacher.id),
+        supabase
+          .from("student_teachers")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .eq("academic_year", ACADEMIC_YEAR),
+
+        supabase
+          .from("schedules")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id),
+
+        supabase
+          .from("attendance")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id),
+
         supabase
           .from("rpp")
           .select("*")
           .eq("teacher_id", currentTeacher.id)
           .order("updated_at", { ascending: false }),
+
+        supabase
+          .from("kbm_reports")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .order("updated_at", { ascending: false }),
+
         supabase
           .from("material_frameworks")
           .select("*")
           .eq("teacher_id", currentTeacher.id)
           .order("updated_at", { ascending: false }),
-        supabase
-          .from("time_allocations")
-          .select("*")
-          .eq("teacher_id", currentTeacher.id),
+
         supabase
           .from("academic_reports")
           .select("*")
@@ -346,42 +397,116 @@ export default function TeacherDashboardPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-      if (studentsRes.error) throw new Error(studentsRes.error.message);
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (relationsRes.error) throw new Error(relationsRes.error.message);
       if (schedulesRes.error) throw new Error(schedulesRes.error.message);
       if (attendanceRes.error) throw new Error(attendanceRes.error.message);
       if (rppRes.error) throw new Error(rppRes.error.message);
+      if (kbmReportsRes.error) throw new Error(kbmReportsRes.error.message);
       if (frameworksRes.error) throw new Error(frameworksRes.error.message);
-      if (allocationsRes.error) throw new Error(allocationsRes.error.message);
+
       if (academicReportsRes.error) {
         throw new Error(academicReportsRes.error.message);
       }
 
-      const studentsData = (studentsRes.data || []) as StudentRow[];
-      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const relationsData = (relationsRes.data || []) as StudentTeacherRow[];
       const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
       const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
       const rppData = (rppRes.data || []) as RppRow[];
+      const kbmReportsData = (kbmReportsRes.data || []) as KbmReportRow[];
       const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
-      const allocationsData = (allocationsRes.data || []) as TimeAllocationRow[];
       const academicReportsData = (academicReportsRes.data ||
         []) as AcademicReportRow[];
 
-      const subjectMap = new Map(
-        subjectsData.map((subject) => [subject.id, subject])
-      );
+      const relationStudentIds = relationsData
+        .map((relation) => relation.student_id || "")
+        .filter(Boolean);
+
+      const scheduleStudentIds = schedulesData
+        .map((schedule) => schedule.student_id || "")
+        .filter(Boolean);
+
+      const reportStudentIds = [
+        ...kbmReportsData.map((report) => report.student_id || ""),
+        ...academicReportsData.map((report) => report.student_id || ""),
+      ].filter(Boolean);
+
+      const relationSubjectIds = relationsData
+        .map((relation) => relation.subject_id || "")
+        .filter(Boolean);
+
+      const scheduleSubjectIds = schedulesData
+        .map((schedule) => schedule.subject_id || "")
+        .filter(Boolean);
+
+      const reportSubjectIds = [
+        ...kbmReportsData.map((report) => report.subject_id || ""),
+        ...academicReportsData.map((report) => report.subject_id || ""),
+        ...frameworksData.map((framework) => framework.subject_id || ""),
+      ].filter(Boolean);
+
+      const studentIds = uniqueStrings([
+        ...relationStudentIds,
+        ...scheduleStudentIds,
+        ...reportStudentIds,
+      ]);
+
+      const subjectIds = uniqueStrings([
+        ...relationSubjectIds,
+        ...scheduleSubjectIds,
+        ...reportSubjectIds,
+      ]);
+
+      let studentsData: StudentRow[] = [];
+      let subjectsData: SubjectRow[] = [];
+
+      if (studentIds.length > 0) {
+        const { data, error } = await supabase
+          .from("students")
+          .select("id, full_name, level, grade")
+          .in("id", studentIds)
+          .order("full_name");
+
+        if (error) throw new Error(error.message);
+
+        studentsData = (data || []) as StudentRow[];
+      }
+
+      if (subjectIds.length > 0) {
+        const { data, error } = await supabase
+          .from("subjects")
+          .select("id, name")
+          .in("id", subjectIds)
+          .order("name");
+
+        if (error) throw new Error(error.message);
+
+        subjectsData = (data || []) as SubjectRow[];
+      }
 
       const studentMap = new Map(
         studentsData.map((student) => [student.id, student])
       );
 
-      const allocationMap = new Map(
-        allocationsData
-          .filter((allocation) => allocation.material_framework_id)
-          .map((allocation) => [
-            allocation.material_framework_id as string,
-            allocation,
-          ])
+      const subjectMap = new Map(
+        subjectsData.map((subject) => [subject.id, subject])
+      );
+
+      const enrichedKbmReports: KbmReportSummary[] = kbmReportsData.map(
+        (report) => {
+          const student = report.student_id
+            ? studentMap.get(report.student_id)
+            : null;
+
+          const subject = report.subject_id
+            ? subjectMap.get(report.subject_id)
+            : null;
+
+          return {
+            ...report,
+            student_name: student?.full_name || "-",
+            subject_name: subject?.name || "-",
+          };
+        }
       );
 
       const enrichedFrameworks: FrameworkSummary[] = frameworksData.map(
@@ -393,7 +518,6 @@ export default function TeacherDashboardPage() {
           return {
             ...framework,
             subject_name: subject?.name || "-",
-            allocation: allocationMap.get(framework.id) || null,
           };
         }
       );
@@ -417,9 +541,11 @@ export default function TeacherDashboardPage() {
 
       setStudents(studentsData);
       setSubjects(subjectsData);
+      setStudentTeachers(relationsData);
       setSchedules(schedulesData);
       setAttendance(attendanceData);
       setRpps(rppData);
+      setKbmReports(enrichedKbmReports);
       setFrameworks(enrichedFrameworks);
       setAcademicReports(enrichedAcademicReports);
     } catch (error) {
@@ -432,9 +558,11 @@ export default function TeacherDashboardPage() {
       setTeacher(null);
       setStudents([]);
       setSubjects([]);
+      setStudentTeachers([]);
       setSchedules([]);
       setAttendance([]);
       setRpps([]);
+      setKbmReports([]);
       setFrameworks([]);
       setAcademicReports([]);
     } finally {
@@ -450,6 +578,11 @@ export default function TeacherDashboardPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
         () => fetchData()
       )
       .on(
@@ -479,12 +612,12 @@ export default function TeacherDashboardPage() {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "material_frameworks" },
+        { event: "*", schema: "public", table: "kbm_reports" },
         () => fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "time_allocations" },
+        { event: "*", schema: "public", table: "material_frameworks" },
         () => fetchData()
       )
       .on(
@@ -506,6 +639,16 @@ export default function TeacherDashboardPage() {
   const subjectMap = useMemo(() => {
     return new Map(subjects.map((subject) => [subject.id, subject]));
   }, [subjects]);
+
+  const relatedStudentCount = useMemo(() => {
+    const ids = new Set(
+      studentTeachers
+        .map((relation) => relation.student_id)
+        .filter(Boolean) as string[]
+    );
+
+    return ids.size;
+  }, [studentTeachers]);
 
   const todayRombels = useMemo(() => {
     const today = todayYMD();
@@ -568,25 +711,33 @@ export default function TeacherDashboardPage() {
   }, [schedules, attendance, subjectMap, studentMap]);
 
   const summary = useMemo(() => {
-    const totalFrameworkMeetings = frameworks.reduce((sum, item) => {
-      return sum + Number(item.allocation?.total_meetings || 0);
-    }, 0);
-
-    const totalFrameworkMinutes = frameworks.reduce((sum, item) => {
-      return sum + Number(item.allocation?.total_minutes || 0);
-    }, 0);
-
     return {
+      totalStudents: relatedStudentCount,
       todayRombel: todayRombels.length,
       todayDone: todayRombels.filter((item) => item.alreadyAttendance).length,
       todayPending: todayRombels.filter((item) => !item.alreadyAttendance).length,
+
       totalRpp: rpps.length,
       rppDraft: rpps.filter((item) => item.status === "draft").length,
       rppSubmitted: rpps.filter((item) => item.status === "submitted").length,
       rppApproved: rpps.filter((item) => item.status === "approved").length,
+
+      totalKbmReports: kbmReports.length,
+      kbmDraft: kbmReports.filter((item) => item.status === "draft").length,
+      kbmPending: kbmReports.filter((item) => item.status === "pending_review")
+        .length,
+      kbmApproved: kbmReports.filter(
+        (item) => item.status === "approved" || item.status === "published"
+      ).length,
+
       totalFramework: frameworks.length,
-      totalFrameworkMeetings,
-      totalFrameworkMinutes,
+      frameworkSubmitted: frameworks.filter(
+        (item) => item.status === "submitted" || item.status === "pending"
+      ).length,
+      frameworkApproved: frameworks.filter(
+        (item) => item.status === "approved" || item.status === "published"
+      ).length,
+
       totalAcademicReports: academicReports.length,
       academicPending: academicReports.filter(
         (item) => getAcademicStatus(item) === "pending"
@@ -595,9 +746,17 @@ export default function TeacherDashboardPage() {
         (item) => getAcademicStatus(item) === "approved"
       ).length,
     };
-  }, [todayRombels, rpps, frameworks, academicReports]);
+  }, [
+    relatedStudentCount,
+    todayRombels,
+    rpps,
+    kbmReports,
+    frameworks,
+    academicReports,
+  ]);
 
   const latestRpps = rpps.slice(0, 4);
+  const latestKbmReports = kbmReports.slice(0, 4);
   const latestFrameworks = frameworks.slice(0, 3);
   const latestAcademicReports = academicReports.slice(0, 4);
 
@@ -605,7 +764,7 @@ export default function TeacherDashboardPage() {
     <TeacherLayout
       activeMenu="Dashboard"
       teacherName={teacher?.full_name || "Guru"}
-      teacherSubject={formatTeacherSubject(teacher?.subjects)}
+      teacherSubject={formatTeacherSubject(teacher?.subjects ?? null)}
       searchPlaceholder="Cari data dashboard..."
     >
       <section className="space-y-7">
@@ -619,8 +778,8 @@ export default function TeacherDashboardPage() {
           </h1>
 
           <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-            Pantau jadwal hari ini, absensi KBM, RPP, kerangka materi, dan
-            laporan akademik dalam satu dashboard.
+            Pantau murid saya, jadwal hari ini, absensi KBM, RPP, laporan KBM,
+            kerangka materi, dan laporan akademik dalam satu dashboard.
           </p>
         </div>
 
@@ -644,13 +803,29 @@ export default function TeacherDashboardPage() {
 
         {!loading && teacher ? (
           <>
+            {relatedStudentCount === 0 ? (
+              <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
+                Belum ada siswa yang terhubung ke guru ini. Hubungkan siswa dari
+                menu Kepala Sekolah → Siswa → Edit Siswa → Guru yang Mengajar /
+                Mapel.
+              </div>
+            ) : null}
+
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <SummaryCard
+                icon={<Users className="h-5 w-5" />}
+                label="Murid Saya"
+                value={summary.totalStudents}
+                info={`${studentTeachers.length} relasi mapel`}
+                tone="pink"
+              />
+
               <SummaryCard
                 icon={<CalendarDays className="h-5 w-5" />}
                 label="Rombel Hari Ini"
                 value={summary.todayRombel}
                 info={formatDate(todayYMD())}
-                tone="pink"
+                tone="orange"
               />
 
               <SummaryCard
@@ -658,7 +833,7 @@ export default function TeacherDashboardPage() {
                 label="Belum Diabsen"
                 value={summary.todayPending}
                 info={`${summary.todayDone} selesai`}
-                tone="orange"
+                tone="blue"
               />
 
               <SummaryCard
@@ -666,14 +841,6 @@ export default function TeacherDashboardPage() {
                 label="Total RPP"
                 value={summary.totalRpp}
                 info={`${summary.rppSubmitted} review`}
-                tone="blue"
-              />
-
-              <SummaryCard
-                icon={<CheckCircle2 className="h-5 w-5" />}
-                label="RPP Approved"
-                value={summary.rppApproved}
-                info={`${summary.rppDraft} draft`}
                 tone="green"
               />
             </div>
@@ -728,30 +895,38 @@ export default function TeacherDashboardPage() {
               </DashboardPanel>
 
               <DashboardPanel
-                title="Ringkasan Kerangka Materi"
-                subtitle="Alokasi waktu dari kerangka materi guru."
+                title="Ringkasan Guru"
+                subtitle="Data pekerjaan guru yang sedang berjalan."
               >
                 <div className="grid gap-3">
                   <SmallMetric
-                    label="Total Kerangka"
-                    value={summary.totalFramework}
-                    icon={<Layers3 className="h-4 w-4" />}
+                    label="Laporan KBM Pending"
+                    value={summary.kbmPending}
+                    icon={<ClipboardCheck className="h-4 w-4" />}
                   />
+
                   <SmallMetric
-                    label="Total Pertemuan"
-                    value={summary.totalFrameworkMeetings}
+                    label="Laporan Akademik Pending"
+                    value={summary.academicPending}
                     icon={<BookOpen className="h-4 w-4" />}
                   />
+
                   <SmallMetric
-                    label="Total Menit"
-                    value={summary.totalFrameworkMinutes}
-                    icon={<CalendarDays className="h-4 w-4" />}
+                    label="Kerangka Materi Review"
+                    value={summary.frameworkSubmitted}
+                    icon={<Layers3 className="h-4 w-4" />}
+                  />
+
+                  <SmallMetric
+                    label="RPP Approved"
+                    value={summary.rppApproved}
+                    icon={<CheckCircle2 className="h-4 w-4" />}
                   />
                 </div>
               </DashboardPanel>
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-3">
+            <div className="grid gap-5 xl:grid-cols-4">
               <DashboardPanel
                 title="RPP Terbaru"
                 subtitle="RPP terakhir dibuat atau diperbarui."
@@ -775,6 +950,28 @@ export default function TeacherDashboardPage() {
               </DashboardPanel>
 
               <DashboardPanel
+                title="Laporan KBM"
+                subtitle="Laporan KBM terakhir yang dibuat guru."
+              >
+                {latestKbmReports.length === 0 ? (
+                  <EmptyText text="Belum ada laporan KBM." />
+                ) : (
+                  <div className="space-y-3">
+                    {latestKbmReports.map((report) => (
+                      <MiniCard
+                        key={report.id}
+                        title={`${report.student_name} • ${report.subject_name}`}
+                        subtitle={`${formatDate(report.report_date)} • ${
+                          report.material_topic || "-"
+                        }`}
+                        status={report.status || "draft"}
+                      />
+                    ))}
+                  </div>
+                )}
+              </DashboardPanel>
+
+              <DashboardPanel
                 title="Kerangka Materi"
                 subtitle="Kerangka materi terbaru."
               >
@@ -787,8 +984,8 @@ export default function TeacherDashboardPage() {
                         key={framework.id}
                         title={framework.framework_title || "-"}
                         subtitle={`${framework.subject_name} • ${
-                          framework.level
-                        } ${framework.grade}`}
+                          framework.level || "-"
+                        } ${framework.grade || ""}`}
                         status={framework.status || "draft"}
                       />
                     ))}
@@ -903,7 +1100,7 @@ function StatusBadge({
 }) {
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+      className={`inline-flex w-fit min-w-[86px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${getStatusClass(
         status
       )}`}
     >
@@ -957,8 +1154,12 @@ function MiniCard({
     <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
       <div className="mb-2 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[14px] font-extrabold text-[#2B1B18]">{title}</p>
-          <p className="mt-1 text-[12px] text-[#6F5549]">{subtitle}</p>
+          <p className="line-clamp-2 text-[14px] font-extrabold text-[#2B1B18]">
+            {title}
+          </p>
+          <p className="mt-1 line-clamp-2 text-[12px] text-[#6F5549]">
+            {subtitle}
+          </p>
         </div>
 
         <StatusBadge status={status} />

@@ -92,6 +92,7 @@ type EnrichedReport = AcademicReportRow & {
   student_nis: string;
   student_nisn: string;
   teacher_name: string;
+  teacher_email: string;
   subject_name: string;
 };
 
@@ -127,6 +128,17 @@ function formatNumber(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
 
   return Number(value).toFixed(2).replace(".00", "");
+}
+
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
 }
 
 function getInitials(name?: string | null) {
@@ -235,9 +247,21 @@ export default function KepalaSekolahReportsPage() {
     try {
       const [teachersRes, studentsRes, subjectsRes, reportsRes] =
         await Promise.all([
-          supabase.from("teachers").select("*").order("full_name"),
-          supabase.from("students").select("*").order("full_name"),
-          supabase.from("subjects").select("*").order("name"),
+          supabase
+            .from("teachers")
+            .select("id, full_name, email, teacher_code")
+            .order("full_name"),
+
+          supabase
+            .from("students")
+            .select("id, full_name, grade, level, nis, nisn")
+            .order("full_name"),
+
+          supabase
+            .from("subjects")
+            .select("id, name, level, grade")
+            .order("name"),
+
           supabase
             .from("academic_reports")
             .select("*")
@@ -282,6 +306,7 @@ export default function KepalaSekolahReportsPage() {
         return {
           ...report,
           teacher_name: teacher?.full_name || "-",
+          teacher_email: teacher?.email || "-",
           student_name: student?.full_name || "-",
           student_grade: student?.grade || "-",
           student_level: student?.level || "-",
@@ -332,6 +357,11 @@ export default function KepalaSekolahReportsPage() {
         { event: "*", schema: "public", table: "subjects" },
         () => fetchData()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchData()
+      )
       .subscribe();
 
     return () => {
@@ -361,6 +391,7 @@ export default function KepalaSekolahReportsPage() {
         normalizeText(report.student_grade).includes(q) ||
         normalizeText(report.student_level).includes(q) ||
         normalizeText(report.teacher_name).includes(q) ||
+        normalizeText(report.teacher_email).includes(q) ||
         normalizeText(report.subject_name).includes(q) ||
         normalizeText(report.report_period).includes(q) ||
         normalizeText(report.teacher_comment).includes(q);
@@ -533,9 +564,10 @@ export default function KepalaSekolahReportsPage() {
         "Nama Siswa": report.student_name,
         NIPD: report.student_nis,
         NISN: report.student_nisn,
-        Level: report.student_level,
+        Level: normalizeLevel(report.student_level),
         Kelas: report.student_grade,
         Guru: report.teacher_name,
+        "Email Guru": report.teacher_email,
         "Mata Pelajaran": report.subject_name,
         Periode: report.report_period || "-",
         "Jenis Laporan": getReportTypeLabel(report.report_type),
@@ -572,11 +604,11 @@ export default function KepalaSekolahReportsPage() {
         return `
           <tr>
             ${headers
-              .map((header) => {
-                const value = row[header as keyof typeof row];
-                return `<td>${escapeExcelCell(value)}</td>`;
-              })
-              .join("")}
+            .map((header) => {
+              const value = row[header as keyof typeof row];
+              return `<td>${escapeExcelCell(value)}</td>`;
+            })
+            .join("")}
           </tr>
         `;
       })
@@ -637,8 +669,8 @@ export default function KepalaSekolahReportsPage() {
             <thead>
               <tr>
                 ${headers
-                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
-                  .join("")}
+        .map((header) => `<th>${escapeExcelCell(header)}</th>`)
+        .join("")}
               </tr>
             </thead>
 
@@ -792,7 +824,7 @@ export default function KepalaSekolahReportsPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] border-collapse">
+            <table className="w-full min-w-[1580px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="px-6 py-4">Siswa</th>
@@ -850,18 +882,24 @@ export default function KepalaSekolahReportsPage() {
                                 {report.student_name}
                               </p>
                               <p className="mt-1 text-[12px] text-[#6F5549]">
-                                {report.student_level} — {report.student_grade}
+                                {normalizeLevel(report.student_level)} —{" "}
+                                {report.student_grade}
                               </p>
-                              <p className="mt-1 text-[12px] text-[#6F5549]">
-                                NIPD: {report.student_nis || "-"} • NISN:{" "}
-                                {report.student_nisn || "-"}
+                              <p className="mt-1 max-w-[150px] text-[12px] leading-5 text-[#6F5549]">
+                                NIPD: {report.student_nis || "-"}
+                              </p>
+                              <p className="mt-0.5 max-w-[150px] text-[12px] leading-5 text-[#6F5549]">
+                                NISN: {report.student_nisn || "-"}
                               </p>
                             </div>
                           </div>
                         </td>
 
-                        <td className="px-6 py-4 font-bold">
-                          {report.teacher_name}
+                        <td className="px-6 py-4">
+                          <p className="font-bold">{report.teacher_name}</p>
+                          <p className="mt-1 text-[12px] text-[#6F5549]">
+                            {report.teacher_email}
+                          </p>
                         </td>
 
                         <td className="px-6 py-4">{report.subject_name}</td>
@@ -901,7 +939,7 @@ export default function KepalaSekolahReportsPage() {
                           )}
                         </td>
 
-                        <td className="px-6 py-4">
+                        <td className="w-[130px] px-6 py-4">
                           <PredicateBadge
                             predicate={report.predicate || report.description}
                           />
@@ -923,7 +961,7 @@ export default function KepalaSekolahReportsPage() {
                           )}
                         </td>
 
-                        <td className="px-6 py-4">
+                        <td className="w-[150px] px-6 py-4">
                           <StatusBadge status={status} />
                         </td>
 
@@ -1109,9 +1147,10 @@ function ReportDetailModal({
               <InfoItem label="NISN" value={report.student_nisn} />
               <InfoItem
                 label="Kelas"
-                value={`${report.student_level} — ${report.student_grade}`}
+                value={`${normalizeLevel(report.student_level)} — ${report.student_grade}`}
               />
               <InfoItem label="Guru" value={report.teacher_name} />
+              <InfoItem label="Email Guru" value={report.teacher_email} />
               <InfoItem label="Mata Pelajaran" value={report.subject_name} />
               <InfoItem label="Periode" value={report.report_period || "-"} />
               <InfoItem
@@ -1350,9 +1389,8 @@ function ScoreRow({
     <div className="flex items-center justify-between border-b border-[#F0E1D4] pb-2 last:border-b-0 last:pb-0">
       <p className="text-[14px] text-[#6F5549]">{label}</p>
       <p
-        className={`text-[14px] ${
-          bold ? "font-extrabold text-[#2B1B18]" : "font-bold text-[#2B1B18]"
-        }`}
+        className={`text-[14px] ${bold ? "font-extrabold text-[#2B1B18]" : "font-bold text-[#2B1B18]"
+          }`}
       >
         {value}
       </p>
@@ -1374,7 +1412,7 @@ function StatusBadge({ status }: { status?: string | null }) {
 
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+      className={`inline-flex w-fit min-w-[86px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${className}`}
     >
       {getStatusLabel(safe)}
     </span>
@@ -1397,7 +1435,7 @@ function PredicateBadge({ predicate }: { predicate?: string | null }) {
 
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+      className={`inline-flex w-fit min-w-[82px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${className}`}
     >
       {safe}
     </span>

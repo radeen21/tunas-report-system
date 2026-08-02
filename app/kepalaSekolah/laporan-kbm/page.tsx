@@ -53,6 +53,7 @@ type EnrichedKbmReport = KbmReportRow & {
   teacher_name: string;
   teacher_email: string;
   subject_name: string;
+  subject_label: string;
 };
 
 const statusOptions = [
@@ -88,6 +89,19 @@ function formatClass(level?: string | null, grade?: string | null) {
   if (cleanGrade) return cleanGrade;
 
   return "-";
+}
+
+function getSubjectLabel(subject?: SubjectOption | null) {
+  if (!subject) return "-";
+
+  const level = subject.level ? normalizeLevel(subject.level) : "";
+  const grade = subject.grade || "";
+
+  if (level && grade) return `${subject.name || "-"} — ${level} ${grade}`;
+  if (grade) return `${subject.name || "-"} — ${grade}`;
+  if (level) return `${subject.name || "-"} — ${level}`;
+
+  return subject.name || "-";
 }
 
 function formatDate(date: string | null) {
@@ -140,6 +154,10 @@ function getStatusLabel(status: string | null) {
 
 function canReview(status: string | null) {
   return status === "pending_review";
+}
+
+function canPublish(status: string | null) {
+  return status === "approved";
 }
 
 function escapeExcelCell(value: string | number | null | undefined) {
@@ -206,9 +224,20 @@ export default function KepalaSekolahLaporanKBMPage() {
     try {
       const [studentsRes, teachersRes, subjectsRes, reportsRes] =
         await Promise.all([
-          supabase.from("students").select("id, full_name, level, grade, nis, nisn"),
-          supabase.from("teachers").select("id, full_name, email").order("full_name"),
-          supabase.from("subjects").select("id, name, level, grade").order("name"),
+          supabase
+            .from("students")
+            .select("id, full_name, level, grade, nis, nisn"),
+
+          supabase
+            .from("teachers")
+            .select("id, full_name, email")
+            .order("full_name"),
+
+          supabase
+            .from("subjects")
+            .select("id, name, level, grade")
+            .order("name"),
+
           supabase
             .from("kbm_reports")
             .select("*")
@@ -261,6 +290,7 @@ export default function KepalaSekolahLaporanKBMPage() {
           teacher_name: teacher?.full_name || "-",
           teacher_email: teacher?.email || "-",
           subject_name: subject?.name || "-",
+          subject_label: getSubjectLabel(subject),
         };
       });
 
@@ -305,6 +335,11 @@ export default function KepalaSekolahLaporanKBMPage() {
         { event: "*", schema: "public", table: "subjects" },
         () => fetchReports()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchReports()
+      )
       .subscribe();
 
     return () => {
@@ -324,6 +359,7 @@ export default function KepalaSekolahLaporanKBMPage() {
         normalizeText(report.teacher_name).includes(keyword) ||
         normalizeText(report.teacher_email).includes(keyword) ||
         normalizeText(report.subject_name).includes(keyword) ||
+        normalizeText(report.subject_label).includes(keyword) ||
         normalizeText(report.class_level).includes(keyword) ||
         normalizeText(report.material_topic).includes(keyword) ||
         normalizeText(report.chapter).includes(keyword) ||
@@ -415,6 +451,50 @@ export default function KepalaSekolahLaporanKBMPage() {
     }
   }
 
+  async function handlePublishReport(report: EnrichedKbmReport) {
+    if (!canPublish(report.status)) {
+      setErrorMessage("Hanya laporan approved yang bisa dipublish.");
+      return;
+    }
+
+    const confirmPublish = window.confirm(
+      `Publish Laporan KBM ${report.student_name || "-"}?`
+    );
+
+    if (!confirmPublish) return;
+
+    setReviewSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const { error } = await supabase
+        .from("kbm_reports")
+        .update({
+          status: "published",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", report.id);
+
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("Laporan KBM berhasil dipublish.");
+      setReviewReport(null);
+      setSelectedReport(null);
+      setReviewNote("");
+
+      await fetchReports();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal publish laporan KBM.");
+      }
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
   async function handleRevisionReport() {
     if (!reviewReport) return;
 
@@ -488,7 +568,7 @@ export default function KepalaSekolahLaporanKBMPage() {
       NISN: report.student_nisn || "-",
       Guru: report.teacher_name || "-",
       "Email Guru": report.teacher_email || "-",
-      "Mata Pelajaran": report.subject_name || "-",
+      "Mata Pelajaran": report.subject_label || report.subject_name || "-",
       Kelas:
         report.class_level ||
         formatClass(report.student_level, report.student_grade),
@@ -609,8 +689,8 @@ export default function KepalaSekolahLaporanKBMPage() {
 
             <p className="mt-2 max-w-[850px] text-sm leading-6 text-[#6B4A3A]">
               Monitoring laporan kegiatan belajar mengajar dari guru.
-              Admin/Kepala Sekolah hanya melakukan review, approve, revisi, dan
-              export data.
+              Admin/Kepala Sekolah hanya melakukan review, approve, publish,
+              revisi, dan export data.
             </p>
           </div>
 
@@ -709,7 +789,7 @@ export default function KepalaSekolahLaporanKBMPage() {
                       <p className="mt-1 text-sm text-[#6B4A3A]">
                         {report.class_level ||
                           formatClass(report.student_level, report.student_grade)}{" "}
-                        • {report.subject_name || "-"} •{" "}
+                        • {report.subject_label || "-"} •{" "}
                         {formatDate(report.report_date)} • NIPD:{" "}
                         {report.student_nis || "-"}
                       </p>
@@ -775,11 +855,21 @@ export default function KepalaSekolahLaporanKBMPage() {
                     >
                       Review
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handlePublishReport(report)}
+                      disabled={!canPublish(report.status) || reviewSaving}
+                      className="rounded-lg bg-[#158A58] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#116C46] disabled:cursor-not-allowed disabled:bg-[#A7CDBB]"
+                    >
+                      Publish
+                    </button>
                   </div>
 
-                  {!canReview(report.status) ? (
+                  {!canReview(report.status) && !canPublish(report.status) ? (
                     <p className="mt-3 text-right text-[12px] font-semibold text-[#8A5A48]">
-                      Hanya status pending_review yang bisa direview.
+                      Review hanya untuk pending_review. Publish hanya untuk
+                      approved.
                     </p>
                   ) : null}
                 </div>
@@ -793,6 +883,7 @@ export default function KepalaSekolahLaporanKBMPage() {
           report={selectedReport}
           onClose={() => setSelectedReport(null)}
           onReview={() => openReview(selectedReport)}
+          onPublish={() => handlePublishReport(selectedReport)}
         />
       ) : null}
 
@@ -853,15 +944,17 @@ function ReportDetailModal({
   report,
   onClose,
   onReview,
+  onPublish,
 }: {
   report: EnrichedKbmReport;
   onClose: () => void;
   onReview: () => void;
+  onPublish: () => void;
 }) {
   return (
     <ModalShell
       title="Detail Laporan KBM"
-      subtitle={`${report.student_name || "-"} • ${report.subject_name || "-"}`}
+      subtitle={`${report.student_name || "-"} • ${report.subject_label || "-"}`}
       onClose={onClose}
     >
       <div className="space-y-4">
@@ -885,7 +978,7 @@ function ReportDetailModal({
           <InfoBox label="NISN" value={report.student_nisn || "-"} />
           <InfoBox label="Guru" value={report.teacher_name || "-"} />
           <InfoBox label="Email Guru" value={report.teacher_email || "-"} />
-          <InfoBox label="Mata Pelajaran" value={report.subject_name || "-"} />
+          <InfoBox label="Mata Pelajaran" value={report.subject_label || "-"} />
           <InfoBox
             label="Kelas"
             value={
@@ -905,14 +998,25 @@ function ReportDetailModal({
           value={report.teacher_note || "-"}
         />
 
-        <button
-          type="button"
-          onClick={onReview}
-          disabled={!canReview(report.status)}
-          className="h-11 w-full rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
-        >
-          Review Laporan KBM
-        </button>
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={onReview}
+            disabled={!canReview(report.status)}
+            className="h-11 w-full rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
+          >
+            Review Laporan KBM
+          </button>
+
+          <button
+            type="button"
+            onClick={onPublish}
+            disabled={!canPublish(report.status)}
+            className="h-11 w-full rounded-xl bg-[#158A58] text-sm font-bold text-white transition hover:bg-[#116C46] disabled:cursor-not-allowed disabled:bg-[#A7CDBB]"
+          >
+            Publish
+          </button>
+        </div>
       </div>
     </ModalShell>
   );
@@ -938,7 +1042,7 @@ function ReviewModal({
   return (
     <ModalShell
       title="Review Laporan KBM"
-      subtitle={`${report.student_name || "-"} • ${report.subject_name || "-"}`}
+      subtitle={`${report.student_name || "-"} • ${report.subject_label || "-"}`}
       onClose={onClose}
     >
       <div className="space-y-4">

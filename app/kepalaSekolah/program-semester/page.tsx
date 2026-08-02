@@ -66,8 +66,13 @@ type CurriculumSubChapter = {
   curriculum_chapter_id: string | null;
   sub_chapter_title: string | null;
   sub_chapter_order: number | null;
-  target_month: string | null;
-  planned_week: number | null;
+
+  target_date?: string | null;
+
+  // legacy / fallback lama
+  target_month?: string | null;
+  planned_week?: number | null;
+
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -121,27 +126,42 @@ type SubChapterForm = {
   curriculum_chapter_id: string;
   sub_chapter_title: string;
   sub_chapter_order: string;
-  target_month: string;
-  planned_week: string;
+  target_date: string;
 };
 
-const months = ["July", "August", "September", "October", "November", "December"];
-
-const monthLabels: Record<string, string> = {
-  July: "Juli",
-  August: "Agustus",
-  September: "September",
-  October: "Oktober",
-  November: "November",
-  December: "Desember",
+type DateColumn = {
+  key: string;
+  iso: string;
+  day: number;
+  monthKey: string;
+  monthLabel: string;
 };
 
-const weeks = ["W1", "W2", "W3", "W4", "W5"];
+type MonthGroup = {
+  key: string;
+  label: string;
+  count: number;
+};
 
 const levelOptions = ["SD", "SMP", "SMA"];
 const semesterOptions = ["Ganjil", "Genap"];
 const programTypeOptions = ["Regular", "Special Needs"];
 const statusOptions = ["draft", "submitted", "approved", "rejected", "published"];
+
+const legacyMonthNumber: Record<string, number> = {
+  January: 0,
+  February: 1,
+  March: 2,
+  April: 3,
+  May: 4,
+  June: 5,
+  July: 6,
+  August: 7,
+  September: 8,
+  October: 9,
+  November: 10,
+  December: 11,
+};
 
 function emptyProgramForm(): ProgramForm {
   return {
@@ -174,8 +194,7 @@ function emptySubChapterForm(programId = "", chapterId = ""): SubChapterForm {
     curriculum_chapter_id: chapterId,
     sub_chapter_title: "",
     sub_chapter_order: "1",
-    target_month: "July",
-    planned_week: "1",
+    target_date: "2026-07-01",
   };
 }
 
@@ -189,28 +208,93 @@ function toNumber(value: string) {
   return numeric;
 }
 
-function getMonthNameFromDate(value?: string | null) {
-  if (!value) return "";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "";
-
-  return date.toLocaleString("en-US", { month: "long" });
+function getAcademicStartYear(academicYear?: string | null) {
+  const match = (academicYear || "").match(/\d{4}/);
+  return match ? Number(match[0]) : 2026;
 }
 
-function getWeekOfMonth(value?: string | null) {
-  if (!value) return 1;
+function getProgramDateRange(program?: Partial<CurriculumProgram> | null) {
+  const startYear = getAcademicStartYear(program?.academic_year);
 
-  const date = new Date(value);
+  return {
+    start: `${startYear}-07-01`,
+    end: `${startYear}-12-31`,
+  };
+}
 
-  if (Number.isNaN(date.getTime())) return 1;
+function generateDateColumns(startDate: string, endDate: string): DateColumn[] {
+  const columns: DateColumn[] = [];
 
-  return Math.ceil(date.getDate() / 7);
+  const current = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+
+  while (current <= end) {
+    const iso = current.toISOString().slice(0, 10);
+    const monthLabel = new Intl.DateTimeFormat("id-ID", {
+      month: "long",
+    }).format(current);
+
+    columns.push({
+      key: iso,
+      iso,
+      day: current.getDate(),
+      monthKey: `${current.getFullYear()}-${current.getMonth()}`,
+      monthLabel,
+    });
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  return columns;
+}
+
+function groupColumnsByMonth(columns: DateColumn[]): MonthGroup[] {
+  const groups: MonthGroup[] = [];
+
+  columns.forEach((column) => {
+    const lastGroup = groups[groups.length - 1];
+
+    if (!lastGroup || lastGroup.key !== column.monthKey) {
+      groups.push({
+        key: column.monthKey,
+        label: column.monthLabel,
+        count: 1,
+      });
+
+      return;
+    }
+
+    lastGroup.count += 1;
+  });
+
+  return groups;
+}
+
+function getDateColumnsForProgram(program: EnrichedProgram) {
+  const range = getProgramDateRange(program);
+  return generateDateColumns(range.start, range.end);
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
 }
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
@@ -218,7 +302,7 @@ function formatDateTime(value?: string | null) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function getStatusLabel(status?: string | null) {
@@ -258,21 +342,46 @@ function getProgressPercent(program: EnrichedProgram) {
   return Math.round((completed / subChapters.length) * 100);
 }
 
+function getLegacyTargetDate(
+  program: EnrichedProgram,
+  subChapter: EnrichedSubChapter
+) {
+  if (!subChapter.target_month || !subChapter.planned_week) return "";
+
+  const monthIndex = legacyMonthNumber[subChapter.target_month];
+
+  if (monthIndex === undefined) return "";
+
+  const academicStartYear = getAcademicStartYear(program.academic_year);
+  const year = monthIndex >= 6 ? academicStartYear : academicStartYear + 1;
+
+  const day = (Number(subChapter.planned_week || 1) - 1) * 7 + 1;
+  const date = new Date(year, monthIndex, day);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toISOString().slice(0, 10);
+}
+
+function getSubChapterTargetDate(
+  program: EnrichedProgram,
+  subChapter: EnrichedSubChapter
+) {
+  return subChapter.target_date || getLegacyTargetDate(program, subChapter);
+}
+
 function getSubChapterCellStatus(
+  program: EnrichedProgram,
   subChapter: EnrichedSubChapter,
-  month: string,
-  week: string
+  isoDate: string
 ) {
   const completedRecord = subChapter.progress_records.find((progress) => {
-    const progressMonth = getMonthNameFromDate(progress.teaching_date);
-    const progressWeek = `W${getWeekOfMonth(progress.teaching_date)}`;
-
-    return progressMonth === month && progressWeek === week;
+    return progress.teaching_date?.slice(0, 10) === isoDate;
   });
 
   if (completedRecord) {
     return {
-      type: "completed",
+      type: "completed" as const,
       record: completedRecord,
     };
   }
@@ -281,22 +390,22 @@ function getSubChapterCellStatus(
 
   if (alreadyCompleted) {
     return {
-      type: "empty",
+      type: "empty" as const,
       record: null,
     };
   }
 
-  const targetWeek = `W${subChapter.planned_week || 1}`;
+  const targetDate = getSubChapterTargetDate(program, subChapter);
 
-  if (subChapter.target_month === month && targetWeek === week) {
+  if (targetDate === isoDate) {
     return {
-      type: "planned",
+      type: "planned" as const,
       record: null,
     };
   }
 
   return {
-    type: "empty",
+    type: "empty" as const,
     record: null,
   };
 }
@@ -327,7 +436,9 @@ export default function KepalaSekolahProgramSemesterPage() {
   const [subChapterForm, setSubChapterForm] =
     useState<SubChapterForm>(emptySubChapterForm());
 
-  const [previewProgram, setPreviewProgram] = useState<EnrichedProgram | null>(null);
+  const [previewProgram, setPreviewProgram] = useState<EnrichedProgram | null>(
+    null
+  );
   const [rejectingProgram, setRejectingProgram] =
     useState<EnrichedProgram | null>(null);
   const [rejectionNote, setRejectionNote] = useState("");
@@ -335,95 +446,123 @@ export default function KepalaSekolahProgramSemesterPage() {
   async function fetchData() {
     setLoading(true);
 
-    const [
-      teachersRes,
-      subjectsRes,
-      programsRes,
-      chaptersRes,
-      subChaptersRes,
-      progressRes,
-    ] = await Promise.all([
-      supabase.from("teachers").select("*").order("full_name"),
-      supabase.from("subjects").select("*").order("name"),
-      supabase
-        .from("curriculum_programs")
-        .select("*")
-        .order("updated_at", { ascending: false }),
-      supabase
-        .from("curriculum_chapters")
-        .select("*")
-        .order("chapter_order", { ascending: true }),
-      supabase
-        .from("curriculum_sub_chapters")
-        .select("*")
-        .order("sub_chapter_order", { ascending: true }),
-      supabase.from("curriculum_progress").select("*"),
-    ]);
+    try {
+      const [
+        teachersRes,
+        subjectsRes,
+        programsRes,
+        chaptersRes,
+        subChaptersRes,
+        progressRes,
+      ] = await Promise.all([
+        supabase.from("teachers").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("curriculum_programs")
+          .select("*")
+          .order("updated_at", { ascending: false }),
+        supabase
+          .from("curriculum_chapters")
+          .select("*")
+          .order("chapter_order", { ascending: true }),
+        supabase
+          .from("curriculum_sub_chapters")
+          .select("*")
+          .order("sub_chapter_order", { ascending: true }),
+        supabase.from("curriculum_progress").select("*"),
+      ]);
 
-    const teachersData = (teachersRes.data || []) as TeacherRow[];
-    const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-    const programsData = (programsRes.data || []) as CurriculumProgram[];
-    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
-    const subChaptersData = (subChaptersRes.data || []) as CurriculumSubChapter[];
-    const progressData = (progressRes.data || []) as CurriculumProgress[];
+      if (teachersRes.error) throw new Error(teachersRes.error.message);
+      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (programsRes.error) throw new Error(programsRes.error.message);
+      if (chaptersRes.error) throw new Error(chaptersRes.error.message);
+      if (subChaptersRes.error) throw new Error(subChaptersRes.error.message);
+      if (progressRes.error) throw new Error(progressRes.error.message);
 
-    const teacherMap = new Map(teachersData.map((teacher) => [teacher.id, teacher]));
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const programsData = (programsRes.data || []) as CurriculumProgram[];
+      const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
+      const subChaptersData = (subChaptersRes.data ||
+        []) as CurriculumSubChapter[];
+      const progressData = (progressRes.data || []) as CurriculumProgress[];
 
-    const progressBySubChapter = new Map<string, CurriculumProgress[]>();
+      const teacherMap = new Map(
+        teachersData.map((teacher) => [teacher.id, teacher])
+      );
 
-    progressData.forEach((progress) => {
-      if (!progress.curriculum_sub_chapter_id) return;
+      const progressBySubChapter = new Map<string, CurriculumProgress[]>();
 
-      const current = progressBySubChapter.get(progress.curriculum_sub_chapter_id) || [];
-      current.push(progress);
-      progressBySubChapter.set(progress.curriculum_sub_chapter_id, current);
-    });
+      progressData.forEach((progress) => {
+        if (!progress.curriculum_sub_chapter_id) return;
 
-    const subChaptersByChapter = new Map<string, EnrichedSubChapter[]>();
+        const current =
+          progressBySubChapter.get(progress.curriculum_sub_chapter_id) || [];
 
-    subChaptersData.forEach((subChapter) => {
-      if (!subChapter.curriculum_chapter_id) return;
-
-      const current = subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
-
-      current.push({
-        ...subChapter,
-        progress_records: progressBySubChapter.get(subChapter.id) || [],
+        current.push(progress);
+        progressBySubChapter.set(progress.curriculum_sub_chapter_id, current);
       });
 
-      subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
-    });
+      const subChaptersByChapter = new Map<string, EnrichedSubChapter[]>();
 
-    const chaptersByProgram = new Map<string, EnrichedChapter[]>();
+      subChaptersData.forEach((subChapter) => {
+        if (!subChapter.curriculum_chapter_id) return;
 
-    chaptersData.forEach((chapter) => {
-      if (!chapter.curriculum_program_id) return;
+        const current =
+          subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
 
-      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
+        current.push({
+          ...subChapter,
+          progress_records: progressBySubChapter.get(subChapter.id) || [],
+        });
 
-      current.push({
-        ...chapter,
-        sub_chapters: subChaptersByChapter.get(chapter.id) || [],
+        subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
       });
 
-      chaptersByProgram.set(chapter.curriculum_program_id, current);
-    });
+      const chaptersByProgram = new Map<string, EnrichedChapter[]>();
 
-    const enrichedPrograms: EnrichedProgram[] = programsData.map((program) => {
-      const teacher = program.teacher_id ? teacherMap.get(program.teacher_id) : null;
+      chaptersData.forEach((chapter) => {
+        if (!chapter.curriculum_program_id) return;
 
-      return {
-        ...program,
-        teacher_name: teacher?.full_name || "-",
-        chapters: chaptersByProgram.get(program.id) || [],
-      };
-    });
+        const current =
+          chaptersByProgram.get(chapter.curriculum_program_id) || [];
 
-    setTeachers(teachersData);
-    setSubjects(subjectsData);
-    setPrograms(enrichedPrograms);
+        current.push({
+          ...chapter,
+          sub_chapters: subChaptersByChapter.get(chapter.id) || [],
+        });
 
-    setLoading(false);
+        chaptersByProgram.set(chapter.curriculum_program_id, current);
+      });
+
+      const enrichedPrograms: EnrichedProgram[] = programsData.map((program) => {
+        const teacher = program.teacher_id
+          ? teacherMap.get(program.teacher_id)
+          : null;
+
+        return {
+          ...program,
+          teacher_name: teacher?.full_name || "-",
+          chapters: chaptersByProgram.get(program.id) || [],
+        };
+      });
+
+      setTeachers(teachersData);
+      setSubjects(subjectsData);
+      setPrograms(enrichedPrograms);
+    } catch (error) {
+      alert(
+        `Gagal mengambil Program Semester: ${
+          error instanceof Error ? error.message : "Terjadi kesalahan"
+        }`
+      );
+
+      setTeachers([]);
+      setSubjects([]);
+      setPrograms([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -434,27 +573,27 @@ export default function KepalaSekolahProgramSemesterPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "curriculum_programs" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "curriculum_chapters" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "curriculum_sub_chapters" },
-        fetchData
+        () => fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "curriculum_progress" },
-        fetchData
+        () => fetchData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -483,12 +622,19 @@ export default function KepalaSekolahProgramSemesterPage() {
         teacherFilter === "Semua Guru" || program.teacher_id === teacherFilter;
 
       const matchSemester =
-        semesterFilter === "Semua Semester" || program.semester === semesterFilter;
+        semesterFilter === "Semua Semester" ||
+        program.semester === semesterFilter;
 
       const matchStatus =
         statusFilter === "Semua Status" || program.status === statusFilter;
 
-      return matchSearch && matchLevel && matchTeacher && matchSemester && matchStatus;
+      return (
+        matchSearch &&
+        matchLevel &&
+        matchTeacher &&
+        matchSemester &&
+        matchStatus
+      );
     });
   }, [programs, search, levelFilter, teacherFilter, semesterFilter, statusFilter]);
 
@@ -498,6 +644,7 @@ export default function KepalaSekolahProgramSemesterPage() {
       (sum, program) => sum + program.chapters.length,
       0
     );
+
     const totalSubChapters = programs.reduce((sum, program) => {
       return (
         sum +
@@ -627,9 +774,12 @@ export default function KepalaSekolahProgramSemesterPage() {
     const chapter = program?.chapters.find((item) => item.id === chapterId);
     const nextOrder = (chapter?.sub_chapters.length || 0) + 1;
 
+    const range = getProgramDateRange(program);
+
     setSubChapterForm({
       ...emptySubChapterForm(programId, chapterId),
       sub_chapter_order: String(nextOrder),
+      target_date: range.start,
     });
 
     setShowSubChapterModal(true);
@@ -639,14 +789,17 @@ export default function KepalaSekolahProgramSemesterPage() {
     programId: string,
     subChapter: EnrichedSubChapter
   ) {
+    const program = programs.find((item) => item.id === programId);
+    const targetDate =
+      subChapter.target_date || (program ? getLegacyTargetDate(program, subChapter) : "");
+
     setSubChapterForm({
       id: subChapter.id,
       curriculum_program_id: programId,
       curriculum_chapter_id: subChapter.curriculum_chapter_id || "",
       sub_chapter_title: subChapter.sub_chapter_title || "",
       sub_chapter_order: String(subChapter.sub_chapter_order || 1),
-      target_month: subChapter.target_month || "July",
-      planned_week: String(subChapter.planned_week || 1),
+      target_date: targetDate || "2026-07-01",
     });
 
     setShowSubChapterModal(true);
@@ -837,14 +990,24 @@ export default function KepalaSekolahProgramSemesterPage() {
       return;
     }
 
+    if (!subChapterForm.target_date) {
+      alert("Pilih tanggal target terlebih dahulu.");
+      return;
+    }
+
     setSaving(true);
+
+    const date = new Date(`${subChapterForm.target_date}T00:00:00`);
+    const targetMonth = date.toLocaleString("en-US", { month: "long" });
+    const plannedWeek = Math.ceil(date.getDate() / 7);
 
     const payload = {
       curriculum_chapter_id: subChapterForm.curriculum_chapter_id,
       sub_chapter_title: subChapterForm.sub_chapter_title.trim(),
       sub_chapter_order: toNumber(subChapterForm.sub_chapter_order),
-      target_month: subChapterForm.target_month,
-      planned_week: toNumber(subChapterForm.planned_week),
+      target_date: subChapterForm.target_date,
+      target_month: targetMonth,
+      planned_week: plannedWeek,
       updated_at: new Date().toISOString(),
     };
 
@@ -1012,8 +1175,8 @@ export default function KepalaSekolahProgramSemesterPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Kelola program semester, Bab, Sub Bab, target bulan, dan minggu.
-              Checklist hijau otomatis muncul setelah guru menyimpan absensi KBM.
+              Kelola program semester, Bab, Sub Bab, dan target rencana per
+              tanggal. Blok hijau muncul jika sub bab sudah terealisasi.
             </p>
           </div>
 
@@ -1136,6 +1299,8 @@ export default function KepalaSekolahProgramSemesterPage() {
             filteredPrograms.map((program) => {
               const isExpanded = expandedProgramIds.includes(program.id);
               const progressPercent = getProgressPercent(program);
+              const dateColumns = getDateColumnsForProgram(program);
+              const monthGroups = groupColumnsByMonth(dateColumns);
 
               return (
                 <div
@@ -1161,20 +1326,20 @@ export default function KepalaSekolahProgramSemesterPage() {
                           <div className="mb-3 flex flex-wrap gap-2">
                             <StatusBadge status={program.status} />
 
-                            <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+                            <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
                               {program.program_type || "Regular"}
                             </span>
 
-                            <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+                            <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
                               {program.level} — {program.grade}
                             </span>
 
-                            <span className="rounded-full bg-[#FFF2B8] px-3 py-1 text-[12px] font-extrabold text-[#B26A00]">
+                            <span className="whitespace-nowrap rounded-full bg-[#FFF2B8] px-3 py-1 text-[12px] font-extrabold text-[#B26A00]">
                               Semester {program.semester}
                             </span>
 
                             {program.document_url ? (
-                              <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+                              <span className="whitespace-nowrap rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
                                 Ada Dokumen
                               </span>
                             ) : null}
@@ -1285,37 +1450,41 @@ export default function KepalaSekolahProgramSemesterPage() {
                       <MatrixLegend />
 
                       <div className="overflow-x-auto rounded-2xl border border-[#EADACA]">
-                        <table className="w-full min-w-[1380px] border-collapse bg-white">
+                        <table
+                          className="border-collapse bg-white"
+                          style={{
+                            minWidth: `${360 + dateColumns.length * 42}px`,
+                          }}
+                        >
                           <thead>
                             <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
-                              <th className="sticky left-0 z-10 w-[360px] border-r border-[#EADACA] bg-[#FFF8EF] px-4 py-3 text-left text-[13px] font-extrabold text-[#6F5549]">
+                              <th
+                                rowSpan={2}
+                                className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#EADACA] bg-[#FFF8EF] px-4 py-3 text-left text-[13px] font-extrabold text-[#6F5549]"
+                              >
                                 Bab / Sub Bab
                               </th>
 
-                              {months.map((month) => (
+                              {monthGroups.map((group) => (
                                 <th
-                                  key={month}
-                                  colSpan={5}
+                                  key={group.key}
+                                  colSpan={group.count}
                                   className="border-r border-[#EADACA] px-4 py-3 text-center text-[13px] font-extrabold text-[#6F5549]"
                                 >
-                                  {monthLabels[month]}
+                                  {group.label}
                                 </th>
                               ))}
                             </tr>
 
                             <tr className="border-b border-[#EADACA] bg-[#FFFCF8]">
-                              <th className="sticky left-0 z-10 border-r border-[#EADACA] bg-[#FFFCF8] px-4 py-3" />
-
-                              {months.flatMap((month) =>
-                                weeks.map((week) => (
-                                  <th
-                                    key={`${month}-${week}`}
-                                    className="w-[52px] border-r border-[#F0E1D4] px-3 py-3 text-center text-[12px] font-extrabold text-[#8A5A48]"
-                                  >
-                                    {week}
-                                  </th>
-                                ))
-                              )}
+                              {dateColumns.map((column) => (
+                                <th
+                                  key={column.key}
+                                  className="h-10 w-[42px] min-w-[42px] border-r border-[#F0E1D4] px-1 text-center text-[12px] font-extrabold text-[#8A5A48]"
+                                >
+                                  {column.day}
+                                </th>
+                              ))}
                             </tr>
                           </thead>
 
@@ -1323,7 +1492,7 @@ export default function KepalaSekolahProgramSemesterPage() {
                             {program.chapters.length === 0 ? (
                               <tr>
                                 <td
-                                  colSpan={1 + months.length * weeks.length}
+                                  colSpan={1 + dateColumns.length}
                                   className="px-4 py-10 text-center text-[14px] text-[#6F5549]"
                                 >
                                   Belum ada Bab. Klik tombol Tambah Bab.
@@ -1341,6 +1510,7 @@ export default function KepalaSekolahProgramSemesterPage() {
                                     program={program}
                                     chapter={chapter}
                                     chapterExpanded={chapterExpanded}
+                                    dateColumns={dateColumns}
                                     toggleChapter={toggleChapter}
                                     openCreateSubChapterModal={
                                       openCreateSubChapterModal
@@ -1423,6 +1593,7 @@ function FragmentRows({
   program,
   chapter,
   chapterExpanded,
+  dateColumns,
   toggleChapter,
   openCreateSubChapterModal,
   openEditChapterModal,
@@ -1433,6 +1604,7 @@ function FragmentRows({
   program: EnrichedProgram;
   chapter: EnrichedChapter;
   chapterExpanded: boolean;
+  dateColumns: DateColumn[];
   toggleChapter: (chapterId: string) => void;
   openCreateSubChapterModal: (programId: string, chapterId: string) => void;
   openEditChapterModal: (chapter: EnrichedChapter) => void;
@@ -1446,7 +1618,7 @@ function FragmentRows({
   return (
     <>
       <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
-        <td colSpan={1 + months.length * weeks.length} className="px-4 py-3">
+        <td colSpan={1 + dateColumns.length} className="px-4 py-3">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <button
               type="button"
@@ -1463,7 +1635,7 @@ function FragmentRows({
                 Bab {chapter.chapter_order}. {chapter.chapter_title}
               </span>
 
-              <span className="rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-[#8A5A48]">
+              <span className="whitespace-nowrap rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-[#8A5A48]">
                 {chapter.sub_chapters.length} Sub Bab
               </span>
             </button>
@@ -1501,73 +1673,90 @@ function FragmentRows({
       </tr>
 
       {chapterExpanded
-        ? chapter.sub_chapters.map((subChapter) => (
-            <tr key={subChapter.id} className="border-b border-[#F0E1D4]">
-              <td className="sticky left-0 z-10 border-r border-[#EADACA] bg-white px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[13px] font-bold text-[#2B1B18]">
-                      {subChapter.sub_chapter_order}.{" "}
-                      {subChapter.sub_chapter_title}
-                    </p>
+        ? chapter.sub_chapters.map((subChapter) => {
+            const targetDate = getSubChapterTargetDate(program, subChapter);
 
-                    <p className="mt-1 text-[12px] text-[#6F5549]">
-                      Target:{" "}
-                      {monthLabels[subChapter.target_month || "July"] ||
-                        subChapter.target_month}{" "}
-                      W{subChapter.planned_week || 1}
-                    </p>
+            return (
+              <tr key={subChapter.id} className="border-b border-[#F0E1D4]">
+                <td className="sticky left-0 z-10 border-r border-[#EADACA] bg-white px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-bold text-[#2B1B18]">
+                        {subChapter.sub_chapter_order}.{" "}
+                        {subChapter.sub_chapter_title}
+                      </p>
+
+                      <p className="mt-1 text-[12px] leading-5 text-[#6F5549]">
+                        Target: {formatDate(targetDate)}
+                      </p>
+                    </div>
+
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openEditSubChapterModal(program.id, subChapter)
+                        }
+                        className="rounded-lg border border-[#DCC8B6] p-1.5 text-[#8C0F2D]"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSubChapter(subChapter)}
+                        className="rounded-lg border border-[#FECACA] p-1.5 text-[#DC2626]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
+                </td>
 
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openEditSubChapterModal(program.id, subChapter)}
-                      className="rounded-lg border border-[#DCC8B6] p-1.5 text-[#8C0F2D]"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteSubChapter(subChapter)}
-                      className="rounded-lg border border-[#FECACA] p-1.5 text-[#DC2626]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </td>
-
-              {months.flatMap((month) =>
-                weeks.map((week) => {
-                  const status = getSubChapterCellStatus(subChapter, month, week);
+                {dateColumns.map((column) => {
+                  const status = getSubChapterCellStatus(
+                    program,
+                    subChapter,
+                    column.iso
+                  );
 
                   return (
                     <td
-                      key={`${subChapter.id}-${month}-${week}`}
-                      className="h-12 border-r border-[#F0E1D4] px-3 py-2 text-center"
+                      key={`${subChapter.id}-${column.iso}`}
+                      className="h-12 w-[42px] min-w-[42px] border-r border-[#F0E1D4] px-1 py-2 text-center"
                     >
-                      {status.type === "completed" ? (
-                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#C7F0DA] text-[#158A58]">
-                          <Check className="h-4 w-4" />
-                        </span>
-                      ) : status.type === "planned" ? (
-                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#FFE4E6] text-[20px] leading-none text-[#BE123C]">
-                          •
-                        </span>
-                      ) : (
-                        <span className="text-[#EADACA]">-</span>
-                      )}
+                      <CellMarker status={status.type} />
                     </td>
                   );
-                })
-              )}
-            </tr>
-          ))
+                })}
+              </tr>
+            );
+          })
         : null}
     </>
   );
+}
+
+function CellMarker({
+  status,
+}: {
+  status: "empty" | "planned" | "completed";
+}) {
+  if (status === "completed") {
+    return (
+      <span className="mx-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#A7E6C3] bg-[#C7F0DA] text-[#158A58]">
+        <Check className="h-4 w-4" />
+      </span>
+    );
+  }
+
+  if (status === "planned") {
+    return (
+      <span className="mx-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#FECACA] bg-[#FFE4E6] text-[#BE123C]" />
+    );
+  }
+
+  return <span className="mx-auto block h-7 w-7 rounded-md bg-transparent" />;
 }
 
 function ProgramModal({
@@ -1787,7 +1976,7 @@ function SubChapterModal({
   return (
     <ModalShell
       title={form.id ? "Edit Sub Bab" : "Tambah Sub Bab"}
-      subtitle="Sub Bab akan muncul di matrix Program Semester sesuai bulan dan minggu target."
+      subtitle="Pilih tanggal target. Cell tanggal tersebut akan tampil merah di matrix Program Semester."
       onClose={onClose}
     >
       <div className="space-y-5">
@@ -1802,7 +1991,7 @@ function SubChapterModal({
           />
         </FormGroup>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <FormGroup label="Urutan Sub Bab">
             <input
               type="number"
@@ -1815,32 +2004,13 @@ function SubChapterModal({
             />
           </FormGroup>
 
-          <FormGroup label="Target Bulan">
-            <select
-              value={form.target_month}
-              onChange={(event) => onChange("target_month", event.target.value)}
+          <FormGroup label="Tanggal Target">
+            <input
+              type="date"
+              value={form.target_date}
+              onChange={(event) => onChange("target_date", event.target.value)}
               className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            >
-              {months.map((month) => (
-                <option key={month} value={month}>
-                  {monthLabels[month]}
-                </option>
-              ))}
-            </select>
-          </FormGroup>
-
-          <FormGroup label="Target Minggu">
-            <select
-              value={form.planned_week}
-              onChange={(event) => onChange("planned_week", event.target.value)}
-              className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            >
-              <option value="1">W1</option>
-              <option value="2">W2</option>
-              <option value="3">W3</option>
-              <option value="4">W4</option>
-              <option value="5">W5</option>
-            </select>
+            />
           </FormGroup>
         </div>
 
@@ -1939,7 +2109,7 @@ function RejectModal({
             value={note}
             onChange={(event) => onChange(event.target.value)}
             rows={5}
-            placeholder="Contoh: Mohon lengkapi Sub Bab, target bulan, atau dokumen Program Semester."
+            placeholder="Contoh: Mohon lengkapi Sub Bab, target tanggal, atau dokumen Program Semester."
             className="w-full resize-none rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] outline-none focus:border-[#9C0824]"
           />
         </label>
@@ -2053,19 +2223,17 @@ function FormGroup({
 
 function MatrixLegend() {
   return (
-    <div className="flex flex-wrap gap-3 rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3 text-[13px] font-bold text-[#6F5549]">
+    <div className="flex flex-wrap gap-4 rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3 text-[13px] font-bold text-[#6F5549]">
       <div className="flex items-center gap-2">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#FFE4E6] text-[18px] text-[#BE123C]">
-          •
-        </span>
+        <span className="inline-flex h-5 w-5 rounded-md border border-[#FECACA] bg-[#FFE4E6]" />
         Target Rencana
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#C7F0DA] text-[#158A58]">
-          <Check className="h-4 w-4" />
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#A7E6C3] bg-[#C7F0DA] text-[#158A58]">
+          <Check className="h-3.5 w-3.5" />
         </span>
-        Sudah Terealisasi dari Absensi KBM
+        Sudah Terealisasi
       </div>
     </div>
   );
@@ -2074,7 +2242,7 @@ function MatrixLegend() {
 function StatusBadge({ status }: { status?: string | null }) {
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+      className={`inline-flex w-fit min-w-[82px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${getStatusClass(
         status
       )}`}
     >

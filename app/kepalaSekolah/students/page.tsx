@@ -53,6 +53,27 @@ type TeacherRow = {
   teacher_code: string | null;
 };
 
+type SubjectRow = {
+  id: string;
+  name: string | null;
+  level?: string | null;
+  grade?: string | null;
+};
+
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
+};
+
+type TeacherSubjectForm = {
+  teacher_id: string;
+  subject_id: string;
+};
+
 type StudentForm = {
   full_name: string;
   nis: string;
@@ -70,14 +91,15 @@ type StudentForm = {
   parent_manual_email: string;
   homeroom_teacher_id: string;
   description: string;
+  teacher_subjects: TeacherSubjectForm[];
 };
 
 const initialForm: StudentForm = {
   full_name: "",
   nis: "",
   nisn: "",
-  level: "Primary Level",
-  grade: "Grade 4",
+  level: "SD",
+  grade: "Kelas 4",
   academic_year: "2026/2027",
   birth_date: "",
   birth_place: "",
@@ -89,6 +111,7 @@ const initialForm: StudentForm = {
   parent_manual_email: "",
   homeroom_teacher_id: "",
   description: "",
+  teacher_subjects: [{ teacher_id: "", subject_id: "" }],
 };
 
 const documentFields: Array<{
@@ -96,52 +119,52 @@ const documentFields: Array<{
   label: string;
   accept: string;
 }> = [
-  {
-    key: "family_card_url",
-    label: "KK",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "diploma_url",
-    label: "Ijazah",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "father_ktp_url",
-    label: "KTP Ayah",
-    accept: ".pdf,.jpg,.jpeg,.png",
-  },
-  {
-    key: "mother_ktp_url",
-    label: "KTP Ibu",
-    accept: ".pdf,.jpg,.jpeg,.png",
-  },
-  {
-    key: "report_card_url",
-    label: "Raport",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "student_photo_url",
-    label: "Foto",
-    accept: ".jpg,.jpeg,.png,.webp",
-  },
-  {
-    key: "registration_form_url",
-    label: "Formulir",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "skkb_url",
-    label: "SKKB",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "birth_certificate_url",
-    label: "Akte",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-];
+    {
+      key: "family_card_url",
+      label: "KK",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "diploma_url",
+      label: "Ijazah",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "father_ktp_url",
+      label: "KTP Ayah",
+      accept: ".pdf,.jpg,.jpeg,.png",
+    },
+    {
+      key: "mother_ktp_url",
+      label: "KTP Ibu",
+      accept: ".pdf,.jpg,.jpeg,.png",
+    },
+    {
+      key: "report_card_url",
+      label: "Raport",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "student_photo_url",
+      label: "Foto",
+      accept: ".jpg,.jpeg,.png,.webp",
+    },
+    {
+      key: "registration_form_url",
+      label: "Formulir",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "skkb_url",
+      label: "SKKB",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "birth_certificate_url",
+      label: "Akte",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+  ];
 
 const religionOptions = [
   "",
@@ -214,6 +237,47 @@ function normalizePhone(value?: string | null) {
   return (value || "").replace(/\D/g, "");
 }
 
+function normalizeLevel(level?: string | null) {
+  const safe = normalizeText(level);
+
+  if (safe.includes("primary") || safe === "sd") return "SD";
+  if (safe.includes("secondary") || safe === "smp") return "SMP";
+  if (safe.includes("high") || safe === "sma") return "SMA";
+  if (safe.includes("early")) return "Bimbel/Kursus";
+
+  return level || "-";
+}
+
+function getSubjectLabel(subject: SubjectRow) {
+  const level = subject.level ? normalizeLevel(subject.level) : "";
+  const grade = subject.grade || "";
+
+  if (subject.level || subject.grade) {
+    return `${subject.name || "-"} — ${level || "-"} ${grade || "All Grade"}`;
+  }
+
+  return subject.name || "-";
+}
+
+function getTeacherSubjectLabel(
+  relation: StudentTeacherRow,
+  teacherMap: Map<string, TeacherRow>,
+  subjectMap: Map<string, SubjectRow>
+) {
+  const teacher = relation.teacher_id
+    ? teacherMap.get(String(relation.teacher_id))
+    : null;
+
+  const subject = relation.subject_id
+    ? subjectMap.get(String(relation.subject_id))
+    : null;
+
+  const teacherName = teacher?.full_name || teacher?.email || "Guru";
+  const subjectName = subject?.name || "Mapel";
+
+  return `${teacherName} (${subjectName})`;
+}
+
 async function uploadStudentDocument(
   file: File,
   studentName: string,
@@ -265,6 +329,7 @@ export default function KepalaSekolahStudentsPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [parents, setParents] = useState<ParentRow[]>([]);
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
+  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -279,46 +344,82 @@ export default function KepalaSekolahStudentsPage() {
   async function fetchAllData() {
     setLoading(true);
 
-    const [studentsRes, parentsRes, teachersRes, reportsRes, attendanceRes] =
-      await Promise.all([
-        supabase
-          .from("students")
-          .select("*")
-          .order("full_name", { ascending: true }),
+    const [
+      studentsRes,
+      parentsRes,
+      teachersRes,
+      subjectsRes,
+      studentTeachersRes,
+      reportsRes,
+      attendanceRes,
+    ] = await Promise.all([
+      supabase
+        .from("students")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-        supabase
-          .from("parents")
-          .select("*")
-          .order("full_name", { ascending: true }),
+      supabase
+        .from("parents")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-        supabase
-          .from("teachers")
-          .select("*")
-          .order("full_name", { ascending: true }),
+      supabase
+        .from("teachers")
+        .select("*")
+        .order("full_name", { ascending: true }),
 
-        supabase.from("academic_reports").select("*"),
+      supabase
+        .from("subjects")
+        .select("*")
+        .order("name", { ascending: true }),
 
-        supabase.from("attendance").select("*"),
-      ]);
+      supabase.from("student_teachers").select("*"),
+
+      supabase.from("academic_reports").select("*"),
+
+      supabase.from("attendance").select("*"),
+    ]);
 
     const studentsData = studentsRes.data ?? [];
     const parentsData = parentsRes.data ?? [];
     const teachersData = teachersRes.data ?? [];
+    const subjectsData = subjectsRes.data ?? [];
+    const studentTeachersData = studentTeachersRes.data ?? [];
     const reportsData = reportsRes.data ?? [];
     const attendanceData = attendanceRes.data ?? [];
 
     setParents(parentsData as ParentRow[]);
     setTeachers(teachersData as TeacherRow[]);
+    setSubjects(subjectsData as SubjectRow[]);
 
     const parentMap = new Map<string, any>();
-    const teacherMap = new Map<string, any>();
+    const teacherMap = new Map<string, TeacherRow>();
+    const subjectMap = new Map<string, SubjectRow>();
 
     parentsData.forEach((parent: any) => {
       if (parent?.id) parentMap.set(String(parent.id), parent);
     });
 
-    teachersData.forEach((teacher: any) => {
+    (teachersData as TeacherRow[]).forEach((teacher) => {
       if (teacher?.id) teacherMap.set(String(teacher.id), teacher);
+    });
+
+    (subjectsData as SubjectRow[]).forEach((subject) => {
+      if (subject?.id) subjectMap.set(String(subject.id), subject);
+    });
+
+    const relationsByStudent = new Map<string, StudentTeacherRow[]>();
+
+    (studentTeachersData as StudentTeacherRow[]).forEach((relation) => {
+      const studentId = String(relation.student_id ?? "");
+
+      if (!studentId) return;
+
+      if (!relationsByStudent.has(studentId)) {
+        relationsByStudent.set(studentId, []);
+      }
+
+      relationsByStudent.get(studentId)?.push(relation);
     });
 
     const reportByStudent = new Map<string, any[]>();
@@ -354,26 +455,46 @@ export default function KepalaSekolahStudentsPage() {
         parentMap.get(String(student.parent_id ?? "")) ??
         parentMap.get(String(student.parentId ?? ""));
 
-      const teacher =
+      const homeroomTeacher =
         teacherMap.get(String(student.homeroom_teacher_id ?? "")) ??
         teacherMap.get(String(student.teacher_id ?? "")) ??
         teacherMap.get(String(student.homeroomTeacherId ?? ""));
+
+      const studentRelations =
+        relationsByStudent.get(String(student.id)) ?? [];
+
+      const relationLabels = studentRelations.map((relation) =>
+        getTeacherSubjectLabel(relation, teacherMap, subjectMap)
+      );
+
+      const teacherName =
+        relationLabels.length > 0
+          ? relationLabels.join(", ")
+          : homeroomTeacher?.full_name ?? homeroomTeacher?.email ?? "-";
 
       const studentReports = reportByStudent.get(String(student.id)) ?? [];
       const studentAttendance = attendanceByStudent.get(String(student.id)) ?? [];
 
       const finalScores = studentReports
-        .map((report: any) => Number(report.final_score ?? report.score ?? 0))
+        .map((report: any) =>
+          Number(
+            report.final_grade ??
+            report.final_score ??
+            report.score ??
+            report.average_score ??
+            0
+          )
+        )
         .filter((score: number) => !Number.isNaN(score) && score > 0);
 
       const progress =
         finalScores.length > 0
           ? clampPercent(
-              finalScores.reduce(
-                (sum: number, value: number) => sum + value,
-                0
-              ) / finalScores.length
-            )
+            finalScores.reduce(
+              (sum: number, value: number) => sum + value,
+              0
+            ) / finalScores.length
+          )
           : Number(student.progress ?? 0);
 
       const hadirCount = studentAttendance.filter((attendance: any) => {
@@ -409,7 +530,7 @@ export default function KepalaSekolahStudentsPage() {
         parent_id: student.parent_id ?? null,
         homeroom_teacher_id: student.homeroom_teacher_id ?? null,
         parent_name: parent?.full_name ?? parent?.name ?? "-",
-        teacher_name: teacher?.full_name ?? teacher?.name ?? "-",
+        teacher_name: teacherName,
         progress: clampPercent(Number(progress)),
         attendance: clampPercent(Number(attendance)),
       };
@@ -427,32 +548,42 @@ export default function KepalaSekolahStudentsPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        fetchAllData
+        () => fetchAllData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "parents" },
-        fetchAllData
+        () => fetchAllData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        fetchAllData
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "subjects" },
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchAllData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
-        fetchAllData
+        () => fetchAllData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "attendance" },
-        fetchAllData
+        () => fetchAllData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -491,6 +622,76 @@ export default function KepalaSekolahStudentsPage() {
     setForm(initialForm);
     setDocumentFiles({});
     setFormError("");
+  }
+
+  function addTeacherSubjectRow() {
+    setForm((prev) => ({
+      ...prev,
+      teacher_subjects: [
+        ...prev.teacher_subjects,
+        {
+          teacher_id: "",
+          subject_id: "",
+        },
+      ],
+    }));
+  }
+
+  function removeTeacherSubjectRow(index: number) {
+    setForm((prev) => {
+      const nextRows = prev.teacher_subjects.filter((_, itemIndex) => {
+        return itemIndex !== index;
+      });
+
+      return {
+        ...prev,
+        teacher_subjects:
+          nextRows.length > 0
+            ? nextRows
+            : [
+              {
+                teacher_id: "",
+                subject_id: "",
+              },
+            ],
+      };
+    });
+  }
+
+  function updateTeacherSubjectRow(
+    index: number,
+    field: keyof TeacherSubjectForm,
+    value: string
+  ) {
+    setForm((prev) => {
+      const nextRows = prev.teacher_subjects.map((row, itemIndex) => {
+        if (itemIndex !== index) return row;
+
+        return {
+          ...row,
+          [field]: value,
+        };
+      });
+
+      return {
+        ...prev,
+        teacher_subjects: nextRows,
+      };
+    });
+  }
+
+  function getValidTeacherSubjectRows() {
+    const uniqueMap = new Map<string, TeacherSubjectForm>();
+
+    form.teacher_subjects.forEach((row) => {
+      if (!row.teacher_id || !row.subject_id) return;
+
+      const key = `${row.teacher_id}-${row.subject_id}`;
+
+      uniqueMap.set(key, row);
+    });
+
+    return Array.from(uniqueMap.values());
   }
 
   async function getOrCreateParentId() {
@@ -574,6 +775,13 @@ export default function KepalaSekolahStudentsPage() {
       return;
     }
 
+    const validTeacherSubjects = getValidTeacherSubjectRows();
+
+    if (validTeacherSubjects.length === 0) {
+      setFormError("Pilih minimal satu guru yang mengajar beserta mapelnya.");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -600,35 +808,62 @@ export default function KepalaSekolahStudentsPage() {
         }
       }
 
-      const { error } = await supabase.from("students").insert({
-        full_name: form.full_name.trim(),
-        nis: form.nis.trim(),
-        nisn: form.nisn.trim() || null,
-        level: form.level,
-        grade: form.grade,
-        academic_year: form.academic_year,
-        birth_date: form.birth_date || null,
-        birth_place: form.birth_place.trim() || null,
-        gender: form.gender || null,
-        religion: form.religion || null,
-        parent_id: parentId,
-        homeroom_teacher_id: form.homeroom_teacher_id,
-        description: form.description.trim() || null,
-        family_card_url: uploadedUrls.family_card_url || null,
-        diploma_url: uploadedUrls.diploma_url || null,
-        father_ktp_url: uploadedUrls.father_ktp_url || null,
-        mother_ktp_url: uploadedUrls.mother_ktp_url || null,
-        report_card_url: uploadedUrls.report_card_url || null,
-        student_photo_url: uploadedUrls.student_photo_url || null,
-        registration_form_url: uploadedUrls.registration_form_url || null,
-        skkb_url: uploadedUrls.skkb_url || null,
-        birth_certificate_url: uploadedUrls.birth_certificate_url || null,
-        progress: 0,
-        attendance: 0,
-      });
+      const { data: insertedStudent, error } = await supabase
+        .from("students")
+        .insert({
+          full_name: form.full_name.trim(),
+          nis: form.nis.trim(),
+          nisn: form.nisn.trim() || null,
+          level: form.level,
+          grade: form.grade,
+          academic_year: form.academic_year,
+          birth_date: form.birth_date || null,
+          birth_place: form.birth_place.trim() || null,
+          gender: form.gender || null,
+          religion: form.religion || null,
+          parent_id: parentId,
+          homeroom_teacher_id: form.homeroom_teacher_id,
+          description: form.description.trim() || null,
+          family_card_url: uploadedUrls.family_card_url || null,
+          diploma_url: uploadedUrls.diploma_url || null,
+          father_ktp_url: uploadedUrls.father_ktp_url || null,
+          mother_ktp_url: uploadedUrls.mother_ktp_url || null,
+          report_card_url: uploadedUrls.report_card_url || null,
+          student_photo_url: uploadedUrls.student_photo_url || null,
+          registration_form_url: uploadedUrls.registration_form_url || null,
+          skkb_url: uploadedUrls.skkb_url || null,
+          birth_certificate_url: uploadedUrls.birth_certificate_url || null,
+          progress: 0,
+          attendance: 0,
+        })
+        .select("id")
+        .single();
 
       if (error) {
         setFormError(error.message);
+        return;
+      }
+
+      const studentId = String(insertedStudent.id);
+
+      const relationPayload = validTeacherSubjects.map((row) => ({
+        student_id: studentId,
+        teacher_id: row.teacher_id,
+        subject_id: row.subject_id,
+        academic_year: form.academic_year,
+        notes: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error: relationError } = await supabase
+        .from("student_teachers")
+        .insert(relationPayload);
+
+      if (relationError) {
+        setFormError(
+          `Data siswa tersimpan, tapi relasi guru-mapel gagal: ${relationError.message}`
+        );
         return;
       }
 
@@ -657,6 +892,16 @@ export default function KepalaSekolahStudentsPage() {
     const sessionOk = await ensureValidSession();
 
     if (!sessionOk) return;
+
+    const { error: relationError } = await supabase
+      .from("student_teachers")
+      .delete()
+      .eq("student_id", studentId);
+
+    if (relationError) {
+      alert(relationError.message);
+      return;
+    }
 
     const { error } = await supabase
       .from("students")
@@ -970,10 +1215,9 @@ export default function KepalaSekolahStudentsPage() {
                       }
                       className="mt-2 h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                     >
-                      <option value="Early Learning">Early Learning</option>
-                      <option value="Primary Level">Primary Level</option>
-                      <option value="Secondary Level">Secondary Level</option>
-                      <option value="High School">High School</option>
+                      <option value="SD">SD</option>
+                      <option value="SMP">SMP</option>
+                      <option value="SMA">SMA</option>
                     </select>
                   </div>
 
@@ -1106,6 +1350,86 @@ export default function KepalaSekolahStudentsPage() {
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="text-[13px] font-bold text-[#6F5549]">
+                      Guru yang Mengajar / Mapel
+                    </label>
+
+                    <div className="mt-2 space-y-3 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] p-4">
+                      <p className="text-[12px] leading-5 text-[#7D5E50]">
+                        Satu siswa bisa memiliki lebih dari satu guru. Pilih
+                        guru dan mapel yang diajarkan agar data siswa sinkron ke
+                        halaman guru.
+                      </p>
+
+                      {form.teacher_subjects.map((row, index) => (
+                        <div
+                          key={`teacher-subject-${index}`}
+                          className="grid gap-3 md:grid-cols-[1fr_1fr_auto]"
+                        >
+                          <select
+                            value={row.teacher_id}
+                            onChange={(event) =>
+                              updateTeacherSubjectRow(
+                                index,
+                                "teacher_id",
+                                event.target.value
+                              )
+                            }
+                            className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                          >
+                            <option value="">Pilih guru</option>
+                            {teachers.map((teacher) => (
+                              <option key={teacher.id} value={teacher.id}>
+                                {teacher.full_name ||
+                                  teacher.email ||
+                                  "Tanpa Nama"}
+                                {teacher.teacher_code
+                                  ? ` — ${teacher.teacher_code}`
+                                  : ""}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            value={row.subject_id}
+                            onChange={(event) =>
+                              updateTeacherSubjectRow(
+                                index,
+                                "subject_id",
+                                event.target.value
+                              )
+                            }
+                            className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                          >
+                            <option value="">Pilih mapel</option>
+                            {subjects.map((subject) => (
+                              <option key={subject.id} value={subject.id}>
+                                {getSubjectLabel(subject)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => removeTeacherSubjectRow(index)}
+                            className="h-11 rounded-xl border border-red-200 bg-white px-4 text-[13px] font-bold text-red-600 transition hover:bg-red-50"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={addTeacherSubjectRow}
+                        className="h-10 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[13px] font-bold text-[#7A1F2B] transition hover:bg-[#F7EDE2]"
+                      >
+                        + Tambah Guru / Mapel
+                      </button>
+                    </div>
                   </div>
 
                   <div className="md:col-span-2">

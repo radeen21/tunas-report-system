@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CalendarRange,
+  Check,
   CheckCircle2,
   Edit3,
   Eye,
@@ -25,6 +26,7 @@ type TeacherRow = {
   id: string;
   full_name: string | null;
   email?: string | null;
+  teacher_code?: string | null;
   subjects?: string[] | string | null;
 };
 
@@ -65,12 +67,26 @@ type CurriculumSubChapter = {
   notes?: string | null;
 };
 
+type CurriculumProgress = {
+  id: string;
+  curriculum_program_id: string | null;
+  curriculum_chapter_id: string | null;
+  curriculum_sub_chapter_id: string | null;
+  teacher_id: string | null;
+  teaching_date: string | null;
+  created_at?: string | null;
+};
+
+type SubChapterWithProgress = CurriculumSubChapter & {
+  progress_records: CurriculumProgress[];
+};
+
+type ChapterWithChildren = CurriculumChapter & {
+  sub_chapters: SubChapterWithProgress[];
+};
+
 type ProgramWithChildren = CurriculumProgram & {
-  chapters: Array<
-    CurriculumChapter & {
-      sub_chapters: CurriculumSubChapter[];
-    }
-  >;
+  chapters: ChapterWithChildren[];
 };
 
 type SubChapterForm = {
@@ -97,6 +113,35 @@ type ProgramForm = {
   document_url: string;
   status: string;
   chapters: ChapterForm[];
+};
+
+type DateColumn = {
+  key: string;
+  iso: string;
+  day: number;
+  monthKey: string;
+  monthLabel: string;
+};
+
+type MonthGroup = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+const legacyMonthNumber: Record<string, number> = {
+  January: 0,
+  February: 1,
+  March: 2,
+  April: 3,
+  May: 4,
+  June: 5,
+  July: 6,
+  August: 7,
+  September: 8,
+  October: 9,
+  November: 10,
+  December: 11,
 };
 
 function emptyProgramForm(): ProgramForm {
@@ -151,15 +196,31 @@ function normalizeSubjects(subjects: TeacherRow["subjects"]) {
 function formatDate(value?: string | null) {
   if (!value) return "-";
 
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) return "-";
+
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(`${value}T00:00:00`));
+  }).format(date);
+}
+
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "-";
 
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
@@ -167,20 +228,25 @@ function formatDateTime(value?: string | null) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function getStatusLabel(status?: string | null) {
   if (status === "submitted") return "Submitted";
   if (status === "approved") return "Approved";
   if (status === "rejected") return "Rejected";
+  if (status === "published") return "Published";
   return "Draft";
 }
 
 function getStatusClass(status?: string | null) {
-  if (status === "approved") return "bg-[#C7F0DA] text-[#158A58]";
+  if (status === "approved" || status === "published") {
+    return "bg-[#C7F0DA] text-[#158A58]";
+  }
+
   if (status === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
   if (status === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
+
   return "bg-[#F1F5F9] text-[#64748B]";
 }
 
@@ -220,15 +286,146 @@ function canDeleteProgram(status?: string | null) {
   return !status || status === "draft" || status === "rejected";
 }
 
-function getTargetDate(subChapter: CurriculumSubChapter) {
-  return subChapter.target_date || null;
-}
-
 function getProgramSubChapterCount(program: ProgramWithChildren) {
   return program.chapters.reduce(
     (total, chapter) => total + chapter.sub_chapters.length,
     0
   );
+}
+
+function getAcademicStartYear(academicYear?: string | null) {
+  const match = (academicYear || "").match(/\d{4}/);
+  return match ? Number(match[0]) : 2026;
+}
+
+function getProgramDateRange(program?: Partial<CurriculumProgram> | null) {
+  const startYear = getAcademicStartYear(program?.academic_year);
+
+  return {
+    start: `${startYear}-07-01`,
+    end: `${startYear}-12-31`,
+  };
+}
+
+function generateDateColumns(startDate: string, endDate: string): DateColumn[] {
+  const columns: DateColumn[] = [];
+
+  const current = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+
+  while (current <= end) {
+    const iso = toLocalDateKey(current);
+    const monthLabel = new Intl.DateTimeFormat("id-ID", {
+      month: "long",
+    }).format(current);
+
+    columns.push({
+      key: iso,
+      iso,
+      day: current.getDate(),
+      monthKey: `${current.getFullYear()}-${current.getMonth()}`,
+      monthLabel,
+    });
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  return columns;
+}
+
+function groupColumnsByMonth(columns: DateColumn[]): MonthGroup[] {
+  const groups: MonthGroup[] = [];
+
+  columns.forEach((column) => {
+    const lastGroup = groups[groups.length - 1];
+
+    if (!lastGroup || lastGroup.key !== column.monthKey) {
+      groups.push({
+        key: column.monthKey,
+        label: column.monthLabel,
+        count: 1,
+      });
+
+      return;
+    }
+
+    lastGroup.count += 1;
+  });
+
+  return groups;
+}
+
+function getDateColumnsForProgram(program: ProgramWithChildren) {
+  const range = getProgramDateRange(program);
+  return generateDateColumns(range.start, range.end);
+}
+
+function getLegacyTargetDate(
+  program: ProgramWithChildren,
+  subChapter: SubChapterWithProgress
+) {
+  if (!subChapter.target_month || !subChapter.planned_week) return "";
+
+  const monthIndex = legacyMonthNumber[subChapter.target_month];
+
+  if (monthIndex === undefined) return "";
+
+  const academicStartYear = getAcademicStartYear(program.academic_year);
+  const year = monthIndex >= 6 ? academicStartYear : academicStartYear + 1;
+
+  const day = (Number(subChapter.planned_week || 1) - 1) * 7 + 1;
+  const date = new Date(year, monthIndex, day);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return toLocalDateKey(date);
+}
+
+function getTargetDate(
+  program: ProgramWithChildren,
+  subChapter: SubChapterWithProgress
+) {
+  return subChapter.target_date || getLegacyTargetDate(program, subChapter);
+}
+
+function getCellStatus(
+  program: ProgramWithChildren,
+  subChapter: SubChapterWithProgress,
+  isoDate: string
+) {
+  const completedRecord = subChapter.progress_records.find((progress) => {
+    return progress.teaching_date?.slice(0, 10) === isoDate;
+  });
+
+  if (completedRecord) {
+    return "completed" as const;
+  }
+
+  const alreadyCompleted = subChapter.progress_records.length > 0;
+
+  if (alreadyCompleted) {
+    return "empty" as const;
+  }
+
+  const targetDate = getTargetDate(program, subChapter);
+
+  if (targetDate === isoDate) {
+    return "planned" as const;
+  }
+
+  return "empty" as const;
+}
+
+function getProgressPercent(program: ProgramWithChildren) {
+  const subChapters = program.chapters.flatMap((chapter) => chapter.sub_chapters);
+
+  if (subChapters.length === 0) return 0;
+
+  const completed = subChapters.filter(
+    (subChapter) => subChapter.progress_records.length > 0
+  ).length;
+
+  return Math.round((completed / subChapters.length) * 100);
 }
 
 export default function TeacherProgramSemesterPage() {
@@ -237,6 +434,8 @@ export default function TeacherProgramSemesterPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
@@ -248,121 +447,183 @@ export default function TeacherProgramSemesterPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   async function getCurrentTeacher() {
-    const { data: authData } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    const email =
+    if (authError) {
+      throw new Error(authError.message);
+    }
+
+    const email = (
       authData.user?.email ||
       localStorage.getItem("hstkb_demo_email") ||
       localStorage.getItem("hstkb_email") ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const teacherCode =
+      localStorage.getItem("hstkb_teacher_code") ||
+      localStorage.getItem("teacher_code") ||
       "";
 
     if (email) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("teachers")
         .select("*")
-        .eq("email", email)
+        .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
+      if (error) throw new Error(error.message);
       if (data) return data as TeacherRow;
     }
 
-    const { data } = await supabase
-      .from("teachers")
-      .select("*")
-      .order("full_name")
-      .limit(1)
-      .maybeSingle();
+    if (teacherCode) {
+      const { data, error } = await supabase
+        .from("teachers")
+        .select("*")
+        .eq("teacher_code", teacherCode)
+        .limit(1)
+        .maybeSingle();
 
-    return data as TeacherRow | null;
+      if (error) throw new Error(error.message);
+      if (data) return data as TeacherRow;
+    }
+
+    return null;
   }
 
   async function fetchData() {
     setLoading(true);
+    setErrorMessage("");
 
-    const currentTeacher = await getCurrentTeacher();
-    setTeacher(currentTeacher);
+    try {
+      const currentTeacher = await getCurrentTeacher();
+      setTeacher(currentTeacher);
 
-    if (!currentTeacher?.id) {
-      setPrograms([]);
-      setLoading(false);
-      return;
-    }
+      if (!currentTeacher?.id) {
+        setPrograms([]);
+        setErrorMessage(
+          "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
+        );
+        return;
+      }
 
-    const [programsRes, chaptersRes, subChaptersRes] = await Promise.all([
-      supabase
-        .from("curriculum_programs")
-        .select("*")
-        .eq("teacher_id", currentTeacher.id)
-        .order("updated_at", { ascending: false }),
+      const [programsRes, chaptersRes, subChaptersRes, progressRes] =
+        await Promise.all([
+          supabase
+            .from("curriculum_programs")
+            .select("*")
+            .eq("teacher_id", currentTeacher.id)
+            .order("updated_at", { ascending: false }),
 
-      supabase
-        .from("curriculum_chapters")
-        .select("*")
-        .order("chapter_order", { ascending: true }),
+          supabase
+            .from("curriculum_chapters")
+            .select("*")
+            .order("chapter_order", { ascending: true }),
 
-      supabase
-        .from("curriculum_sub_chapters")
-        .select("*")
-        .order("sub_chapter_order", { ascending: true }),
-    ]);
+          supabase
+            .from("curriculum_sub_chapters")
+            .select("*")
+            .order("sub_chapter_order", { ascending: true }),
 
-    if (programsRes.error) {
-      alert(`Gagal mengambil Program Semester: ${programsRes.error.message}`);
-    }
+          supabase
+            .from("curriculum_progress")
+            .select("*")
+            .eq("teacher_id", currentTeacher.id),
+        ]);
 
-    if (chaptersRes.error) {
-      alert(`Gagal mengambil Bab: ${chaptersRes.error.message}`);
-    }
+      if (programsRes.error) throw new Error(programsRes.error.message);
+      if (chaptersRes.error) throw new Error(chaptersRes.error.message);
+      if (subChaptersRes.error) throw new Error(subChaptersRes.error.message);
+      if (progressRes.error) throw new Error(progressRes.error.message);
 
-    if (subChaptersRes.error) {
-      alert(`Gagal mengambil Sub Bab: ${subChaptersRes.error.message}`);
-    }
+      const programsData = (programsRes.data || []) as CurriculumProgram[];
+      const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
+      const subChaptersData = (subChaptersRes.data ||
+        []) as CurriculumSubChapter[];
+      const progressData = (progressRes.data || []) as CurriculumProgress[];
 
-    const programsData = (programsRes.data || []) as CurriculumProgram[];
-    const chaptersData = (chaptersRes.data || []) as CurriculumChapter[];
-    const subChaptersData = (subChaptersRes.data ||
-      []) as CurriculumSubChapter[];
+      const programIds = new Set(programsData.map((program) => program.id));
 
-    const subChaptersByChapter = new Map<string, CurriculumSubChapter[]>();
-
-    subChaptersData.forEach((subChapter) => {
-      if (!subChapter.curriculum_chapter_id) return;
-
-      const current =
-        subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
-
-      current.push(subChapter);
-      subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
-    });
-
-    const chaptersByProgram = new Map<
-      string,
-      Array<CurriculumChapter & { sub_chapters: CurriculumSubChapter[] }>
-    >();
-
-    chaptersData.forEach((chapter) => {
-      if (!chapter.curriculum_program_id) return;
-
-      const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
-
-      current.push({
-        ...chapter,
-        sub_chapters: subChaptersByChapter.get(chapter.id) || [],
+      const filteredChapters = chaptersData.filter((chapter) => {
+        return chapter.curriculum_program_id
+          ? programIds.has(chapter.curriculum_program_id)
+          : false;
       });
 
-      chaptersByProgram.set(chapter.curriculum_program_id, current);
-    });
+      const chapterIds = new Set(filteredChapters.map((chapter) => chapter.id));
 
-    const programsWithChildren: ProgramWithChildren[] = programsData.map(
-      (program) => ({
-        ...program,
-        chapters: chaptersByProgram.get(program.id) || [],
-      })
-    );
+      const filteredSubChapters = subChaptersData.filter((subChapter) => {
+        return subChapter.curriculum_chapter_id
+          ? chapterIds.has(subChapter.curriculum_chapter_id)
+          : false;
+      });
 
-    setPrograms(programsWithChildren);
-    setLoading(false);
+      const progressBySubChapter = new Map<string, CurriculumProgress[]>();
+
+      progressData.forEach((progress) => {
+        if (!progress.curriculum_sub_chapter_id) return;
+
+        const current =
+          progressBySubChapter.get(progress.curriculum_sub_chapter_id) || [];
+
+        current.push(progress);
+        progressBySubChapter.set(progress.curriculum_sub_chapter_id, current);
+      });
+
+      const subChaptersByChapter = new Map<string, SubChapterWithProgress[]>();
+
+      filteredSubChapters.forEach((subChapter) => {
+        if (!subChapter.curriculum_chapter_id) return;
+
+        const current =
+          subChaptersByChapter.get(subChapter.curriculum_chapter_id) || [];
+
+        current.push({
+          ...subChapter,
+          progress_records: progressBySubChapter.get(subChapter.id) || [],
+        });
+
+        subChaptersByChapter.set(subChapter.curriculum_chapter_id, current);
+      });
+
+      const chaptersByProgram = new Map<string, ChapterWithChildren[]>();
+
+      filteredChapters.forEach((chapter) => {
+        if (!chapter.curriculum_program_id) return;
+
+        const current = chaptersByProgram.get(chapter.curriculum_program_id) || [];
+
+        current.push({
+          ...chapter,
+          sub_chapters: subChaptersByChapter.get(chapter.id) || [],
+        });
+
+        chaptersByProgram.set(chapter.curriculum_program_id, current);
+      });
+
+      const programsWithChildren: ProgramWithChildren[] = programsData.map(
+        (program) => ({
+          ...program,
+          chapters: chaptersByProgram.get(program.id) || [],
+        })
+      );
+
+      setPrograms(programsWithChildren);
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal mengambil Program Semester.");
+      }
+
+      setTeacher(null);
+      setPrograms([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -370,6 +631,11 @@ export default function TeacherProgramSemesterPage() {
 
     const channel = supabase
       .channel("teacher-program-semester-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
+      )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "curriculum_programs" },
@@ -385,10 +651,15 @@ export default function TeacherProgramSemesterPage() {
         { event: "*", schema: "public", table: "curriculum_sub_chapters" },
         () => fetchData()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "curriculum_progress" },
+        () => fetchData()
+      )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -469,36 +740,36 @@ export default function TeacherProgramSemesterPage() {
       chapters:
         program.chapters.length > 0
           ? program.chapters.map((chapter) => ({
-              id: chapter.id,
-              chapter_title: chapter.chapter_title || "",
-              sub_chapters:
-                chapter.sub_chapters.length > 0
-                  ? chapter.sub_chapters.map((subChapter) => ({
-                      id: subChapter.id,
-                      sub_chapter_title: subChapter.sub_chapter_title || "",
-                      target_date: subChapter.target_date || "",
-                      notes: subChapter.notes || "",
-                    }))
-                  : [
-                      {
-                        sub_chapter_title: "",
-                        target_date: "",
-                        notes: "",
-                      },
-                    ],
-            }))
-          : [
-              {
-                chapter_title: "",
-                sub_chapters: [
+            id: chapter.id,
+            chapter_title: chapter.chapter_title || "",
+            sub_chapters:
+              chapter.sub_chapters.length > 0
+                ? chapter.sub_chapters.map((subChapter) => ({
+                  id: subChapter.id,
+                  sub_chapter_title: subChapter.sub_chapter_title || "",
+                  target_date: getTargetDate(program, subChapter) || "",
+                  notes: subChapter.notes || "",
+                }))
+                : [
                   {
                     sub_chapter_title: "",
                     target_date: "",
                     notes: "",
                   },
                 ],
-              },
-            ],
+          }))
+          : [
+            {
+              chapter_title: "",
+              sub_chapters: [
+                {
+                  sub_chapter_title: "",
+                  target_date: "",
+                  notes: "",
+                },
+              ],
+            },
+          ],
     });
 
     setSelectedFile(null);
@@ -663,11 +934,31 @@ export default function TeacherProgramSemesterPage() {
         const currentProgram = programs.find((program) => program.id === form.id);
         const oldChapterIds =
           currentProgram?.chapters.map((chapter) => chapter.id) || [];
+
         const deletedChapterIds = oldChapterIds.filter(
           (chapterId) => !existingChapterIds.includes(chapterId)
         );
 
         if (deletedChapterIds.length > 0) {
+          const oldSubChapterIds =
+            currentProgram?.chapters
+              .filter((chapter) => deletedChapterIds.includes(chapter.id))
+              .flatMap((chapter) =>
+                chapter.sub_chapters.map((subChapter) => subChapter.id)
+              ) || [];
+
+          if (oldSubChapterIds.length > 0) {
+            await supabase
+              .from("curriculum_progress")
+              .delete()
+              .in("curriculum_sub_chapter_id", oldSubChapterIds);
+
+            await supabase
+              .from("curriculum_sub_chapters")
+              .delete()
+              .in("id", oldSubChapterIds);
+          }
+
           const { error } = await supabase
             .from("curriculum_chapters")
             .delete()
@@ -732,6 +1023,11 @@ export default function TeacherProgramSemesterPage() {
           );
 
           if (deletedSubChapterIds.length > 0) {
+            await supabase
+              .from("curriculum_progress")
+              .delete()
+              .in("curriculum_sub_chapter_id", deletedSubChapterIds);
+
             const { error } = await supabase
               .from("curriculum_sub_chapters")
               .delete()
@@ -750,13 +1046,22 @@ export default function TeacherProgramSemesterPage() {
 
           if (!subChapter.sub_chapter_title.trim()) continue;
 
+          const targetDate = new Date(`${subChapter.target_date}T00:00:00`);
+          const targetMonth = Number.isNaN(targetDate.getTime())
+            ? null
+            : targetDate.toLocaleString("en-US", { month: "long" });
+
+          const plannedWeek = Number.isNaN(targetDate.getTime())
+            ? null
+            : Math.ceil(targetDate.getDate() / 7);
+
           const subPayload = {
             curriculum_chapter_id: chapterId,
             sub_chapter_title: subChapter.sub_chapter_title.trim(),
             sub_chapter_order: subIndex + 1,
             target_date: subChapter.target_date || null,
-            target_month: null,
-            planned_week: null,
+            target_month: targetMonth,
+            planned_week: plannedWeek,
             notes: subChapter.notes.trim() || null,
           };
 
@@ -790,11 +1095,81 @@ export default function TeacherProgramSemesterPage() {
     } catch (error) {
       setSaving(false);
       alert(
-        `Gagal simpan Program Semester: ${
-          error instanceof Error ? error.message : "Terjadi kesalahan"
+        `Gagal simpan Program Semester: ${error instanceof Error ? error.message : "Terjadi kesalahan"
         }`
       );
     }
+  }
+
+  async function handleMarkRealized(
+    program: ProgramWithChildren,
+    chapter: ChapterWithChildren,
+    subChapter: SubChapterWithProgress
+  ) {
+    if (!teacher?.id) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
+
+    const targetDate = getTargetDate(program, subChapter);
+
+    if (!targetDate) {
+      alert("Target tanggal belum ada.");
+      return;
+    }
+
+    const alreadyRealized = subChapter.progress_records.length > 0;
+
+    if (alreadyRealized) {
+      alert("Sub Bab ini sudah terealisasi.");
+      return;
+    }
+
+    const { error } = await supabase.from("curriculum_progress").insert({
+      curriculum_program_id: program.id,
+      curriculum_chapter_id: chapter.id,
+      curriculum_sub_chapter_id: subChapter.id,
+      teacher_id: teacher.id,
+      teaching_date: targetDate,
+    });
+
+    if (error) {
+      alert(`Gagal tandai terealisasi: ${error.message}`);
+      return;
+    }
+
+    await fetchData();
+  }
+
+  async function handleCancelRealized(subChapter: SubChapterWithProgress) {
+    if (!teacher?.id) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
+
+    if (subChapter.progress_records.length === 0) {
+      alert("Sub Bab ini belum terealisasi.");
+      return;
+    }
+
+    const confirmCancel = confirm("Batalkan status terealisasi untuk Sub Bab ini?");
+
+    if (!confirmCancel) return;
+
+    const progressIds = subChapter.progress_records.map((item) => item.id);
+
+    const { error } = await supabase
+      .from("curriculum_progress")
+      .delete()
+      .in("id", progressIds)
+      .eq("teacher_id", teacher.id);
+
+    if (error) {
+      alert(`Gagal batalkan realisasi: ${error.message}`);
+      return;
+    }
+
+    await fetchData();
   }
 
   async function handleDelete(program: ProgramWithChildren) {
@@ -804,12 +1179,30 @@ export default function TeacherProgramSemesterPage() {
     }
 
     const confirmDelete = confirm(
-      `Hapus Program Semester ${program.subject_name || ""} ${
-        program.level || ""
+      `Hapus Program Semester ${program.subject_name || ""} ${program.level || ""
       } ${program.grade || ""}?`
     );
 
     if (!confirmDelete) return;
+
+    const subChapterIds = program.chapters.flatMap((chapter) =>
+      chapter.sub_chapters.map((subChapter) => subChapter.id)
+    );
+
+    const chapterIds = program.chapters.map((chapter) => chapter.id);
+
+    if (subChapterIds.length > 0) {
+      await supabase
+        .from("curriculum_progress")
+        .delete()
+        .in("curriculum_sub_chapter_id", subChapterIds);
+
+      await supabase.from("curriculum_sub_chapters").delete().in("id", subChapterIds);
+    }
+
+    if (chapterIds.length > 0) {
+      await supabase.from("curriculum_chapters").delete().in("id", chapterIds);
+    }
 
     const { error } = await supabase
       .from("curriculum_programs")
@@ -873,16 +1266,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: [
-                ...chapter.sub_chapters,
-                {
-                  sub_chapter_title: "",
-                  target_date: "",
-                  notes: "",
-                },
-              ],
-            }
+            ...chapter,
+            sub_chapters: [
+              ...chapter.sub_chapters,
+              {
+                sub_chapter_title: "",
+                target_date: "",
+                notes: "",
+              },
+            ],
+          }
           : chapter
       ),
     }));
@@ -894,11 +1287,11 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: chapter.sub_chapters.filter(
-                (_, itemIndex) => itemIndex !== subIndex
-              ),
-            }
+            ...chapter,
+            sub_chapters: chapter.sub_chapters.filter(
+              (_, itemIndex) => itemIndex !== subIndex
+            ),
+          }
           : chapter
       ),
     }));
@@ -915,16 +1308,16 @@ export default function TeacherProgramSemesterPage() {
       chapters: prev.chapters.map((chapter, index) =>
         index === chapterIndex
           ? {
-              ...chapter,
-              sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
-                itemIndex === subIndex
-                  ? {
-                      ...subChapter,
-                      [field]: value,
-                    }
-                  : subChapter
-              ),
-            }
+            ...chapter,
+            sub_chapters: chapter.sub_chapters.map((subChapter, itemIndex) =>
+              itemIndex === subIndex
+                ? {
+                  ...subChapter,
+                  [field]: value,
+                }
+                : subChapter
+            ),
+          }
           : chapter
       ),
     }));
@@ -949,21 +1342,27 @@ export default function TeacherProgramSemesterPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Kelola Program Semester sebagai menu mandiri. Program ini tidak
-              terhubung ke rombel, jadwal, atau absensi. Target pembelajaran
-              dibuat berdasarkan tanggal.
+              Kelola Program Semester sebagai menu mandiri. Target pembelajaran
+              dibuat berdasarkan tanggal dan ditampilkan dengan blok warna.
             </p>
           </div>
 
           <button
             type="button"
             onClick={openCreateModal}
-            className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D]"
+            disabled={!teacher}
+            className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             <Plus className="h-4 w-4" />
             Tambah Program
           </button>
         </div>
+
+        {errorMessage ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
+            {errorMessage}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -1069,6 +1468,8 @@ export default function TeacherProgramSemesterPage() {
         <ProgramDetailModal
           program={selectedProgram}
           onClose={() => setSelectedProgram(null)}
+          onMarkRealized={handleMarkRealized}
+          onCancelRealized={handleCancelRealized}
         />
       ) : null}
     </TeacherLayout>
@@ -1086,22 +1487,24 @@ function ProgramCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const progressPercent = getProgressPercent(program);
+
   return (
     <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
       <div className="border-b border-[#EADACA] bg-[#FFF8EF] px-6 py-5">
         <div className="mb-3 flex flex-wrap gap-2">
           <StatusBadge status={program.status} />
 
-          <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+          <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
             {program.level} — {program.grade}
           </span>
 
-          <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+          <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
             Semester {program.semester}
           </span>
 
           {program.document_url ? (
-            <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+            <span className="whitespace-nowrap rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
               Ada Dokumen
             </span>
           ) : null}
@@ -1115,6 +1518,20 @@ function ProgramCard({
           {program.program_type || "Program Semester"} •{" "}
           {program.academic_year || ACADEMIC_YEAR}
         </p>
+
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between text-[12px] font-bold text-[#6F5549]">
+            <span>Progress Realisasi</span>
+            <span>{progressPercent}%</span>
+          </div>
+
+          <div className="h-2 overflow-hidden rounded-full bg-[#EADACA]">
+            <div
+              className="h-full rounded-full bg-[#158A58]"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+        </div>
       </div>
 
       <div className="space-y-4 px-6 py-5">
@@ -1189,6 +1606,13 @@ function ProgramCard({
             </>
           ) : null}
         </div>
+
+        {!canEditProgram(program.status) ? (
+          <p className="text-[12px] font-semibold text-[#8A5A48]">
+            Program yang sudah submitted/approved tidak bisa diedit. Jika butuh
+            perubahan, tunggu status rejected/revisi dari Kepala Sekolah.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -1244,8 +1668,8 @@ function ProgramModal({
             Catatan Flow
           </p>
           <p className="mt-1 text-[13px] leading-6 text-[#6F5549]">
-            Program Semester ini berdiri sendiri. Tidak terhubung ke rombel,
-            jadwal, atau absensi. Target pembelajaran cukup ditandai berdasarkan
+            Program Semester ini berdiri sendiri. Tidak langsung mengambil data
+            dari rombel, jadwal, atau absensi. Target ditandai berdasarkan
             tanggal.
           </p>
         </div>
@@ -1276,12 +1700,16 @@ function ProgramModal({
           </FormGroup>
 
           <FormGroup label="Level">
-            <input
+            <select
               value={form.level}
               onChange={(event) => onChange("level", event.target.value)}
-              placeholder="Contoh: SD / SMP / SMA"
               className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            />
+            >
+              <option value="">Pilih Level</option>
+              <option value="SD">SD</option>
+              <option value="SMP">SMP</option>
+              <option value="SMA">SMA</option>
+            </select>
           </FormGroup>
 
           <FormGroup label="Kelas">
@@ -1535,31 +1963,38 @@ function ProgramModal({
 function ProgramDetailModal({
   program,
   onClose,
+  onMarkRealized,
+  onCancelRealized,
 }: {
   program: ProgramWithChildren;
   onClose: () => void;
+  onMarkRealized: (
+    program: ProgramWithChildren,
+    chapter: ChapterWithChildren,
+    subChapter: SubChapterWithProgress
+  ) => void;
+  onCancelRealized: (subChapter: SubChapterWithProgress) => void;
 }) {
   return (
     <ModalShell
       title="Detail Program Semester"
-      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${
-        program.grade || ""
-      }`}
+      subtitle={`${program.subject_name || "-"} • ${program.level || "-"} ${program.grade || ""
+        }`}
       onClose={onClose}
     >
-      <div className="space-y-4">
+      <div className="space-y-5">
         <div className="flex flex-wrap gap-2">
           <StatusBadge status={program.status} />
 
-          <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+          <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
             {program.level} — {program.grade}
           </span>
 
-          <span className="rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+          <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
             Semester {program.semester}
           </span>
 
-          <span className="rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+          <span className="whitespace-nowrap rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
             {program.academic_year}
           </span>
         </div>
@@ -1606,7 +2041,7 @@ function ProgramDetailModal({
           <InfoBlock label="Catatan Revisi" value={program.rejection_note} />
         ) : null}
 
-        <ProgramPlanTable program={program} />
+        <ProgramPlanMatrix program={program} />
 
         <div className="space-y-4">
           {program.chapters.map((chapter) => (
@@ -1630,8 +2065,32 @@ function ProgramDetailModal({
                     </span>
 
                     <span className="rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-                      Target: {formatDate(getTargetDate(subChapter))}
+                      Target: {formatDate(getTargetDate(program, subChapter))}
                     </span>
+
+                    {subChapter.progress_records.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-[#C7F0DA] px-3 py-1 text-[12px] font-extrabold text-[#158A58]">
+                          Terealisasi
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => onCancelRealized(subChapter)}
+                          className="rounded-full border border-[#FECACA] bg-white px-3 py-1 text-[12px] font-extrabold text-[#DC2626] transition hover:bg-[#FFF1F2]"
+                        >
+                          Batalkan
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onMarkRealized(program, chapter, subChapter)}
+                        className="rounded-full bg-[#158A58] px-3 py-1 text-[12px] font-extrabold text-white transition hover:bg-[#116C46]"
+                      >
+                        Tandai Terealisasi
+                      </button>
+                    )}
 
                     {subChapter.notes ? (
                       <span className="text-[12px] font-semibold text-[#6F5549]">
@@ -1649,41 +2108,50 @@ function ProgramDetailModal({
   );
 }
 
-function ProgramPlanTable({ program }: { program: ProgramWithChildren }) {
+function ProgramPlanMatrix({ program }: { program: ProgramWithChildren }) {
+  const dateColumns = getDateColumnsForProgram(program);
+  const monthGroups = groupColumnsByMonth(dateColumns);
+
   return (
     <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
-      <div className="flex flex-wrap items-center gap-4 border-b border-[#E1CFBE] bg-[#FFF8EF] px-5 py-4">
-        <div className="flex items-center gap-2">
-          <span className="h-3 w-3 rounded-sm border border-[#EF4444] bg-[#FCA5A5]" />
-          <span className="text-[12px] font-bold text-[#7F1D1D]">
-            Warna merah = Target Tanggal
-          </span>
-        </div>
-
-        <span className="text-[12px] font-bold text-[#6F5549]">
-          Tidak ada checklist dan tidak terhubung absensi.
-        </span>
-      </div>
+      <MatrixLegend />
 
       <div className="max-h-[58vh] overflow-auto">
-        <table className="w-full min-w-[980px] border-collapse text-left">
+        <table
+          className="border-collapse bg-white"
+          style={{
+            minWidth: `${360 + dateColumns.length * 42}px`,
+          }}
+        >
           <thead>
-            <tr className="bg-[#FFF8EF] text-[13px] font-extrabold text-[#6F5549]">
-              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
-                Bab
+            <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
+              <th
+                rowSpan={2}
+                className="sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-[#EADACA] bg-[#FFF8EF] px-4 py-3 text-left text-[13px] font-extrabold text-[#6F5549]"
+              >
+                Bab / Sub Bab
               </th>
-              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
-                Sub Bab
-              </th>
-              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
-                Target Tanggal
-              </th>
-              <th className="border-b border-r border-[#E1CFBE] px-4 py-3">
-                Catatan
-              </th>
-              <th className="border-b border-[#E1CFBE] px-4 py-3 text-center">
-                Penanda
-              </th>
+
+              {monthGroups.map((group) => (
+                <th
+                  key={group.key}
+                  colSpan={group.count}
+                  className="border-r border-[#EADACA] px-4 py-3 text-center text-[13px] font-extrabold text-[#6F5549]"
+                >
+                  {group.label}
+                </th>
+              ))}
+            </tr>
+
+            <tr className="border-b border-[#EADACA] bg-[#FFFCF8]">
+              {dateColumns.map((column) => (
+                <th
+                  key={column.key}
+                  className="h-10 w-[42px] min-w-[42px] border-r border-[#F0E1D4] px-1 text-center text-[12px] font-extrabold text-[#8A5A48]"
+                >
+                  {column.day}
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -1691,58 +2159,81 @@ function ProgramPlanTable({ program }: { program: ProgramWithChildren }) {
             {program.chapters.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={1 + dateColumns.length}
                   className="px-4 py-10 text-center text-[14px] text-[#6F5549]"
                 >
                   Belum ada Bab/Sub Bab.
                 </td>
               </tr>
-            ) : null}
-
-            {program.chapters.map((chapter) =>
-              chapter.sub_chapters.length === 0 ? (
-                <tr key={chapter.id}>
-                  <td className="border-b border-r border-[#E1CFBE] px-4 py-3 font-bold text-[#2B1B18]">
-                    Bab {chapter.chapter_order}. {chapter.chapter_title}
-                  </td>
-                  <td
-                    colSpan={4}
-                    className="border-b border-[#E1CFBE] px-4 py-3 text-[#6F5549]"
-                  >
-                    Belum ada Sub Bab.
-                  </td>
-                </tr>
-              ) : (
-                chapter.sub_chapters.map((subChapter, subIndex) => (
-                  <tr key={subChapter.id} className="hover:bg-[#FFFCF8]">
-                    {subIndex === 0 ? (
-                      <td
-                        rowSpan={chapter.sub_chapters.length}
-                        className="min-w-[240px] border-b border-r border-[#E1CFBE] px-4 py-3 align-top font-bold text-[#2B1B18]"
-                      >
-                        Bab {chapter.chapter_order}. {chapter.chapter_title}
-                      </td>
-                    ) : null}
-
-                    <td className="min-w-[260px] border-b border-r border-[#E1CFBE] px-4 py-3 text-[#2B1B18]">
-                      {subChapter.sub_chapter_order}.{" "}
-                      {subChapter.sub_chapter_title}
-                    </td>
-
-                    <td className="whitespace-nowrap border-b border-r border-[#E1CFBE] bg-[#FCA5A5] px-4 py-3 font-extrabold text-[#7F1D1D]">
-                      {formatDate(getTargetDate(subChapter))}
-                    </td>
-
-                    <td className="min-w-[260px] border-b border-r border-[#E1CFBE] px-4 py-3 text-[#6F5549]">
-                      {subChapter.notes || "-"}
-                    </td>
-
-                    <td className="border-b border-[#E1CFBE] px-4 py-3 text-center">
-                      <span className="inline-flex h-6 w-12 items-center justify-center rounded-md border border-[#EF4444] bg-[#FCA5A5]" />
+            ) : (
+              program.chapters.map((chapter) => (
+                <Fragment key={chapter.id}>
+                  <tr className="border-b border-[#EADACA] bg-[#FFF8EF]">
+                    <td
+                      colSpan={1 + dateColumns.length}
+                      className="px-4 py-3 text-[14px] font-extrabold text-[#2B1B18]"
+                    >
+                      Bab {chapter.chapter_order}. {chapter.chapter_title}
                     </td>
                   </tr>
-                ))
-              )
+
+                  {chapter.sub_chapters.length === 0 ? (
+                    <tr key={`${chapter.id}-empty`}>
+                      <td
+                        colSpan={1 + dateColumns.length}
+                        className="px-4 py-6 text-[14px] text-[#6F5549]"
+                      >
+                        Belum ada Sub Bab.
+                      </td>
+                    </tr>
+                  ) : (
+                    chapter.sub_chapters.map((subChapter) => {
+                      const targetDate = getTargetDate(program, subChapter);
+
+                      return (
+                        <tr
+                          key={subChapter.id}
+                          className="border-b border-[#F0E1D4]"
+                        >
+                          <td className="sticky left-0 z-10 border-r border-[#EADACA] bg-white px-4 py-3">
+                            <p className="text-[13px] font-bold text-[#2B1B18]">
+                              {subChapter.sub_chapter_order}.{" "}
+                              {subChapter.sub_chapter_title}
+                            </p>
+
+                            <p className="mt-1 text-[12px] leading-5 text-[#6F5549]">
+                              Target: {formatDate(targetDate)}
+                            </p>
+
+                            {subChapter.notes ? (
+                              <p className="mt-1 text-[12px] leading-5 text-[#8A5A48]">
+                                {subChapter.notes}
+                              </p>
+                            ) : null}
+                          </td>
+
+                          {dateColumns.map((column) => {
+                            const status = getCellStatus(
+                              program,
+                              subChapter,
+                              column.iso
+                            );
+
+                            return (
+                              <td
+                                key={`${subChapter.id}-${column.iso}`}
+                                className="h-12 w-[42px] min-w-[42px] border-r border-[#F0E1D4] px-1 py-2 text-center"
+                              >
+                                <CellMarker status={status} />
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })
+                  )}
+                </Fragment>
+              ))
             )}
           </tbody>
         </table>
@@ -1751,12 +2242,60 @@ function ProgramPlanTable({ program }: { program: ProgramWithChildren }) {
   );
 }
 
+function CellMarker({
+  status,
+}: {
+  status: "empty" | "planned" | "completed";
+}) {
+  if (status === "completed") {
+    return (
+      <span className="mx-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#A7E6C3] bg-[#C7F0DA] text-[#158A58]">
+        <Check className="h-4 w-4" />
+      </span>
+    );
+  }
+
+  if (status === "planned") {
+    return (
+      <span className="mx-auto inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#FECACA] bg-[#FFE4E6] text-[#BE123C]" />
+    );
+  }
+
+  return <span className="mx-auto block h-7 w-7 rounded-md bg-transparent" />;
+}
+
+function MatrixLegend() {
+  return (
+    <div className="flex flex-wrap gap-4 border-b border-[#E1CFBE] bg-[#FFF8EF] px-5 py-4 text-[13px] font-bold text-[#6F5549]">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-5 w-5 rounded-md border border-[#FECACA] bg-[#FFE4E6]" />
+        Target Rencana
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#A7E6C3] bg-[#C7F0DA] text-[#158A58]">
+          <Check className="h-3.5 w-3.5" />
+        </span>
+        Sudah Terealisasi
+      </div>
+
+      <span className="text-[12px] font-semibold text-[#8A5A48]">
+        Hijau muncul jika ada data realisasi di curriculum_progress.
+      </span>
+    </div>
+  );
+}
+
 function getNearestTarget(program: ProgramWithChildren) {
   const targets = program.chapters
     .flatMap((chapter) => chapter.sub_chapters)
-    .filter((subChapter) => subChapter.target_date)
+    .map((subChapter) => ({
+      ...subChapter,
+      resolved_target_date: getTargetDate(program, subChapter),
+    }))
+    .filter((subChapter) => subChapter.resolved_target_date)
     .sort((a, b) =>
-      (a.target_date || "").localeCompare(b.target_date || "")
+      (a.resolved_target_date || "").localeCompare(b.resolved_target_date || "")
     );
 
   if (targets.length === 0) return "Belum ada target tanggal.";
@@ -1764,7 +2303,7 @@ function getNearestTarget(program: ProgramWithChildren) {
   const nearest = targets[0];
 
   return `${nearest.sub_chapter_title || "-"} • ${formatDate(
-    nearest.target_date
+    nearest.resolved_target_date
   )}`;
 }
 
@@ -1886,7 +2425,7 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
 function StatusBadge({ status }: { status?: string | null }) {
   return (
     <span
-      className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${getStatusClass(
+      className={`inline-flex w-fit min-w-[82px] items-center justify-center whitespace-nowrap rounded-full px-3 py-1 text-center text-[11px] font-extrabold leading-none ${getStatusClass(
         status
       )}`}
     >

@@ -18,6 +18,7 @@ import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
 const ACADEMIC_REPORT_BUCKET = "academic-report-documents";
+const ACADEMIC_YEAR = "2026/2027";
 
 type TeacherRow = {
   id: string;
@@ -41,6 +42,15 @@ type SubjectRow = {
   name: string | null;
   level?: string | null;
   grade?: string | null;
+};
+
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
 };
 
 type AcademicReportRow = {
@@ -183,19 +193,6 @@ function normalizeLevel(level?: string | null) {
   return level || "-";
 }
 
-function normalizeSubjects(subjects: TeacherRow["subjects"]) {
-  if (!subjects) return [];
-
-  if (Array.isArray(subjects)) {
-    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
-  }
-
-  return subjects
-    .split(",")
-    .map((subject) => normalizeText(subject))
-    .filter(Boolean);
-}
-
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
 
@@ -254,27 +251,6 @@ function getInitials(name?: string | null) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
-}
-
-function getGradeNumber(value?: string | null) {
-  const match = (value || "").match(/\d+/);
-  return match ? Number(match[0]) : null;
-}
-
-function isAllGrade(value?: string | null) {
-  const safe = normalizeText(value);
-
-  return (
-    !safe ||
-    safe === "all" ||
-    safe === "all grade" ||
-    safe === "semua" ||
-    safe === "semua kelas"
-  );
-}
-
-function isMathSubject(subject?: SubjectRow | null) {
-  return normalizeText(subject?.name).includes("math");
 }
 
 function getSubjectLabel(subject: SubjectRow) {
@@ -431,6 +407,10 @@ function isAllowedReportFile(file: File) {
   return allowedExtensions.some((extension) => lowerName.endsWith(extension));
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 async function uploadAcademicReportFile(file: File, teacherId: string) {
   const safeFileName = cleanFileName(file.name);
   const filePath = `${teacherId}/${Date.now()}-${safeFileName}`;
@@ -457,6 +437,7 @@ export default function TeacherAcademicReportsPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>([]);
   const [reports, setReports] = useState<EnrichedReport[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -532,6 +513,7 @@ export default function TeacherAcademicReportsPage() {
       if (!currentTeacher?.id) {
         setStudents([]);
         setSubjects([]);
+        setStudentTeachers([]);
         setReports([]);
         setErrorMessage(
           "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
@@ -539,9 +521,13 @@ export default function TeacherAcademicReportsPage() {
         return;
       }
 
-      const [studentsRes, subjectsRes, reportsRes] = await Promise.all([
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
+      const [relationsRes, reportsRes] = await Promise.all([
+        supabase
+          .from("student_teachers")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .eq("academic_year", ACADEMIC_YEAR),
+
         supabase
           .from("academic_reports")
           .select("*")
@@ -549,13 +535,57 @@ export default function TeacherAcademicReportsPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-      if (studentsRes.error) throw new Error(studentsRes.error.message);
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (relationsRes.error) throw new Error(relationsRes.error.message);
       if (reportsRes.error) throw new Error(reportsRes.error.message);
 
-      const studentsData = (studentsRes.data || []) as StudentRow[];
-      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const relationsData = (relationsRes.data || []) as StudentTeacherRow[];
       const reportsData = (reportsRes.data || []) as AcademicReportRow[];
+
+      const relationStudentIds = relationsData
+        .map((relation) => relation.student_id || "")
+        .filter(Boolean);
+
+      const reportStudentIds = reportsData
+        .map((report) => report.student_id || "")
+        .filter(Boolean);
+
+      const relationSubjectIds = relationsData
+        .map((relation) => relation.subject_id || "")
+        .filter(Boolean);
+
+      const reportSubjectIds = reportsData
+        .map((report) => report.subject_id || "")
+        .filter(Boolean);
+
+      const studentIds = uniqueStrings([...relationStudentIds, ...reportStudentIds]);
+      const subjectIds = uniqueStrings([...relationSubjectIds, ...reportSubjectIds]);
+
+      let studentsData: StudentRow[] = [];
+      let subjectsData: SubjectRow[] = [];
+
+      if (studentIds.length > 0) {
+        const { data, error } = await supabase
+          .from("students")
+          .select("*")
+          .in("id", studentIds)
+          .order("full_name");
+
+        if (error) throw new Error(error.message);
+
+        studentsData = (data || []) as StudentRow[];
+      }
+
+      if (subjectIds.length > 0) {
+        const { data, error } = await supabase
+          .from("subjects")
+          .select("*")
+          .in("id", subjectIds)
+          .order("name");
+
+        if (error) throw new Error(error.message);
+
+        subjectsData = (data || []) as SubjectRow[];
+      }
 
       const studentMap = new Map(
         studentsData.map((student) => [student.id, student])
@@ -582,6 +612,7 @@ export default function TeacherAcademicReportsPage() {
 
       setStudents(studentsData);
       setSubjects(subjectsData);
+      setStudentTeachers(relationsData);
       setReports(enrichedReports);
     } catch (error) {
       if (error instanceof Error) {
@@ -593,6 +624,7 @@ export default function TeacherAcademicReportsPage() {
       setTeacher(null);
       setStudents([]);
       setSubjects([]);
+      setStudentTeachers([]);
       setReports([]);
     } finally {
       setLoading(false);
@@ -607,6 +639,11 @@ export default function TeacherAcademicReportsPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "academic_reports" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
         () => fetchData()
       )
       .on(
@@ -645,39 +682,42 @@ export default function TeacherAcademicReportsPage() {
     return students.find((student) => student.id === form.student_id) || null;
   }, [students, form.student_id]);
 
-  const teacherSubjectNames = useMemo(() => {
-    return normalizeSubjects(teacher?.subjects);
-  }, [teacher]);
+  const studentOptionsForForm = useMemo(() => {
+    const studentIdsFromRelation = new Set(
+      studentTeachers
+        .map((relation) => relation.student_id)
+        .filter(Boolean) as string[]
+    );
+
+    return students
+      .filter((student) => studentIdsFromRelation.has(student.id))
+      .sort((a, b) => {
+        return (a.full_name || "").localeCompare(b.full_name || "");
+      });
+  }, [students, studentTeachers]);
 
   const subjectOptionsForForm = useMemo(() => {
-    return subjects.filter((subject) => {
-      const subjectName = normalizeText(subject.name);
+    if (!form.student_id) {
+      const subjectIdsFromRelation = new Set(
+        studentTeachers
+          .map((relation) => relation.subject_id)
+          .filter(Boolean) as string[]
+      );
 
-      if (isMathSubject(subject) && isAllGrade(subject.grade)) {
-        return false;
-      }
+      return subjects.filter((subject) => subjectIdsFromRelation.has(subject.id));
+    }
 
-      const matchTeacherSubject =
-        teacherSubjectNames.length === 0 ||
-        teacherSubjectNames.some((teacherSubject) => {
-          return (
-            teacherSubject === subjectName ||
-            teacherSubject.includes(subjectName) ||
-            subjectName.includes(teacherSubject)
-          );
-        });
+    const subjectIdsForSelectedStudent = new Set(
+      studentTeachers
+        .filter((relation) => relation.student_id === form.student_id)
+        .map((relation) => relation.subject_id)
+        .filter(Boolean) as string[]
+    );
 
-      if (!matchTeacherSubject) return false;
-
-      const selectedGradeNumber = getGradeNumber(selectedStudent?.grade);
-      const subjectGradeNumber = getGradeNumber(subject.grade);
-
-      if (!selectedGradeNumber) return true;
-      if (!subjectGradeNumber) return true;
-
-      return selectedGradeNumber === subjectGradeNumber;
-    });
-  }, [subjects, teacherSubjectNames, selectedStudent]);
+    return subjects.filter((subject) =>
+      subjectIdsForSelectedStudent.has(subject.id)
+    );
+  }, [subjects, studentTeachers, form.student_id]);
 
   useEffect(() => {
     if (!form.subject_id) return;
@@ -820,6 +860,29 @@ export default function TeacherAcademicReportsPage() {
 
     if (!form.subject_id) {
       setErrorMessage("Pilih mata pelajaran terlebih dahulu.");
+      return false;
+    }
+
+    const isStudentAllowed = studentTeachers.some((relation) => {
+      return relation.student_id === form.student_id;
+    });
+
+    if (!isStudentAllowed) {
+      setErrorMessage("Siswa ini belum terhubung dengan guru login.");
+      return false;
+    }
+
+    const isSubjectAllowed = studentTeachers.some((relation) => {
+      return (
+        relation.student_id === form.student_id &&
+        relation.subject_id === form.subject_id
+      );
+    });
+
+    if (!isSubjectAllowed) {
+      setErrorMessage(
+        "Mapel ini belum terhubung dengan siswa untuk guru login."
+      );
       return false;
     }
 
@@ -1168,7 +1231,7 @@ export default function TeacherAcademicReportsPage() {
             <button
               type="button"
               onClick={openCreateModal}
-              disabled={!teacher || saving}
+              disabled={!teacher || saving || studentOptionsForForm.length === 0}
               className="flex h-11 w-fit items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
             >
               + Input / Upload Laporan
@@ -1179,6 +1242,13 @@ export default function TeacherAcademicReportsPage() {
         {errorMessage ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
             {errorMessage}
+          </div>
+        ) : null}
+
+        {!loading && teacher && studentOptionsForForm.length === 0 ? (
+          <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
+            Belum ada siswa yang terhubung ke guru ini. Hubungkan siswa dengan
+            guru dan mapel dari menu Kepala Sekolah → Siswa.
           </div>
         ) : null}
 
@@ -1494,10 +1564,10 @@ export default function TeacherAcademicReportsPage() {
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih siswa</option>
-                    {students.map((student) => (
+                    {studentOptionsForForm.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {student.level} {student.grade} —
-                        NIPD: {student.nis || "-"}
+                        {student.full_name} — {normalizeLevel(student.level)}{" "}
+                        {student.grade} — NIPD: {student.nis || "-"}
                       </option>
                     ))}
                   </select>
@@ -1509,9 +1579,14 @@ export default function TeacherAcademicReportsPage() {
                     onChange={(event) =>
                       updateForm("subject_id", event.target.value)
                     }
-                    className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                    disabled={!selectedStudent}
+                    className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
                   >
-                    <option value="">Pilih mata pelajaran</option>
+                    <option value="">
+                      {selectedStudent
+                        ? "Pilih mata pelajaran"
+                        : "Pilih siswa dulu"}
+                    </option>
                     {subjectOptionsForForm.map((subject) => (
                       <option key={subject.id} value={subject.id}>
                         {getSubjectLabel(subject)}

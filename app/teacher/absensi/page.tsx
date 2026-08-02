@@ -36,6 +36,15 @@ type SubjectRow = {
   grade?: string | null;
 };
 
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+  notes?: string | null;
+};
+
 type AttendanceRow = {
   id: string;
   teacher_id: string | null;
@@ -59,6 +68,8 @@ type AttendanceStudent = StudentRow & {
   understandingStatus: string;
   note: string;
 };
+
+const ACADEMIC_YEAR = "2026/2027";
 
 const understandingOptions = ["Paham", "Cukup Paham", "Belum Paham"];
 
@@ -104,19 +115,6 @@ function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   }
 
   return `Guru Mapel — ${subjects}`;
-}
-
-function normalizeSubjects(subjects: TeacherRow["subjects"]) {
-  if (!subjects) return [];
-
-  if (Array.isArray(subjects)) {
-    return subjects.map((subject) => normalizeText(subject)).filter(Boolean);
-  }
-
-  return subjects
-    .split(",")
-    .map((subject) => normalizeText(subject))
-    .filter(Boolean);
 }
 
 function toYMD(date: Date) {
@@ -214,15 +212,6 @@ function getAttendanceNote(row?: AttendanceRow | null) {
   return row?.note || row?.notes || "";
 }
 
-function sameSubjectName(a?: string | null, b?: string | null) {
-  if (!a || !b) return false;
-
-  const left = normalizeText(a);
-  const right = normalizeText(b);
-
-  return left === right || left.includes(right) || right.includes(left);
-}
-
 function isHadir(status: string) {
   return status === "Hadir";
 }
@@ -252,10 +241,17 @@ function getClassKey(student: StudentRow) {
   return `${normalizeLevel(student.level)} ${student.grade || ""}`.trim();
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 export default function TeacherAbsensiPage() {
   const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
+    []
+  );
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -337,6 +333,7 @@ export default function TeacherAbsensiPage() {
       if (!currentTeacher?.id) {
         setStudents([]);
         setSubjects([]);
+        setStudentTeachers([]);
         setAttendance([]);
         setAttendanceStudents([]);
         setErrorMessage(
@@ -345,26 +342,77 @@ export default function TeacherAbsensiPage() {
         return;
       }
 
-      const [studentsRes, subjectsRes, attendanceRes] = await Promise.all([
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
+      const [relationsRes, attendanceRes] = await Promise.all([
+        supabase
+          .from("student_teachers")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .eq("academic_year", ACADEMIC_YEAR),
+
         supabase
           .from("attendance")
           .select("*")
           .eq("teacher_id", currentTeacher.id),
       ]);
 
-      if (studentsRes.error) throw new Error(studentsRes.error.message);
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (relationsRes.error) throw new Error(relationsRes.error.message);
       if (attendanceRes.error) throw new Error(attendanceRes.error.message);
 
-      const studentsData = (studentsRes.data || []) as StudentRow[];
-      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const relationsData = (relationsRes.data || []) as StudentTeacherRow[];
       const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
+
+      const studentIds = uniqueStrings(
+        relationsData
+          .map((relation) => relation.student_id || "")
+          .filter(Boolean)
+      );
+
+      const subjectIds = uniqueStrings(
+        relationsData
+          .map((relation) => relation.subject_id || "")
+          .filter(Boolean)
+      );
+
+      let studentsData: StudentRow[] = [];
+      let subjectsData: SubjectRow[] = [];
+
+      if (studentIds.length > 0) {
+        const { data, error } = await supabase
+          .from("students")
+          .select("*")
+          .in("id", studentIds)
+          .order("full_name");
+
+        if (error) throw new Error(error.message);
+
+        studentsData = (data || []) as StudentRow[];
+      }
+
+      if (subjectIds.length > 0) {
+        const { data, error } = await supabase
+          .from("subjects")
+          .select("*")
+          .in("id", subjectIds)
+          .order("name");
+
+        if (error) throw new Error(error.message);
+
+        subjectsData = (data || []) as SubjectRow[];
+      }
 
       setStudents(studentsData);
       setSubjects(subjectsData);
+      setStudentTeachers(relationsData);
       setAttendance(attendanceData);
+
+      if (subjectId) {
+        const subjectStillAllowed = subjectIds.includes(subjectId);
+
+        if (!subjectStillAllowed) {
+          setSubjectId("");
+          setAttendanceStudents([]);
+        }
+      }
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -375,6 +423,7 @@ export default function TeacherAbsensiPage() {
       setTeacher(null);
       setStudents([]);
       setSubjects([]);
+      setStudentTeachers([]);
       setAttendance([]);
       setAttendanceStudents([]);
     } finally {
@@ -390,6 +439,11 @@ export default function TeacherAbsensiPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
+        () => fetchData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
         () => fetchData()
       )
       .on(
@@ -414,32 +468,40 @@ export default function TeacherAbsensiPage() {
     };
   }, []);
 
-  const teacherSubjectNames = useMemo(() => {
-    return normalizeSubjects(teacher?.subjects);
-  }, [teacher]);
-
   const subjectOptions = useMemo(() => {
-    if (teacherSubjectNames.length === 0) return subjects;
+    return subjects.sort((a, b) => {
+      const nameA = getSubjectLabel(a);
+      const nameB = getSubjectLabel(b);
 
-    const filteredSubjects = subjects.filter((subject) => {
-      const subjectName = normalizeText(subject.name);
-
-      return teacherSubjectNames.some((teacherSubject) =>
-        sameSubjectName(teacherSubject, subjectName)
-      );
+      return nameA.localeCompare(nameB);
     });
-
-    return filteredSubjects.length > 0 ? filteredSubjects : subjects;
-  }, [subjects, teacherSubjectNames]);
+  }, [subjects]);
 
   const selectedSubject = useMemo(() => {
     return subjects.find((subject) => subject.id === subjectId) || null;
   }, [subjects, subjectId]);
 
+  const studentIdsBySelectedSubject = useMemo(() => {
+    if (!subjectId) return null;
+
+    return new Set(
+      studentTeachers
+        .filter((relation) => relation.subject_id === subjectId)
+        .map((relation) => relation.student_id)
+        .filter(Boolean) as string[]
+    );
+  }, [studentTeachers, subjectId]);
+
+  const studentsAllowedBySubject = useMemo(() => {
+    if (!studentIdsBySelectedSubject) return students;
+
+    return students.filter((student) => studentIdsBySelectedSubject.has(student.id));
+  }, [students, studentIdsBySelectedSubject]);
+
   const classOptions = useMemo(() => {
     const uniqueClass = Array.from(
       new Set(
-        students
+        studentsAllowedBySubject
           .map((student) => getClassKey(student))
           .filter((item) => item && item !== "-")
       )
@@ -453,12 +515,21 @@ export default function TeacherAbsensiPage() {
 
       return a.localeCompare(b);
     });
-  }, [students]);
+  }, [studentsAllowedBySubject]);
+
+  useEffect(() => {
+    if (classFilter === "Semua Kelas") return;
+
+    if (!classOptions.includes(classFilter)) {
+      setClassFilter("Semua Kelas");
+      setAttendanceStudents([]);
+    }
+  }, [classFilter, classOptions]);
 
   const filteredStudents = useMemo(() => {
     const q = normalizeText(search);
 
-    return students
+    return studentsAllowedBySubject
       .filter((student) => {
         const studentClass = getClassKey(student);
 
@@ -483,7 +554,7 @@ export default function TeacherAbsensiPage() {
 
         return (a.full_name || "").localeCompare(b.full_name || "");
       });
-  }, [students, search, classFilter]);
+  }, [studentsAllowedBySubject, search, classFilter]);
 
   const existingAttendanceByStudent = useMemo(() => {
     const map = new Map<string, AttendanceRow>();
@@ -568,7 +639,9 @@ export default function TeacherAbsensiPage() {
     }
 
     if (filteredStudents.length === 0) {
-      alert("Tidak ada siswa pada filter kelas/search saat ini.");
+      alert(
+        "Tidak ada siswa pada filter kelas/search saat ini, atau siswa belum terhubung dengan guru dan mapel ini."
+      );
       return;
     }
 
@@ -775,14 +848,21 @@ export default function TeacherAbsensiPage() {
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
             Guru dapat input absensi secara mandiri tanpa integrasi Program
-            Semester, Bab/Sub Bab, atau Jadwal Guru. Gunakan filter kelas untuk
-            menampilkan siswa sesuai kebutuhan.
+            Semester, Bab/Sub Bab, atau Jadwal Guru. Siswa yang tampil hanya
+            siswa yang terhubung dengan guru dan mapel melalui data siswa.
           </p>
         </div>
 
         {errorMessage ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
             {errorMessage}
+          </div>
+        ) : null}
+
+        {!loading && teacher && students.length === 0 ? (
+          <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
+            Belum ada siswa yang terhubung ke guru ini. Hubungkan siswa dengan
+            guru dan mapel dari menu Kepala Sekolah → Siswa.
           </div>
         ) : null}
 
@@ -853,6 +933,7 @@ export default function TeacherAbsensiPage() {
               value={subjectId}
               onChange={(event) => {
                 setSubjectId(event.target.value);
+                setClassFilter("Semua Kelas");
                 resetAttendanceInput();
               }}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
@@ -886,7 +967,7 @@ export default function TeacherAbsensiPage() {
 
               <p className="mt-1 text-[13px] text-[#6F5549]">
                 Isi data KBM secara manual, lalu tampilkan siswa berdasarkan
-                filter kelas.
+                mapel dan kelas.
               </p>
             </div>
 
@@ -1004,7 +1085,7 @@ export default function TeacherAbsensiPage() {
                     ? `${getSubjectLabel(selectedSubject)} • ${formatDate(
                         dateFilter
                       )}`
-                    : "Pilih kelas, mapel, tanggal, dan klik Tampilkan Siswa."}
+                    : "Pilih mapel, kelas, tanggal, dan klik Tampilkan Siswa."}
                 </p>
               </div>
 

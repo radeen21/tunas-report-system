@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { FileText, UploadCloud } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
 const TEACHER_DOCUMENT_BUCKET = "teacher-documents";
+const ACADEMIC_YEAR = "2026/2027";
 
 type TeacherDocumentKey =
   | "ktp_url"
@@ -38,20 +45,28 @@ type Teacher = {
   certificate_url: string | null;
 };
 
-type StudentTeacher = {
-  id: string;
-  full_name: string;
-  email: string | null;
-};
-
 type Student = {
   id: string;
   full_name: string;
   level: string | null;
   grade: string | null;
   nis: string | null;
-  homeroom_teacher_id: string | null;
-  teachers: StudentTeacher | null;
+  nisn?: string | null;
+};
+
+type Subject = {
+  id: string;
+  name: string | null;
+  level: string | null;
+  grade: string | null;
+};
+
+type StudentTeacherRelation = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
 };
 
 type KbmReportQueryResult = {
@@ -69,31 +84,31 @@ type KbmReportQueryResult = {
   teacher_note: string | null;
   status: string | null;
   students:
-    | {
-        id: string;
-        full_name: string;
-        level: string | null;
-        grade: string | null;
-        nis: string | null;
-      }
-    | {
-        id: string;
-        full_name: string;
-        level: string | null;
-        grade: string | null;
-        nis: string | null;
-      }[]
-    | null;
+  | {
+    id: string;
+    full_name: string;
+    level: string | null;
+    grade: string | null;
+    nis: string | null;
+  }
+  | {
+    id: string;
+    full_name: string;
+    level: string | null;
+    grade: string | null;
+    nis: string | null;
+  }[]
+  | null;
   subjects:
-    | {
-        id: string;
-        name: string;
-      }
-    | {
-        id: string;
-        name: string;
-      }[]
-    | null;
+  | {
+    id: string;
+    name: string;
+  }
+  | {
+    id: string;
+    name: string;
+  }[]
+  | null;
 };
 
 type KbmReport = {
@@ -196,24 +211,24 @@ const teacherDocumentFields: Array<{
   label: string;
   accept: string;
 }> = [
-  { key: "ktp_url", label: "KTP", accept: ".pdf,.jpg,.jpeg,.png" },
-  {
-    key: "family_card_url",
-    label: "KK",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  {
-    key: "diploma_url",
-    label: "Ijazah",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-  { key: "photo_url", label: "Foto", accept: ".jpg,.jpeg,.png,.webp" },
-  {
-    key: "certificate_url",
-    label: "Sertifikat",
-    accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
-  },
-];
+    { key: "ktp_url", label: "KTP", accept: ".pdf,.jpg,.jpeg,.png" },
+    {
+      key: "family_card_url",
+      label: "KK",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    {
+      key: "diploma_url",
+      label: "Ijazah",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+    { key: "photo_url", label: "Foto", accept: ".jpg,.jpeg,.png,.webp" },
+    {
+      key: "certificate_url",
+      label: "Sertifikat",
+      accept: ".pdf,.jpg,.jpeg,.png,.doc,.docx",
+    },
+  ];
 
 function getInitials(name: string) {
   return name
@@ -227,7 +242,6 @@ function getInitials(name: string) {
 
 function normalizeSubjects(subjects: string[] | null) {
   if (!subjects || subjects.length === 0) return [];
-
   return subjects;
 }
 
@@ -290,6 +304,17 @@ function cleanFileName(fileName: string) {
     .replace(/[^a-z0-9._-]/g, "");
 }
 
+function formatSubjectLabel(subject: Subject) {
+  const level = subject.level || "";
+  const grade = subject.grade || "";
+
+  if (level && grade) return `${subject.name || "-"} — ${level} ${grade}`;
+  if (level) return `${subject.name || "-"} — ${level}`;
+  if (grade) return `${subject.name || "-"} — ${grade}`;
+
+  return subject.name || "-";
+}
+
 async function uploadTeacherDocument(
   file: File,
   teacherName: string,
@@ -320,6 +345,10 @@ async function uploadTeacherDocument(
 export default function KepalaSekolahTeachersPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<
+    StudentTeacherRelation[]
+  >([]);
   const [kbmReports, setKbmReports] = useState<KbmReport[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -339,7 +368,9 @@ export default function KepalaSekolahTeachersPage() {
     null
   );
   const [assignTeacher, setAssignTeacher] = useState<Teacher | null>(null);
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [selectedAssignments, setSelectedAssignments] = useState<
+    Record<string, string>
+  >({});
 
   async function fetchTeachers() {
     const { data, error } = await supabase
@@ -372,7 +403,6 @@ export default function KepalaSekolahTeachersPage() {
       .order("full_name", { ascending: true });
 
     if (error) {
-      console.error(error.message);
       setErrorMessage(error.message);
       return;
     }
@@ -383,21 +413,7 @@ export default function KepalaSekolahTeachersPage() {
   async function fetchStudents() {
     const { data, error } = await supabase
       .from("students")
-      .select(
-        `
-        id,
-        full_name,
-        level,
-        grade,
-        nis,
-        homeroom_teacher_id,
-        teachers (
-          id,
-          full_name,
-          email
-        )
-      `
-      )
+      .select("id, full_name, level, grade, nis, nisn")
       .order("full_name", { ascending: true });
 
     if (error) {
@@ -405,23 +421,35 @@ export default function KepalaSekolahTeachersPage() {
       return;
     }
 
-    const normalizedStudents: Student[] = (data || []).map((item) => {
-      const teacherData = Array.isArray(item.teachers)
-        ? item.teachers[0] || null
-        : item.teachers || null;
+    setStudents((data || []) as Student[]);
+  }
 
-      return {
-        id: item.id,
-        full_name: item.full_name,
-        level: item.level,
-        grade: item.grade,
-        nis: item.nis,
-        homeroom_teacher_id: item.homeroom_teacher_id,
-        teachers: teacherData,
-      };
-    });
+  async function fetchSubjects() {
+    const { data, error } = await supabase
+      .from("subjects")
+      .select("id, name, level, grade")
+      .order("name", { ascending: true });
 
-    setStudents(normalizedStudents);
+    if (error) {
+      console.error(error.message);
+      return;
+    }
+
+    setSubjects((data || []) as Subject[]);
+  }
+
+  async function fetchStudentTeachers() {
+    const { data, error } = await supabase
+      .from("student_teachers")
+      .select("*")
+      .eq("academic_year", ACADEMIC_YEAR);
+
+    if (error) {
+      console.error(error.message);
+      return;
+    }
+
+    setStudentTeachers((data || []) as StudentTeacherRelation[]);
   }
 
   async function fetchKbmReports() {
@@ -497,7 +525,13 @@ export default function KepalaSekolahTeachersPage() {
     setLoading(true);
     setErrorMessage("");
 
-    await Promise.all([fetchTeachers(), fetchStudents(), fetchKbmReports()]);
+    await Promise.all([
+      fetchTeachers(),
+      fetchStudents(),
+      fetchSubjects(),
+      fetchStudentTeachers(),
+      fetchKbmReports(),
+    ]);
 
     setLoading(false);
   }
@@ -519,15 +553,33 @@ export default function KepalaSekolahTeachersPage() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "subjects" },
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchAllData()
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "kbm_reports" },
         () => fetchAllData()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, []);
+
+  const teacherMap = useMemo(() => {
+    return new Map(teachers.map((teacher) => [teacher.id, teacher]));
+  }, [teachers]);
+
+  const subjectMap = useMemo(() => {
+    return new Map(subjects.map((subject) => [subject.id, subject]));
+  }, [subjects]);
 
   const filteredTeachers = useMemo(() => {
     const keyword = search.toLowerCase().trim();
@@ -553,14 +605,22 @@ export default function KepalaSekolahTeachersPage() {
   }, [teachers, search]);
 
   function getStudentCountByTeacher(teacherId: string) {
-    return students.filter(
-      (student) => student.homeroom_teacher_id === teacherId
-    ).length;
+    const ids = new Set(
+      studentTeachers
+        .filter((relation) => relation.teacher_id === teacherId)
+        .map((relation) => relation.student_id)
+        .filter(Boolean)
+    );
+
+    return ids.size;
+  }
+
+  function getAssignedRelationsByTeacher(teacherId: string) {
+    return studentTeachers.filter((relation) => relation.teacher_id === teacherId);
   }
 
   function getReportCountByTeacher(teacherId: string) {
-    return kbmReports.filter((report) => report.teacher_id === teacherId)
-      .length;
+    return kbmReports.filter((report) => report.teacher_id === teacherId).length;
   }
 
   function getReportsByTeacher(teacherId: string) {
@@ -604,70 +664,88 @@ export default function KepalaSekolahTeachersPage() {
   }
 
   function openAssignModal(teacher: Teacher) {
-    const assignedStudentIds = students
-      .filter((student) => student.homeroom_teacher_id === teacher.id)
-      .map((student) => student.id);
+    const currentRelations = studentTeachers.filter(
+      (relation) => relation.teacher_id === teacher.id
+    );
+
+    const initialAssignments: Record<string, string> = {};
+
+    currentRelations.forEach((relation) => {
+      if (!relation.student_id) return;
+      initialAssignments[relation.student_id] = relation.subject_id || "";
+    });
 
     setAssignTeacher(teacher);
-    setSelectedStudentIds(assignedStudentIds);
+    setSelectedAssignments(initialAssignments);
   }
 
   function toggleStudentSelection(studentId: string) {
-    setSelectedStudentIds((prev) =>
-      prev.includes(studentId)
-        ? prev.filter((id) => id !== studentId)
-        : [...prev, studentId]
-    );
+    setSelectedAssignments((prev) => {
+      const next = { ...prev };
+
+      if (next[studentId] !== undefined) {
+        delete next[studentId];
+        return next;
+      }
+
+      next[studentId] = subjects[0]?.id || "";
+      return next;
+    });
+  }
+
+  function updateAssignmentSubject(studentId: string, subjectId: string) {
+    setSelectedAssignments((prev) => ({
+      ...prev,
+      [studentId]: subjectId,
+    }));
   }
 
   async function handleSaveAssign() {
     if (!assignTeacher) return;
 
+    const rows = Object.entries(selectedAssignments)
+      .map(([studentId, subjectId]) => ({
+        student_id: studentId,
+        teacher_id: assignTeacher.id,
+        subject_id: subjectId || null,
+        academic_year: ACADEMIC_YEAR,
+      }))
+      .filter((row) => row.student_id);
+
+    const missingSubject = rows.find((row) => !row.subject_id);
+
+    if (missingSubject) {
+      alert("Pilih mapel untuk semua siswa yang dicentang.");
+      return;
+    }
+
     setAssigning(true);
 
     try {
-      const currentlyAssignedStudentIds = students
-        .filter((student) => student.homeroom_teacher_id === assignTeacher.id)
-        .map((student) => student.id);
+      const { error: deleteError } = await supabase
+        .from("student_teachers")
+        .delete()
+        .eq("teacher_id", assignTeacher.id)
+        .eq("academic_year", ACADEMIC_YEAR);
 
-      const toAssign = selectedStudentIds.filter(
-        (studentId) => !currentlyAssignedStudentIds.includes(studentId)
-      );
-
-      const toUnassign = currentlyAssignedStudentIds.filter(
-        (studentId) => !selectedStudentIds.includes(studentId)
-      );
-
-      if (toAssign.length > 0) {
-        const { error } = await supabase
-          .from("students")
-          .update({
-            homeroom_teacher_id: assignTeacher.id,
-          })
-          .in("id", toAssign);
-
-        if (error) {
-          throw new Error(error.message);
-        }
+      if (deleteError) {
+        throw new Error(deleteError.message);
       }
 
-      if (toUnassign.length > 0) {
-        const { error } = await supabase
-          .from("students")
-          .update({
-            homeroom_teacher_id: null,
-          })
-          .in("id", toUnassign);
+      if (rows.length > 0) {
+        const { error: insertError } = await supabase
+          .from("student_teachers")
+          .insert(rows);
 
-        if (error) {
-          throw new Error(error.message);
+        if (insertError) {
+          throw new Error(insertError.message);
         }
       }
 
       await fetchAllData();
 
       setAssignTeacher(null);
-      setSelectedStudentIds([]);
+      setSelectedAssignments({});
     } catch (error) {
       if (error instanceof Error) {
         alert(`Gagal assign murid: ${error.message}`);
@@ -907,7 +985,8 @@ export default function KepalaSekolahTeachersPage() {
       {!loading && filteredTeachers.length > 0 && (
         <div className="mt-7 grid gap-5 xl:grid-cols-3 md:grid-cols-2 grid-cols-1">
           {filteredTeachers.map((teacher) => {
-            const subjects = normalizeSubjects(teacher.subjects);
+            const teacherSubjects = normalizeSubjects(teacher.subjects);
+            const assignedRelations = getAssignedRelationsByTeacher(teacher.id);
             const studentCount = getStudentCountByTeacher(teacher.id);
             const reportCount = getReportCountByTeacher(teacher.id);
             const documentCount = teacherDocumentFields.filter(
@@ -970,8 +1049,8 @@ export default function KepalaSekolahTeachersPage() {
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {subjects.length > 0 ? (
-                      subjects.map((subject) => (
+                    {teacherSubjects.length > 0 ? (
+                      teacherSubjects.map((subject) => (
                         <span
                           key={`${teacher.id}-${subject}`}
                           className="rounded-full bg-[#F1DFD5] px-3 py-1 text-xs font-bold text-[#7A1F2B]"
@@ -1001,6 +1080,16 @@ export default function KepalaSekolahTeachersPage() {
                       <p className="text-xs text-[#6B4A3A]">Dokumen</p>
                       <p className="mt-2 text-2xl font-bold">{documentCount}/5</p>
                     </div>
+                  </div>
+
+                  <div className="mt-3 rounded-xl bg-[#FFF8EF] px-4 py-3 text-xs text-[#6B4A3A]">
+                    <p className="font-bold text-[#2B1B18]">
+                      Relasi Siswa-Mapel
+                    </p>
+                    <p className="mt-1">
+                      {assignedRelations.length} relasi aktif tahun ajaran{" "}
+                      {ACADEMIC_YEAR}
+                    </p>
                   </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
@@ -1035,357 +1124,25 @@ export default function KepalaSekolahTeachersPage() {
         </div>
       )}
 
-      <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-bold">Assignment Matrix</h2>
-        <p className="mt-1 text-sm text-[#6B4A3A]">
-          Daftar murid dan guru pendamping yang sedang aktif.
-        </p>
-
-        <div className="mt-5 overflow-hidden rounded-xl border border-[#E8D6C1]">
-          <table className="w-full text-left">
-            <thead className="bg-[#FFF8EF] text-xs uppercase text-[#6B4A3A]">
-              <tr>
-                <th className="px-5 py-4">Murid</th>
-                <th className="px-5 py-4">Level</th>
-                <th className="px-5 py-4">NIPD</th>
-                <th className="px-5 py-4">Guru Pendamping</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-[#E8D6C1]">
-              {students.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-5 py-6 text-center text-sm">
-                    Belum ada data murid.
-                  </td>
-                </tr>
-              )}
-
-              {students.map((student) => (
-                <tr key={student.id} className="hover:bg-[#FFF8EF]">
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FDE7D7] text-xs font-bold text-[#7A1F2B]">
-                        {getInitials(student.full_name)}
-                      </div>
-
-                      <p className="font-bold">{student.full_name}</p>
-                    </div>
-                  </td>
-
-                  <td className="px-5 py-4 text-sm text-[#6B4A3A]">
-                    {student.level || "-"}
-                    {student.grade ? ` — ${student.grade}` : ""}
-                  </td>
-
-                  <td className="px-5 py-4 text-sm text-[#6B4A3A]">
-                    {student.nis || "-"}
-                  </td>
-
-                  <td className="px-5 py-4">
-                    <span className="rounded-full border border-[#D96B2B] px-4 py-2 text-xs font-bold text-[#D96B2B]">
-                      {student.teachers?.full_name || "Belum assigned"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <AssignmentMatrix
+        students={students}
+        teachers={teachers}
+        subjects={subjects}
+        relations={studentTeachers}
+      />
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <div>
-                <h2 className="text-xl font-bold">
-                  {editingTeacher ? "Edit Profile Guru" : "Tambah Guru Baru"}
-                </h2>
-                <p className="mt-1 text-sm text-[#6B4A3A]">
-                  Lengkapi data guru sesuai format HSTKB.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
-              )}
-
-              <form onSubmit={handleSubmitTeacher} className="space-y-5">
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
-                  <h3 className="font-bold text-[#2B1B18]">Data Utama Guru</h3>
-
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <FormInput
-                      label="Nama Guru"
-                      value={form.full_name}
-                      placeholder="Contoh: Ms. Clara"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, full_name: value }))
-                      }
-                    />
-
-                    <FormInput
-                      label="Email"
-                      value={form.email}
-                      placeholder="clara@hstkb.id"
-                      type="email"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, email: value }))
-                      }
-                    />
-
-                    <FormInput
-                      label="Nomor HP"
-                      value={form.phone}
-                      placeholder="0812xxxx"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, phone: value }))
-                      }
-                    />
-
-                    <FormInput
-                      label="Kode Guru"
-                      value={form.teacher_code}
-                      placeholder="TCH-003"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, teacher_code: value }))
-                      }
-                    />
-
-                    <FormInput
-                      label="Tempat Lahir"
-                      value={form.birth_place}
-                      placeholder="Contoh: Jakarta"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, birth_place: value }))
-                      }
-                    />
-
-                    <div>
-                      <label className="text-sm font-bold">Tanggal Lahir</label>
-                      <input
-                        type="date"
-                        value={form.birth_date}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            birth_date: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-bold">Jenis Kelamin</label>
-                      <select
-                        value={form.gender}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            gender: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      >
-                        <option value="">Pilih jenis kelamin</option>
-                        {genderOptions
-                          .filter((gender) => gender !== "")
-                          .map((gender) => (
-                            <option key={gender} value={gender}>
-                              {gender === "L" ? "Laki-laki" : "Perempuan"}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-bold">Agama</label>
-                      <select
-                        value={form.religion}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            religion: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      >
-                        <option value="">Pilih agama</option>
-                        {religionOptions
-                          .filter((religion) => religion !== "")
-                          .map((religion) => (
-                            <option key={religion} value={religion}>
-                              {religion}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-bold">Pendidikan</label>
-                      <select
-                        value={form.education_level}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            education_level: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      >
-                        <option value="">Pilih pendidikan</option>
-                        {educationOptions
-                          .filter((education) => education !== "")
-                          .map((education) => (
-                            <option key={education} value={education}>
-                              {education}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-
-                    <FormInput
-                      label="Lulusan"
-                      value={form.graduation}
-                      placeholder="Contoh: Universitas Terbuka"
-                      onChange={(value) =>
-                        setForm((prev) => ({ ...prev, graduation: value }))
-                      }
-                    />
-
-                    <div>
-                      <label className="text-sm font-bold">
-                        Mulai Masuk HSTKB
-                      </label>
-                      <input
-                        type="date"
-                        value={form.start_date}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            start_date: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-bold">Status Guru</label>
-                      <select
-                        value={form.employment_status}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            employment_status: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      >
-                        {employmentStatusOptions.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-sm font-bold">Status Akun</label>
-                      <select
-                        value={form.status}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            status: event.target.value,
-                          }))
-                        }
-                        className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="text-sm font-bold">
-                        Bidang Studi yang Diampu
-                      </label>
-                      <textarea
-                        value={form.subjects}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            subjects: event.target.value,
-                          }))
-                        }
-                        placeholder="Contoh: MTK kelas 1, 2, 3, Bahasa Indonesia kelas 1, 2, 3"
-                        rows={4}
-                        className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                      />
-                      <p className="mt-1 text-xs text-[#6B4A3A]">
-                        Pisahkan dengan koma, contoh: Math, Science, Reading
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
-                  <h3 className="font-bold text-[#2B1B18]">Dokumen Guru</h3>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Upload KTP, KK, Ijazah, Foto, dan Sertifikat guru.
-                  </p>
-
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    {teacherDocumentFields.map((field) => (
-                      <TeacherDocumentUploadBox
-                        key={field.key}
-                        label={field.label}
-                        accept={field.accept}
-                        currentUrl={form[field.key]}
-                        fileName={documentFiles[field.key]?.name || ""}
-                        onChange={(file) =>
-                          setDocumentFiles((prev) => ({
-                            ...prev,
-                            [field.key]: file || undefined,
-                          }))
-                        }
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {saving
-                      ? "Menyimpan..."
-                      : editingTeacher
-                      ? "Update Guru"
-                      : "Simpan Guru"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <TeacherFormModal
+          form={form}
+          editingTeacher={editingTeacher}
+          saving={saving}
+          errorMessage={errorMessage}
+          documentFiles={documentFiles}
+          setForm={setForm}
+          setDocumentFiles={setDocumentFiles}
+          onClose={closeModal}
+          onSubmit={handleSubmitTeacher}
+        />
       )}
 
       {viewReportsTeacher ? (
@@ -1400,17 +1157,440 @@ export default function KepalaSekolahTeachersPage() {
         <AssignModal
           teacher={assignTeacher}
           students={students}
-          selectedStudentIds={selectedStudentIds}
+          subjects={subjects}
+          selectedAssignments={selectedAssignments}
           assigning={assigning}
           onToggleStudent={toggleStudentSelection}
+          onChangeSubject={updateAssignmentSubject}
           onClose={() => {
             setAssignTeacher(null);
-            setSelectedStudentIds([]);
+            setSelectedAssignments({});
           }}
           onSave={handleSaveAssign}
         />
       ) : null}
     </KepalaSekolahLayout>
+  );
+}
+
+function AssignmentMatrix({
+  students,
+  teachers,
+  subjects,
+  relations,
+}: {
+  students: Student[];
+  teachers: Teacher[];
+  subjects: Subject[];
+  relations: StudentTeacherRelation[];
+}) {
+  const teacherMap = new Map(teachers.map((teacher) => [teacher.id, teacher]));
+  const subjectMap = new Map(subjects.map((subject) => [subject.id, subject]));
+
+  return (
+    <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-bold">Assignment Matrix</h2>
+      <p className="mt-1 text-sm text-[#6B4A3A]">
+        Daftar relasi murid, guru, dan mapel dari tabel student_teachers.
+      </p>
+
+      <div className="mt-5 overflow-hidden rounded-xl border border-[#E8D6C1]">
+        <table className="w-full min-w-[980px] text-left">
+          <thead className="bg-[#FFF8EF] text-xs uppercase text-[#6B4A3A]">
+            <tr>
+              <th className="px-5 py-4">Murid</th>
+              <th className="px-5 py-4">Level</th>
+              <th className="px-5 py-4">NIPD</th>
+              <th className="px-5 py-4">Guru / Mapel</th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-[#E8D6C1]">
+            {students.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-5 py-6 text-center text-sm">
+                  Belum ada data murid.
+                </td>
+              </tr>
+            ) : (
+              students.map((student) => {
+                const studentRelations = relations.filter(
+                  (relation) => relation.student_id === student.id
+                );
+
+                return (
+                  <tr key={student.id} className="hover:bg-[#FFF8EF]">
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FDE7D7] text-xs font-bold text-[#7A1F2B]">
+                          {getInitials(student.full_name)}
+                        </div>
+
+                        <p className="font-bold">{student.full_name}</p>
+                      </div>
+                    </td>
+
+                    <td className="px-5 py-4 text-sm text-[#6B4A3A]">
+                      {student.level || "-"}
+                      {student.grade ? ` — ${student.grade}` : ""}
+                    </td>
+
+                    <td className="px-5 py-4 text-sm text-[#6B4A3A]">
+                      {student.nis || "-"}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {studentRelations.length === 0 ? (
+                        <span className="rounded-full border border-[#D96B2B] px-4 py-2 text-xs font-bold text-[#D96B2B]">
+                          Belum assigned
+                        </span>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {studentRelations.map((relation) => {
+                            const teacher = relation.teacher_id
+                              ? teacherMap.get(relation.teacher_id)
+                              : null;
+                            const subject = relation.subject_id
+                              ? subjectMap.get(relation.subject_id)
+                              : null;
+
+                            return (
+                              <span
+                                key={relation.id}
+                                className="rounded-full border border-[#D96B2B] bg-[#FFF8EF] px-4 py-2 text-xs font-bold text-[#D96B2B]"
+                              >
+                                {teacher?.full_name || "-"} •{" "}
+                                {subject?.name || "-"}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TeacherFormModal({
+  form,
+  editingTeacher,
+  saving,
+  errorMessage,
+  documentFiles,
+  setForm,
+  setDocumentFiles,
+  onClose,
+  onSubmit,
+}: {
+  form: TeacherForm;
+  editingTeacher: Teacher | null;
+  saving: boolean;
+  errorMessage: string;
+  documentFiles: Partial<Record<TeacherDocumentKey, File>>;
+  setForm: React.Dispatch<React.SetStateAction<TeacherForm>>;
+  setDocumentFiles: React.Dispatch<
+    React.SetStateAction<Partial<Record<TeacherDocumentKey, File>>>
+  >;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      <div className="flex max-h-[90vh] w-full max-w-[900px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <div>
+            <h2 className="text-xl font-bold">
+              {editingTeacher ? "Edit Profile Guru" : "Tambah Guru Baru"}
+            </h2>
+            <p className="mt-1 text-sm text-[#6B4A3A]">
+              Lengkapi data guru sesuai format HSTKB.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-6 py-5">
+          {errorMessage && (
+            <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} className="space-y-5">
+            <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
+              <h3 className="font-bold text-[#2B1B18]">Data Utama Guru</h3>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <FormInput
+                  label="Nama Guru"
+                  value={form.full_name}
+                  placeholder="Contoh: Ms. Clara"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, full_name: value }))
+                  }
+                />
+
+                <FormInput
+                  label="Email"
+                  value={form.email}
+                  placeholder="clara@hstkb.id"
+                  type="email"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, email: value }))
+                  }
+                />
+
+                <FormInput
+                  label="Nomor HP"
+                  value={form.phone}
+                  placeholder="0812xxxx"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, phone: value }))
+                  }
+                />
+
+                <FormInput
+                  label="Kode Guru"
+                  value={form.teacher_code}
+                  placeholder="TCH-003"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, teacher_code: value }))
+                  }
+                />
+
+                <FormInput
+                  label="Tempat Lahir"
+                  value={form.birth_place}
+                  placeholder="Contoh: Jakarta"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, birth_place: value }))
+                  }
+                />
+
+                <div>
+                  <label className="text-sm font-bold">Tanggal Lahir</label>
+                  <input
+                    type="date"
+                    value={form.birth_date}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        birth_date: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Jenis Kelamin</label>
+                  <select
+                    value={form.gender}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        gender: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    <option value="">Pilih jenis kelamin</option>
+                    {genderOptions
+                      .filter((gender) => gender !== "")
+                      .map((gender) => (
+                        <option key={gender} value={gender}>
+                          {gender === "L" ? "Laki-laki" : "Perempuan"}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Agama</label>
+                  <select
+                    value={form.religion}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        religion: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    <option value="">Pilih agama</option>
+                    {religionOptions
+                      .filter((religion) => religion !== "")
+                      .map((religion) => (
+                        <option key={religion} value={religion}>
+                          {religion}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Pendidikan</label>
+                  <select
+                    value={form.education_level}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        education_level: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    <option value="">Pilih pendidikan</option>
+                    {educationOptions
+                      .filter((education) => education !== "")
+                      .map((education) => (
+                        <option key={education} value={education}>
+                          {education}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <FormInput
+                  label="Lulusan"
+                  value={form.graduation}
+                  placeholder="Contoh: Universitas Terbuka"
+                  onChange={(value) =>
+                    setForm((prev) => ({ ...prev, graduation: value }))
+                  }
+                />
+
+                <div>
+                  <label className="text-sm font-bold">Mulai Masuk HSTKB</label>
+                  <input
+                    type="date"
+                    value={form.start_date}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        start_date: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Status Guru</label>
+                  <select
+                    value={form.employment_status}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        employment_status: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    {employmentStatusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Status Akun</label>
+                  <select
+                    value={form.status}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        status: event.target.value,
+                      }))
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="text-sm font-bold">
+                    Bidang Studi yang Diampu
+                  </label>
+                  <textarea
+                    value={form.subjects}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        subjects: event.target.value,
+                      }))
+                    }
+                    placeholder="Contoh: MTK kelas 1, 2, 3, Bahasa Indonesia kelas 1, 2, 3"
+                    rows={4}
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  />
+                  <p className="mt-1 text-xs text-[#6B4A3A]">
+                    Pisahkan dengan koma, contoh: Math, Science, Reading
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[#E8D6C1] bg-white p-5">
+              <h3 className="font-bold text-[#2B1B18]">Dokumen Guru</h3>
+              <p className="mt-1 text-sm text-[#6B4A3A]">
+                Upload KTP, KK, Ijazah, Foto, dan Sertifikat guru.
+              </p>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                {teacherDocumentFields.map((field) => (
+                  <TeacherDocumentUploadBox
+                    key={field.key}
+                    label={field.label}
+                    accept={field.accept}
+                    currentUrl={form[field.key]}
+                    fileName={documentFiles[field.key]?.name || ""}
+                    onChange={(file) =>
+                      setDocumentFiles((prev) => ({
+                        ...prev,
+                        [field.key]: file || undefined,
+                      }))
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving
+                  ? "Menyimpan..."
+                  : editingTeacher
+                    ? "Update Guru"
+                    : "Simpan Guru"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1505,34 +1685,39 @@ function ViewReportsModal({
 function AssignModal({
   teacher,
   students,
-  selectedStudentIds,
+  subjects,
+  selectedAssignments,
   assigning,
   onToggleStudent,
+  onChangeSubject,
   onClose,
   onSave,
 }: {
   teacher: Teacher;
   students: Student[];
-  selectedStudentIds: string[];
+  subjects: Subject[];
+  selectedAssignments: Record<string, string>;
   assigning: boolean;
   onToggleStudent: (studentId: string) => void;
+  onChangeSubject: (studentId: string, subjectId: string) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
   return (
     <ModalShell
       title="Assign Murid ke Guru"
-      subtitle={`${teacher.full_name} • pilih murid yang menjadi dampingan`}
+      subtitle={`${teacher.full_name} • pilih murid dan mapel yang diampu`}
       onClose={onClose}
-      maxWidth="max-w-[780px]"
+      maxWidth="max-w-[900px]"
     >
       <div className="space-y-5">
         <div className="rounded-2xl border border-[#E8D6C1] bg-white p-4 text-sm text-[#6B4A3A]">
-          Centang murid yang ingin di-assign ke guru ini. Jika centang dilepas,
-          murid akan dilepaskan dari guru pendamping ini.
+          Centang murid, lalu pilih mapel. Data akan tersimpan ke tabel{" "}
+          <span className="font-bold text-[#2B1B18]">student_teachers</span>,
+          sehingga langsung muncul di role guru pada menu Murid Saya.
         </div>
 
-        <div className="max-h-[460px] overflow-y-auto rounded-2xl border border-[#E8D6C1] bg-white">
+        <div className="max-h-[520px] overflow-y-auto rounded-2xl border border-[#E8D6C1] bg-white">
           {students.length === 0 ? (
             <div className="p-8 text-center text-sm text-[#6B4A3A]">
               Belum ada data murid.
@@ -1540,17 +1725,14 @@ function AssignModal({
           ) : (
             <div className="divide-y divide-[#E8D6C1]">
               {students.map((student) => {
-                const checked = selectedStudentIds.includes(student.id);
-                const assignedToOtherTeacher =
-                  student.homeroom_teacher_id &&
-                  student.homeroom_teacher_id !== teacher.id;
+                const checked = selectedAssignments[student.id] !== undefined;
 
                 return (
-                  <label
+                  <div
                     key={student.id}
-                    className="flex cursor-pointer items-center justify-between gap-4 px-5 py-4 transition hover:bg-[#FFF8EF]"
+                    className="grid gap-4 px-5 py-4 transition hover:bg-[#FFF8EF] md:grid-cols-[1fr_280px]"
                   >
-                    <div className="flex items-center gap-3">
+                    <label className="flex cursor-pointer items-center gap-3">
                       <input
                         type="checkbox"
                         checked={checked}
@@ -1568,24 +1750,33 @@ function AssignModal({
                           {student.nis || "-"}
                         </p>
                       </div>
-                    </div>
+                    </label>
 
-                    <div className="text-right">
-                      {assignedToOtherTeacher ? (
-                        <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-bold text-yellow-700">
-                          Assigned: {student.teachers?.full_name || "-"}
-                        </span>
-                      ) : checked ? (
-                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                          Dipilih
-                        </span>
+                    <div>
+                      {checked ? (
+                        <select
+                          value={selectedAssignments[student.id] || ""}
+                          onChange={(event) =>
+                            onChangeSubject(student.id, event.target.value)
+                          }
+                          className="h-11 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 text-sm outline-none focus:border-[#7A1F2B]"
+                        >
+                          <option value="">Pilih mapel</option>
+                          {subjects.map((subject) => (
+                            <option key={subject.id} value={subject.id}>
+                              {formatSubjectLabel(subject)}
+                            </option>
+                          ))}
+                        </select>
                       ) : (
-                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-                          Belum dipilih
-                        </span>
+                        <div className="flex h-11 items-center justify-end">
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                            Belum dipilih
+                          </span>
+                        </div>
                       )}
                     </div>
-                  </label>
+                  </div>
                 );
               })}
             </div>
