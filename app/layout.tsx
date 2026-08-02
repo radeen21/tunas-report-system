@@ -16,9 +16,14 @@ export const metadata: Metadata = {
   title: "HSTKB Report System",
   description: "Homeschooling Tunas Karya Bangsa Report System",
   icons: {
-    icon: "/icon_hstkb_logo.png",
-    shortcut: "/icon_hstkb_logo.png",
-    apple: "/icon_hstkb_logo.png",
+    icon: [
+      {
+        url: "/icon_hstkb_logo.png?v=20",
+        type: "image/png",
+      },
+    ],
+    shortcut: "/icon_hstkb_logo.png?v=20",
+    apple: "/icon_hstkb_logo.png?v=20",
   },
 };
 
