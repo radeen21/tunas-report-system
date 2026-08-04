@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   BookOpen,
+  Download,
   Edit,
   Eye,
   FileText,
@@ -12,10 +13,14 @@ import {
   Search,
   Send,
   Trash2,
+  UploadCloud,
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
+
+const ACADEMIC_YEAR = "2026/2027";
+const MATERIAL_FRAMEWORK_BUCKET = "material-framework-documents";
 
 type TeacherRow = {
   id: string;
@@ -41,13 +46,8 @@ type MaterialFrameworkRow = {
   semester: string | null;
   academic_year: string | null;
   framework_title: string | null;
-  learning_outcomes: string | null;
-  learning_objectives: string | null;
-  core_materials: string | null;
-  learning_methods: string | null;
-  learning_resources: string | null;
-  assessment_plan: string | null;
-  notes: string | null;
+  document_url?: string | null;
+
   status: string | null;
   submitted_at?: string | null;
   approved_at?: string | null;
@@ -68,69 +68,36 @@ type FormState = {
   semester: string;
   academic_year: string;
   framework_title: string;
-  learning_outcomes: string;
-  learning_objectives: string;
-  core_materials: string;
-  learning_methods: string;
-  learning_resources: string;
-  assessment_plan: string;
-  notes: string;
+  document_url: string;
 };
 
-const ACADEMIC_YEAR = "2026/2027";
-
-const initialForm: FormState = {
+const INITIAL_FORM: FormState = {
   subject_id: "",
   level: "SD",
   grade: "Kelas 1",
   semester: "Ganjil",
   academic_year: ACADEMIC_YEAR,
   framework_title: "",
-  learning_outcomes: "",
-  learning_objectives: "",
-  core_materials: "",
-  learning_methods: "",
-  learning_resources: "",
-  assessment_plan: "",
-  notes: "",
+  document_url: "",
 };
 
-const levelOptions = ["Semua Tingkat", "SD", "SMP", "SMA"];
+const LEVEL_OPTIONS = ["Semua Tingkat", "SD", "SMP", "SMA"];
+const FORM_LEVEL_OPTIONS = ["SD", "SMP", "SMA"];
 
-const formLevelOptions = ["SD", "SMP", "SMA"];
+const LEVEL_GRADE_OPTIONS: Record<string, string[]> = {
+  SD: [
+    "Kelas 1",
+    "Kelas 2",
+    "Kelas 3",
+    "Kelas 4",
+    "Kelas 5",
+    "Kelas 6",
+  ],
+  SMP: ["Kelas 7", "Kelas 8", "Kelas 9"],
+  SMA: ["Kelas 10", "Kelas 11", "Kelas 12"],
+};
 
-const gradeOptions = [
-  "Semua Kelas",
-  "Kelas 1",
-  "Kelas 2",
-  "Kelas 3",
-  "Kelas 4",
-  "Kelas 5",
-  "Kelas 6",
-  "Kelas 7",
-  "Kelas 8",
-  "Kelas 9",
-  "Kelas 10",
-  "Kelas 11",
-  "Kelas 12",
-];
-
-const formGradeOptions = [
-  "Kelas 1",
-  "Kelas 2",
-  "Kelas 3",
-  "Kelas 4",
-  "Kelas 5",
-  "Kelas 6",
-  "Kelas 7",
-  "Kelas 8",
-  "Kelas 9",
-  "Kelas 10",
-  "Kelas 11",
-  "Kelas 12",
-];
-
-const statusOptions = [
+const STATUS_OPTIONS = [
   "Semua Status",
   "draft",
   "submitted",
@@ -159,7 +126,10 @@ function normalizeGrade(value?: string | null) {
   if (!grade) return "-";
 
   const match = grade.match(/\d+/);
-  if (match?.[0]) return `Kelas ${match[0]}`;
+
+  if (match?.[0]) {
+    return `Kelas ${match[0]}`;
+  }
 
   return grade;
 }
@@ -220,6 +190,7 @@ function getStatusLabel(status?: string | null) {
   if (status === "submitted") return "Submitted";
   if (status === "approved" || status === "published") return "Approved";
   if (status === "rejected") return "Revisi";
+
   return "Draft";
 }
 
@@ -230,14 +201,46 @@ function getStatusClass(status?: string | null) {
     return "bg-[#C7F0DA] text-[#158A58]";
   }
 
-  if (safe === "submitted") return "bg-[#FFF2B8] text-[#B26A00]";
-  if (safe === "rejected") return "bg-[#FFE4E6] text-[#BE123C]";
+  if (safe === "submitted") {
+    return "bg-[#FFF2B8] text-[#B26A00]";
+  }
+
+  if (safe === "rejected") {
+    return "bg-[#FFE4E6] text-[#BE123C]";
+  }
 
   return "bg-[#F1F5F9] text-[#64748B]";
 }
 
 function canEditFramework(status?: string | null) {
   return !status || status === "draft" || status === "rejected";
+}
+
+function cleanFileName(fileName: string) {
+  return fileName
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "");
+}
+
+function isAllowedFile(file: File) {
+  const allowedExtensions = [".pdf", ".doc", ".docx"];
+  const fileName = file.name.toLowerCase();
+
+  return allowedExtensions.some((extension) => fileName.endsWith(extension));
+}
+
+function getFileNameFromUrl(url?: string | null) {
+  if (!url) return "-";
+
+  try {
+    const pathname = new URL(url).pathname;
+    const fileName = pathname.split("/").pop();
+
+    return fileName ? decodeURIComponent(fileName) : "Dokumen Kerangka Materi";
+  } catch {
+    return "Dokumen Kerangka Materi";
+  }
 }
 
 export default function TeacherKerangkaMateriPage() {
@@ -264,7 +267,8 @@ export default function TeacherKerangkaMateriPage() {
     useState<EnrichedFramework | null>(null);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({
@@ -276,7 +280,9 @@ export default function TeacherKerangkaMateriPage() {
   async function getCurrentTeacher() {
     const { data: authData, error: authError } = await supabase.auth.getUser();
 
-    if (authError) throw new Error(authError.message);
+    if (authError) {
+      throw new Error(authError.message);
+    }
 
     const email = (
       authData.user?.email ||
@@ -300,8 +306,13 @@ export default function TeacherKerangkaMateriPage() {
         .limit(1)
         .maybeSingle();
 
-      if (error) throw new Error(error.message);
-      if (data) return data as TeacherRow;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (data) {
+        return data as TeacherRow;
+      }
     }
 
     if (teacherCode) {
@@ -312,8 +323,13 @@ export default function TeacherKerangkaMateriPage() {
         .limit(1)
         .maybeSingle();
 
-      if (error) throw new Error(error.message);
-      if (data) return data as TeacherRow;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (data) {
+        return data as TeacherRow;
+      }
     }
 
     return null;
@@ -325,6 +341,7 @@ export default function TeacherKerangkaMateriPage() {
 
     try {
       const currentTeacher = await getCurrentTeacher();
+
       setTeacher(currentTeacher);
 
       if (!currentTeacher?.id) {
@@ -345,11 +362,17 @@ export default function TeacherKerangkaMateriPage() {
           .order("updated_at", { ascending: false }),
       ]);
 
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
-      if (frameworksRes.error) throw new Error(frameworksRes.error.message);
+      if (subjectsRes.error) {
+        throw new Error(subjectsRes.error.message);
+      }
+
+      if (frameworksRes.error) {
+        throw new Error(frameworksRes.error.message);
+      }
 
       const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-      const frameworksData = (frameworksRes.data || []) as MaterialFrameworkRow[];
+      const frameworksData = (frameworksRes.data ||
+        []) as MaterialFrameworkRow[];
 
       const subjectMap = new Map(
         subjectsData.map((subject) => [subject.id, subject])
@@ -383,24 +406,24 @@ export default function TeacherKerangkaMateriPage() {
   }
 
   useEffect(() => {
-    fetchData();
+    void fetchData();
 
     const channel = supabase
       .channel("teacher-kerangka-materi-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        () => fetchData()
+        () => void fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "material_frameworks" },
-        () => fetchData()
+        () => void fetchData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
-        () => fetchData()
+        () => void fetchData()
       )
       .subscribe();
 
@@ -414,7 +437,9 @@ export default function TeacherKerangkaMateriPage() {
   }, [teacher]);
 
   const subjectOptions = useMemo(() => {
-    if (teacherSubjectNames.length === 0) return subjects;
+    if (teacherSubjectNames.length === 0) {
+      return subjects;
+    }
 
     const filteredSubjects = subjects.filter((subject) => {
       return teacherSubjectNames.some((teacherSubject) =>
@@ -425,14 +450,30 @@ export default function TeacherKerangkaMateriPage() {
     return filteredSubjects.length > 0 ? filteredSubjects : subjects;
   }, [subjects, teacherSubjectNames]);
 
+  const gradeOptionsForForm = useMemo(() => {
+    return LEVEL_GRADE_OPTIONS[form.level] || [];
+  }, [form.level]);
+
+  function handleLevelChange(level: string) {
+    const grades = LEVEL_GRADE_OPTIONS[level] || [];
+
+    setForm((current) => ({
+      ...current,
+      level,
+      grade: grades.includes(current.grade) ? current.grade : grades[0] || "",
+    }));
+  }
+
   function openCreateForm() {
     const firstSubject = subjectOptions[0];
 
     setEditingFramework(null);
+    setSelectedFile(null);
     setForm({
-      ...initialForm,
+      ...INITIAL_FORM,
       subject_id: firstSubject?.id || "",
     });
+
     setIsFormOpen(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -441,70 +482,132 @@ export default function TeacherKerangkaMateriPage() {
   function openEditForm(framework: EnrichedFramework) {
     if (!canEditFramework(framework.status)) {
       setErrorMessage(
-        "Kerangka materi yang sudah submitted/approved tidak bisa diedit."
+        "Kerangka materi yang sudah submitted atau approved tidak bisa diedit."
       );
       return;
     }
 
+    const normalizedLevel = normalizeLevel(framework.level);
+
     setEditingFramework(framework);
+    setSelectedFile(null);
     setForm({
       subject_id: framework.subject_id || "",
-      level: normalizeLevel(framework.level),
+      level:
+        normalizedLevel === "SD" ||
+        normalizedLevel === "SMP" ||
+        normalizedLevel === "SMA"
+          ? normalizedLevel
+          : "SD",
       grade: normalizeGrade(framework.grade),
       semester: framework.semester || "Ganjil",
       academic_year: framework.academic_year || ACADEMIC_YEAR,
       framework_title: framework.framework_title || "",
-      learning_outcomes: framework.learning_outcomes || "",
-      learning_objectives: framework.learning_objectives || "",
-      core_materials: framework.core_materials || "",
-      learning_methods: framework.learning_methods || "",
-      learning_resources: framework.learning_resources || "",
-      assessment_plan: framework.assessment_plan || "",
-      notes: framework.notes || "",
+      document_url: framework.document_url || "",
     });
+
     setIsFormOpen(true);
     setErrorMessage("");
     setSuccessMessage("");
   }
 
   function closeForm() {
+    if (saving) return;
+
     setIsFormOpen(false);
     setEditingFramework(null);
-    setForm(initialForm);
+    setSelectedFile(null);
+    setForm(INITIAL_FORM);
+    setErrorMessage("");
   }
 
-  async function handleSave() {
+  function validateForm() {
     if (!teacher?.id) {
       setErrorMessage("Data guru belum ditemukan.");
-      return;
+      return false;
     }
 
     if (!form.subject_id) {
       setErrorMessage("Mapel wajib dipilih.");
-      return;
+      return false;
+    }
+
+    if (!form.level) {
+      setErrorMessage("Tingkat wajib dipilih.");
+      return false;
+    }
+
+    if (!form.grade) {
+      setErrorMessage("Kelas wajib dipilih.");
+      return false;
     }
 
     if (!form.framework_title.trim()) {
       setErrorMessage("Judul kerangka materi wajib diisi.");
-      return;
+      return false;
     }
 
-    if (!form.core_materials.trim()) {
-      setErrorMessage("Materi pokok wajib diisi.");
-      return;
+    if (!selectedFile && !form.document_url.trim()) {
+      setErrorMessage("Dokumen kerangka materi wajib diunggah.");
+      return false;
     }
 
-    if (!form.learning_objectives.trim()) {
-      setErrorMessage("Tujuan pembelajaran wajib diisi.");
-      return;
+    if (selectedFile && !isAllowedFile(selectedFile)) {
+      setErrorMessage("Dokumen harus berformat PDF, DOC, atau DOCX.");
+      return false;
     }
 
-    setSaving(true);
+    if (selectedFile && selectedFile.size > 10 * 1024 * 1024) {
+      setErrorMessage("Ukuran dokumen maksimal 10MB.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function uploadFrameworkDocument() {
+    if (!selectedFile || !teacher?.id) {
+      return form.document_url.trim() || null;
+    }
+
+    const safeTitle = cleanFileName(
+      form.framework_title.trim() || "kerangka-materi"
+    );
+
+    const extension = selectedFile.name.split(".").pop() || "pdf";
+    const fileName = `${Date.now()}-${safeTitle}.${extension}`;
+    const filePath = `${teacher.id}/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(MATERIAL_FRAMEWORK_BUCKET)
+      .upload(filePath, selectedFile, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    const { data } = supabase.storage
+      .from(MATERIAL_FRAMEWORK_BUCKET)
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  }
+
+  async function handleSave() {
     setErrorMessage("");
     setSuccessMessage("");
 
+    if (!validateForm()) return;
+    if (!teacher?.id) return;
+
+    setSaving(true);
+
     try {
       const now = new Date().toISOString();
+      const documentUrl = await uploadFrameworkDocument();
 
       const frameworkPayload = {
         teacher_id: teacher.id,
@@ -514,14 +617,19 @@ export default function TeacherKerangkaMateriPage() {
         semester: form.semester,
         academic_year: form.academic_year,
         framework_title: form.framework_title.trim(),
-        learning_outcomes: form.learning_outcomes.trim() || null,
-        learning_objectives: form.learning_objectives.trim() || null,
-        core_materials: form.core_materials.trim() || null,
-        learning_methods: form.learning_methods.trim() || null,
-        learning_resources: form.learning_resources.trim() || null,
-        assessment_plan: form.assessment_plan.trim() || null,
-        notes: form.notes.trim() || null,
+        document_url: documentUrl,
+
+        // Kolom lama dikosongkan karena guru hanya upload dokumen.
+        learning_outcomes: null,
+        learning_objectives: null,
+        core_materials: null,
+        learning_methods: null,
+        learning_resources: null,
+        assessment_plan: null,
+        notes: null,
+
         status: "draft",
+        submitted_at: null,
         rejected_at: null,
         rejection_note: null,
         updated_at: now,
@@ -534,14 +642,18 @@ export default function TeacherKerangkaMateriPage() {
           .eq("id", editingFramework.id)
           .eq("teacher_id", teacher.id);
 
-        if (error) throw new Error(error.message);
+        if (error) {
+          throw new Error(error.message);
+        }
       } else {
         const { error } = await supabase.from("material_frameworks").insert({
           ...frameworkPayload,
           created_at: now,
         });
 
-        if (error) throw new Error(error.message);
+        if (error) {
+          throw new Error(error.message);
+        }
       }
 
       setSuccessMessage("Kerangka materi berhasil disimpan sebagai draft.");
@@ -561,6 +673,13 @@ export default function TeacherKerangkaMateriPage() {
   async function handleSubmit(framework: EnrichedFramework) {
     if (!canEditFramework(framework.status)) {
       setErrorMessage("Data ini sudah dikirim atau disetujui.");
+      return;
+    }
+
+    if (!framework.document_url) {
+      setErrorMessage(
+        "Dokumen belum tersedia. Edit kerangka materi lalu upload dokumen."
+      );
       return;
     }
 
@@ -589,7 +708,9 @@ export default function TeacherKerangkaMateriPage() {
         .eq("id", framework.id)
         .eq("teacher_id", teacher?.id);
 
-      if (error) throw new Error(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
 
       setSuccessMessage("Kerangka materi berhasil dikirim untuk review.");
       await fetchData();
@@ -607,13 +728,13 @@ export default function TeacherKerangkaMateriPage() {
   async function handleDelete(framework: EnrichedFramework) {
     if (!canEditFramework(framework.status)) {
       setErrorMessage(
-        "Kerangka materi yang sudah submitted/approved tidak bisa dihapus."
+        "Kerangka materi yang sudah submitted atau approved tidak bisa dihapus."
       );
       return;
     }
 
     const confirmDelete = window.confirm(
-      "Yakin ingin menghapus kerangka materi ini?"
+      `Hapus kerangka materi "${framework.framework_title || "-"}"?`
     );
 
     if (!confirmDelete) return;
@@ -629,7 +750,9 @@ export default function TeacherKerangkaMateriPage() {
         .eq("id", framework.id)
         .eq("teacher_id", teacher?.id);
 
-      if (error) throw new Error(error.message);
+      if (error) {
+        throw new Error(error.message);
+      }
 
       setSuccessMessage("Kerangka materi berhasil dihapus.");
       await fetchData();
@@ -645,18 +768,16 @@ export default function TeacherKerangkaMateriPage() {
   }
 
   const availableGradeOptions = useMemo(() => {
+    const standardGrades = Object.values(LEVEL_GRADE_OPTIONS).flat();
+
     const existingGrades = frameworks
       .map((framework) => normalizeGrade(framework.grade))
       .filter((grade) => grade !== "-");
 
-    const combined = Array.from(
-      new Set([
-        ...gradeOptions.filter((grade) => grade !== "Semua Kelas"),
-        ...existingGrades,
-      ])
-    );
-
-    return ["Semua Kelas", ...combined];
+    return [
+      "Semua Kelas",
+      ...Array.from(new Set([...standardGrades, ...existingGrades])),
+    ];
   }, [frameworks]);
 
   const filteredFrameworks = useMemo(() => {
@@ -670,13 +791,10 @@ export default function TeacherKerangkaMateriPage() {
         !q ||
         normalizeText(framework.framework_title).includes(q) ||
         normalizeText(framework.subject_name).includes(q) ||
-        normalizeText(framework.core_materials).includes(q) ||
-        normalizeText(framework.learning_outcomes).includes(q) ||
-        normalizeText(framework.learning_objectives).includes(q) ||
-        normalizeText(framework.learning_methods).includes(q) ||
-        normalizeText(framework.assessment_plan).includes(q) ||
         normalizeText(frameworkLevel).includes(q) ||
-        normalizeText(frameworkGrade).includes(q);
+        normalizeText(frameworkGrade).includes(q) ||
+        normalizeText(framework.semester).includes(q) ||
+        normalizeText(framework.academic_year).includes(q);
 
       const matchLevel =
         levelFilter === "Semua Tingkat" || frameworkLevel === levelFilter;
@@ -756,8 +874,8 @@ export default function TeacherKerangkaMateriPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Guru membuat kerangka materi secara mandiri. Setelah selesai,
-              submit ke Admin/Kepala Sekolah untuk direview.
+              Guru cukup memilih mapel, tingkat, kelas, semester, mengisi judul,
+              lalu mengunggah dokumen kerangka materi.
             </p>
           </div>
 
@@ -822,10 +940,11 @@ export default function TeacherKerangkaMateriPage() {
           <div className="grid gap-3 xl:grid-cols-[1.4fr_0.9fr_0.9fr_0.9fr_0.9fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
+
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari judul, mapel, materi, tujuan, kelas, atau metode..."
+                placeholder="Cari judul, mapel, kelas, semester, atau tahun ajaran..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -835,7 +954,7 @@ export default function TeacherKerangkaMateriPage() {
               onChange={(event) => setLevelFilter(event.target.value)}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              {levelOptions.map((level) => (
+              {LEVEL_OPTIONS.map((level) => (
                 <option key={level}>{level}</option>
               ))}
             </select>
@@ -865,7 +984,7 @@ export default function TeacherKerangkaMateriPage() {
               onChange={(event) => setStatusFilter(event.target.value)}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              {statusOptions.map((status) => (
+              {STATUS_OPTIONS.map((status) => (
                 <option key={status}>{status}</option>
               ))}
             </select>
@@ -874,13 +993,9 @@ export default function TeacherKerangkaMateriPage() {
 
         <div className="grid gap-5 xl:grid-cols-2">
           {loading ? (
-            <div className="col-span-full rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
-              Memuat data kerangka materi...
-            </div>
+            <EmptyState text="Memuat data kerangka materi..." />
           ) : filteredFrameworks.length === 0 ? (
-            <div className="col-span-full rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
-              Belum ada kerangka materi untuk guru ini.
-            </div>
+            <EmptyState text="Belum ada kerangka materi untuk guru ini." />
           ) : (
             filteredFrameworks.map((framework) => {
               const editable = canEditFramework(framework.status);
@@ -891,20 +1006,30 @@ export default function TeacherKerangkaMateriPage() {
                   className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm"
                 >
                   <div className="border-b border-[#EADACA] bg-[#FFF8EF] px-6 py-5">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-wrap gap-2">
+                        <StatusBadge status={framework.status} />
+
+                        <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
+                          {formatLevelGrade(framework.level, framework.grade)}
+                        </span>
+
+                        <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
+                          Semester {framework.semester || "-"}
+                        </span>
+
+                        {framework.document_url ? (
+                          <span className="whitespace-nowrap rounded-full bg-[#E0F2FE] px-3 py-1 text-[12px] font-extrabold text-[#0369A1]">
+                            Ada Dokumen
+                          </span>
+                        ) : (
+                          <span className="whitespace-nowrap rounded-full bg-[#FFE4E6] px-3 py-1 text-[12px] font-extrabold text-[#BE123C]">
+                            Belum Upload
+                          </span>
+                        )}
+                      </div>
+
                       <div>
-                        <div className="mb-3 flex flex-wrap gap-2">
-                          <StatusBadge status={framework.status} />
-
-                          <span className="whitespace-nowrap rounded-full bg-[#F4E5DA] px-3 py-1 text-[12px] font-extrabold text-[#8A2332]">
-                            {formatLevelGrade(framework.level, framework.grade)}
-                          </span>
-
-                          <span className="whitespace-nowrap rounded-full bg-[#F1F5F9] px-3 py-1 text-[12px] font-extrabold text-[#64748B]">
-                            Semester {framework.semester}
-                          </span>
-                        </div>
-
                         <h2 className="text-[20px] font-extrabold leading-tight text-[#2B1B18]">
                           {framework.framework_title || "-"}
                         </h2>
@@ -913,82 +1038,84 @@ export default function TeacherKerangkaMateriPage() {
                           {framework.subject_name} • Tahun Ajaran{" "}
                           {framework.academic_year || "-"}
                         </p>
-
-                        {framework.status === "rejected" &&
-                        framework.rejection_note ? (
-                          <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-5 text-red-700">
-                            Catatan Revisi: {framework.rejection_note}
-                          </p>
-                        ) : null}
                       </div>
 
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFramework(framework)}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-white"
-                        >
-                          <Eye className="h-4 w-4" />
-                          Detail
-                        </button>
-
-                        {editable ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => openEditForm(framework)}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-white"
-                            >
-                              <Edit className="h-4 w-4" />
-                              Edit
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleSubmit(framework)}
-                              disabled={saving}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#8C0F2D] px-3 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] disabled:bg-[#C9AAB2]"
-                            >
-                              <Send className="h-4 w-4" />
-                              Submit
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(framework)}
-                              disabled={saving}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-[13px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Hapus
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
+                      {framework.status === "rejected" &&
+                      framework.rejection_note ? (
+                        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-5 text-red-700">
+                          Catatan Revisi: {framework.rejection_note}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
                   <div className="space-y-4 px-6 py-5">
-                    <InfoBlock
-                      label="Materi Pokok"
-                      value={framework.core_materials || "-"}
-                    />
+                    <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-5 py-4">
+                      <p className="text-[12px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+                        Dokumen Kerangka Materi
+                      </p>
 
-                    <InfoBlock
-                      label="Tujuan Pembelajaran"
-                      value={framework.learning_objectives || "-"}
-                    />
+                      <p className="mt-2 break-all text-[14px] font-bold text-[#2B1B18]">
+                        {framework.document_url
+                          ? getFileNameFromUrl(framework.document_url)
+                          : "Belum ada dokumen"}
+                      </p>
+                    </div>
 
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <MiniInfo
-                        label="Metode Pembelajaran"
-                        value={framework.learning_methods || "-"}
-                      />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFramework(framework)}
+                        className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                      >
+                        <Eye className="h-4 w-4" />
+                        Detail
+                      </button>
 
-                      <MiniInfo
-                        label="Rencana Assessment"
-                        value={framework.assessment_plan || "-"}
-                      />
+                      {framework.document_url ? (
+                        <a
+                          href={framework.document_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#BAE6FD] px-3 text-[13px] font-extrabold text-[#0369A1] transition hover:bg-[#F0F9FF]"
+                        >
+                          <Download className="h-4 w-4" />
+                          Buka Dokumen
+                        </a>
+                      ) : null}
+
+                      {editable ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openEditForm(framework)}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                          >
+                            <Edit className="h-4 w-4" />
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleSubmit(framework)}
+                            disabled={saving || !framework.document_url}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl bg-[#8C0F2D] px-3 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
+                          >
+                            <Send className="h-4 w-4" />
+                            Submit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(framework)}
+                            disabled={saving}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-[13px] font-extrabold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Hapus
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1009,9 +1136,14 @@ export default function TeacherKerangkaMateriPage() {
         <FrameworkFormModal
           form={form}
           subjects={subjectOptions}
+          gradeOptions={gradeOptionsForForm}
+          selectedFile={selectedFile}
           saving={saving}
           editingFramework={editingFramework}
+          errorMessage={errorMessage}
           onChange={updateForm}
+          onLevelChange={handleLevelChange}
+          onFileChange={setSelectedFile}
           onSave={handleSave}
           onClose={closeForm}
         />
@@ -1023,17 +1155,27 @@ export default function TeacherKerangkaMateriPage() {
 function FrameworkFormModal({
   form,
   subjects,
+  gradeOptions,
+  selectedFile,
   saving,
   editingFramework,
+  errorMessage,
   onChange,
+  onLevelChange,
+  onFileChange,
   onSave,
   onClose,
 }: {
   form: FormState;
   subjects: SubjectRow[];
+  gradeOptions: string[];
+  selectedFile: File | null;
   saving: boolean;
   editingFramework: EnrichedFramework | null;
+  errorMessage: string;
   onChange: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
+  onLevelChange: (level: string) => void;
+  onFileChange: (file: File | null) => void;
   onSave: () => void;
   onClose: () => void;
 }) {
@@ -1043,31 +1185,41 @@ function FrameworkFormModal({
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
           <div>
             <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
-              {editingFramework ? "Edit Kerangka Materi" : "Tambah Kerangka Materi"}
+              {editingFramework
+                ? "Edit Kerangka Materi"
+                : "Tambah Kerangka Materi"}
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Data akan tersimpan sebagai draft. Setelah selesai, klik Submit.
+              Lengkapi data sampai judul, lalu upload dokumen kerangka materi.
             </p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
+            disabled={saving}
+            className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA] disabled:opacity-50"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="space-y-5 px-6 py-6">
+          {errorMessage ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-700">
+              {errorMessage}
+            </div>
+          ) : null}
+
           <div className="rounded-2xl border border-[#EADACA] bg-white px-5 py-4">
             <p className="text-[14px] font-extrabold text-[#2B1B18]">
               Catatan
             </p>
+
             <p className="mt-1 text-[13px] leading-6 text-[#6F5549]">
-              Kerangka materi tidak menggunakan menu Alokasi Waktu. Guru cukup
-              mengisi materi, tujuan, metode, sumber belajar, dan assessment.
+              Guru cukup memilih mapel, tahun ajaran, tingkat, kelas, semester,
+              mengisi judul, lalu mengunggah dokumen kerangka materi.
             </p>
           </div>
 
@@ -1079,6 +1231,7 @@ function FrameworkFormModal({
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
               >
                 <option value="">Pilih Mapel</option>
+
                 {subjects.map((subject) => (
                   <option key={subject.id} value={subject.id}>
                     {subject.name || "-"}
@@ -1100,10 +1253,10 @@ function FrameworkFormModal({
             <FormField label="Tingkat">
               <select
                 value={form.level}
-                onChange={(event) => onChange("level", event.target.value)}
+                onChange={(event) => onLevelChange(event.target.value)}
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
               >
-                {formLevelOptions.map((level) => (
+                {FORM_LEVEL_OPTIONS.map((level) => (
                   <option key={level}>{level}</option>
                 ))}
               </select>
@@ -1115,7 +1268,7 @@ function FrameworkFormModal({
                 onChange={(event) => onChange("grade", event.target.value)}
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
               >
-                {formGradeOptions.map((grade) => (
+                {gradeOptions.map((grade) => (
                   <option key={grade}>{grade}</option>
                 ))}
               </select>
@@ -1144,49 +1297,63 @@ function FrameworkFormModal({
             </FormField>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <FormTextarea
-              label="Capaian Pembelajaran"
-              value={form.learning_outcomes}
-              onChange={(value) => onChange("learning_outcomes", value)}
-            />
+          <div className="rounded-2xl border border-dashed border-[#DCC8B6] bg-white px-5 py-5">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="flex items-center gap-2 text-[14px] font-extrabold text-[#2B1B18]">
+                  <UploadCloud className="h-5 w-5 text-[#8C0F2D]" />
+                  Upload Dokumen Kerangka Materi
+                </p>
 
-            <FormTextarea
-              label="Tujuan Pembelajaran"
-              value={form.learning_objectives}
-              onChange={(value) => onChange("learning_objectives", value)}
-            />
+                <p className="mt-1 text-[13px] text-[#6F5549]">
+                  Format PDF, DOC, atau DOCX. Maksimal 10MB.
+                </p>
 
-            <FormTextarea
-              label="Materi Pokok"
-              value={form.core_materials}
-              onChange={(value) => onChange("core_materials", value)}
-            />
+                {form.document_url ? (
+                  <a
+                    href={form.document_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-2 text-[13px] font-extrabold text-[#0369A1] underline"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Lihat dokumen yang sudah ada
+                  </a>
+                ) : null}
 
-            <FormTextarea
-              label="Metode Pembelajaran"
-              value={form.learning_methods}
-              onChange={(value) => onChange("learning_methods", value)}
-            />
+                {selectedFile ? (
+                  <p className="mt-2 text-[13px] font-bold text-[#158A58]">
+                    File dipilih: {selectedFile.name}
+                  </p>
+                ) : null}
+              </div>
 
-            <FormTextarea
-              label="Sumber Belajar"
-              value={form.learning_resources}
-              onChange={(value) => onChange("learning_resources", value)}
-            />
+              <label className="flex h-11 cursor-pointer items-center justify-center rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#54131D]">
+                Pilih File
 
-            <FormTextarea
-              label="Rencana Assessment"
-              value={form.assessment_plan}
-              onChange={(value) => onChange("assessment_plan", value)}
-            />
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null;
+                    onFileChange(file);
+                  }}
+                />
+              </label>
+            </div>
           </div>
 
-          <FormTextarea
-            label="Catatan Tambahan"
-            value={form.notes}
-            onChange={(value) => onChange("notes", value)}
-          />
+          <FormField label="Link Dokumen Manual (Opsional)">
+            <input
+              value={form.document_url}
+              onChange={(event) =>
+                onChange("document_url", event.target.value)
+              }
+              placeholder="Isi link Google Drive jika tidak upload file"
+              className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+            />
+          </FormField>
 
           <div className="flex flex-col-reverse gap-3 md:flex-row md:justify-end">
             <button
@@ -1223,7 +1390,7 @@ function FrameworkDetailModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
-      <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+      <div className="max-h-[92vh] w-full max-w-[780px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
           <div>
             <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
@@ -1277,39 +1444,33 @@ function FrameworkDetailModal({
             ) : null}
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-2">
-            <InfoBlock
-              label="Capaian Pembelajaran"
-              value={framework.learning_outcomes || "-"}
-            />
+          <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+            <p className="text-[13px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+              Dokumen Kerangka Materi
+            </p>
 
-            <InfoBlock
-              label="Tujuan Pembelajaran"
-              value={framework.learning_objectives || "-"}
-            />
+            {framework.document_url ? (
+              <>
+                <p className="mt-2 break-all text-[14px] font-bold text-[#2B1B18]">
+                  {getFileNameFromUrl(framework.document_url)}
+                </p>
 
-            <InfoBlock
-              label="Materi Pokok"
-              value={framework.core_materials || "-"}
-            />
-
-            <InfoBlock
-              label="Metode Pembelajaran"
-              value={framework.learning_methods || "-"}
-            />
-
-            <InfoBlock
-              label="Sumber Belajar"
-              value={framework.learning_resources || "-"}
-            />
-
-            <InfoBlock
-              label="Rencana Assessment"
-              value={framework.assessment_plan || "-"}
-            />
+                <a
+                  href={framework.document_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex h-11 items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+                >
+                  <Download className="h-4 w-4" />
+                  Buka Dokumen
+                </a>
+              </>
+            ) : (
+              <p className="mt-2 text-[14px] text-[#BE123C]">
+                Dokumen belum diunggah.
+              </p>
+            )}
           </div>
-
-          <InfoBlock label="Catatan Tambahan" value={framework.notes || "-"} />
 
           <button
             type="button"
@@ -1336,32 +1497,8 @@ function FormField({
       <span className="mb-2 block text-[13px] font-extrabold text-[#6F5549]">
         {label}
       </span>
+
       {children}
-    </label>
-  );
-}
-
-function FormTextarea({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-[13px] font-extrabold text-[#6F5549]">
-        {label}
-      </span>
-
-      <textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        rows={4}
-        className="w-full rounded-xl border border-[#DCC8B6] bg-white px-4 py-3 text-[14px] leading-6 outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
-      />
     </label>
   );
 }
@@ -1403,32 +1540,8 @@ function SummaryCard({
       <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
         {value}
       </p>
+
       <p className="mt-2 text-[13px] text-[#6B4A3A]">{label}</p>
-    </div>
-  );
-}
-
-function InfoBlock({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
-      <p className="text-[13px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
-        {label}
-      </p>
-
-      <p className="mt-2 whitespace-pre-line text-[14px] leading-6 text-[#2B1B18]">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function MiniInfo({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] px-4 py-3">
-      <p className="text-[12px] font-bold text-[#6F5549]">{label}</p>
-      <p className="mt-1 text-[14px] font-extrabold text-[#2B1B18]">
-        {value}
-      </p>
     </div>
   );
 }
@@ -1437,6 +1550,7 @@ function DetailCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
       <p className="text-[13px] text-[#6F5549]">{label}</p>
+
       <p className="mt-2 text-[18px] font-extrabold text-[#2B1B18]">
         {value}
       </p>
@@ -1455,5 +1569,13 @@ function StatusBadge({ status }: { status?: string | null }) {
     >
       {getStatusLabel(safe)}
     </span>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="col-span-full rounded-[22px] border border-[#E1CFBE] bg-white px-6 py-12 text-center text-[#6F5549] shadow-sm">
+      {text}
+    </div>
   );
 }

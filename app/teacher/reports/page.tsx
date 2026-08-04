@@ -193,6 +193,22 @@ function normalizeLevel(level?: string | null) {
   return level || "-";
 }
 
+function formatClass(level?: string | null, grade?: string | null) {
+  const cleanLevel = normalizeLevel(level);
+  const cleanGrade = grade || "";
+
+  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
+  if (cleanLevel) return cleanLevel;
+  if (cleanGrade) return cleanGrade;
+
+  return "-";
+}
+
+function getGradeNumber(value?: string | null) {
+  const match = (value || "").match(/\d+/);
+  return match ? Number(match[0]) : 999;
+}
+
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
 
@@ -446,6 +462,7 @@ export default function TeacherAcademicReportsPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const [showModal, setShowModal] = useState(false);
+  const [reportClassFilter, setReportClassFilter] = useState("");
   const [form, setForm] = useState<ReportForm>(emptyForm());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
@@ -696,6 +713,30 @@ export default function TeacherAcademicReportsPage() {
       });
   }, [students, studentTeachers]);
 
+  const reportClassOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        studentOptionsForForm
+          .map((student) => formatClass(student.level, student.grade))
+          .filter((value) => value && value !== "-")
+      )
+    ).sort((a, b) => {
+      const gradeA = getGradeNumber(a);
+      const gradeB = getGradeNumber(b);
+
+      if (gradeA !== gradeB) return gradeA - gradeB;
+      return a.localeCompare(b);
+    });
+  }, [studentOptionsForForm]);
+
+  const studentsForSelectedClass = useMemo(() => {
+    if (!reportClassFilter) return [];
+
+    return studentOptionsForForm.filter(
+      (student) => formatClass(student.level, student.grade) === reportClassFilter
+    );
+  }, [studentOptionsForForm, reportClassFilter]);
+
   const subjectOptionsForForm = useMemo(() => {
     if (!form.student_id) {
       const subjectIdsFromRelation = new Set(
@@ -788,6 +829,7 @@ export default function TeacherAcademicReportsPage() {
   }, [reports]);
 
   function openCreateModal() {
+    setReportClassFilter("");
     setForm(emptyForm());
     setSelectedFile(null);
     setErrorMessage("");
@@ -801,6 +843,8 @@ export default function TeacherAcademicReportsPage() {
       alert("Laporan yang sudah pending/approved tidak bisa diedit oleh guru.");
       return;
     }
+
+    setReportClassFilter(formatClass(report.student_level, report.student_grade));
 
     setForm({
       id: report.id,
@@ -1553,6 +1597,40 @@ export default function TeacherAcademicReportsPage() {
                 </p>
               </div>
 
+              <FormGroup label="Kelas">
+                <input
+                  list="academic-report-class-options"
+                  value={reportClassFilter}
+                  onChange={(event) => {
+                    setReportClassFilter(event.target.value);
+                    updateForm("student_id", "");
+                    updateForm("subject_id", "");
+                  }}
+                  placeholder="Ketik atau pilih kelas, contoh: SMP 8"
+                  className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+                />
+                <datalist id="academic-report-class-options">
+                  {reportClassOptions.map((className) => (
+                    <option key={className} value={className} />
+                  ))}
+                </datalist>
+              </FormGroup>
+
+              {reportClassFilter ? (
+                <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+                  <p className="text-[14px] font-extrabold text-[#2B1B18]">
+                    Siswa {reportClassFilter}
+                  </p>
+                  <p className="mt-2 text-[13px] leading-6 text-[#6F5549]">
+                    {studentsForSelectedClass.length > 0
+                      ? studentsForSelectedClass
+                          .map((student) => student.full_name || "-")
+                          .join(", ")
+                      : "Tidak ada siswa yang terhubung pada kelas ini."}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="grid gap-4 md:grid-cols-2">
                 <FormGroup label="Siswa">
                   <select
@@ -1561,13 +1639,15 @@ export default function TeacherAcademicReportsPage() {
                       updateForm("student_id", event.target.value);
                       updateForm("subject_id", "");
                     }}
-                    className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
+                    disabled={!reportClassFilter}
+                    className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
                   >
-                    <option value="">Pilih siswa</option>
-                    {studentOptionsForForm.map((student) => (
+                    <option value="">
+                      {reportClassFilter ? "Pilih siswa" : "Pilih kelas dulu"}
+                    </option>
+                    {studentsForSelectedClass.map((student) => (
                       <option key={student.id} value={student.id}>
-                        {student.full_name} — {normalizeLevel(student.level)}{" "}
-                        {student.grade} — NIPD: {student.nis || "-"}
+                        {student.full_name} — {formatClass(student.level, student.grade)} — NIPD: {student.nis || "-"}
                       </option>
                     ))}
                   </select>

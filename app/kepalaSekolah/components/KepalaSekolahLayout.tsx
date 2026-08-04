@@ -13,6 +13,7 @@ import {
   GalleryVerticalEnd,
   GraduationCap,
   LayoutDashboard,
+  LibraryBig,
   ListChecks,
   LogOut,
   PenLine,
@@ -27,6 +28,7 @@ type ActiveMenu =
   | "Dashboard"
   | "Siswa"
   | "Guru"
+  | "Data Mapel"
   | "Jadwal Guru"
   | "Absensi KBM"
   | "Laporan KBM"
@@ -42,7 +44,7 @@ type KepalaSekolahLayoutProps = {
   activeMenu: ActiveMenu;
   searchPlaceholder?: string;
 
-  // Fix Vercel build: beberapa halaman lama masih mengirim buttonLabel
+  // Beberapa halaman lama masih mengirim buttonLabel
   buttonLabel?: string;
 };
 
@@ -53,18 +55,51 @@ type MenuItem = {
 };
 
 const menus: MenuItem[] = [
-  { name: "Dashboard", icon: LayoutDashboard, href: "/kepalaSekolah" },
-  { name: "Siswa", icon: UsersRound, href: "/kepalaSekolah/students" },
-  { name: "Guru", icon: GraduationCap, href: "/kepalaSekolah/teachers" },
-  { name: "Jadwal Guru", icon: CalendarDays, href: "/kepalaSekolah/jadwal" },
-  { name: "Absensi KBM", icon: ClipboardCheck, href: "/kepalaSekolah/absensi" },
-  { name: "Laporan KBM", icon: FileText, href: "/kepalaSekolah/laporan-kbm" },
+  {
+    name: "Dashboard",
+    icon: LayoutDashboard,
+    href: "/kepalaSekolah",
+  },
+  {
+    name: "Siswa",
+    icon: UsersRound,
+    href: "/kepalaSekolah/students",
+  },
+  {
+    name: "Guru",
+    icon: GraduationCap,
+    href: "/kepalaSekolah/teachers",
+  },
+  {
+    name: "Data Mapel",
+    icon: LibraryBig,
+    href: "/kepalaSekolah/subjects",
+  },
+  {
+    name: "Jadwal Guru",
+    icon: CalendarDays,
+    href: "/kepalaSekolah/jadwal",
+  },
+  {
+    name: "Absensi KBM",
+    icon: ClipboardCheck,
+    href: "/kepalaSekolah/absensi",
+  },
+  {
+    name: "Laporan KBM",
+    icon: FileText,
+    href: "/kepalaSekolah/laporan-kbm",
+  },
   {
     name: "Laporan Akademik",
     icon: BookOpen,
     href: "/kepalaSekolah/laporan-akademik",
   },
-  { name: "RPP", icon: PenLine, href: "/kepalaSekolah/rpp" },
+  {
+    name: "RPP",
+    icon: PenLine,
+    href: "/kepalaSekolah/rpp",
+  },
   {
     name: "Program Semester",
     icon: CalendarRange,
@@ -75,8 +110,16 @@ const menus: MenuItem[] = [
     icon: ListChecks,
     href: "/kepalaSekolah/kerangka-materi",
   },
-  { name: "Gallery", icon: GalleryVerticalEnd, href: "/kepalaSekolah/gallery" },
-  { name: "Settings", icon: Settings, href: "/kepalaSekolah/settings" },
+  {
+    name: "Gallery",
+    icon: GalleryVerticalEnd,
+    href: "/kepalaSekolah/gallery",
+  },
+  {
+    name: "Settings",
+    icon: Settings,
+    href: "/kepalaSekolah/settings",
+  },
 ];
 
 function getInitials(name: string) {
@@ -125,7 +168,10 @@ export default function KepalaSekolahLayout({
     setDisplayRole(getDisplayRole(storedRole));
   }, []);
 
-  const initials = useMemo(() => getInitials(principalName), [principalName]);
+  const initials = useMemo(
+    () => getInitials(principalName),
+    [principalName]
+  );
 
   return (
     <div className="min-h-screen bg-[#FAF3EA] text-[#2B1B18]">
@@ -143,7 +189,10 @@ export default function KepalaSekolahLayout({
           </div>
 
           <div className="min-w-0">
-            <p className="text-[17px] font-extrabold leading-tight">HSTKB</p>
+            <p className="text-[17px] font-extrabold leading-tight">
+              HSTKB
+            </p>
+
             <p className="mt-0.5 text-[13px] leading-tight text-white/75">
               {displayRole}
             </p>
@@ -169,7 +218,9 @@ export default function KepalaSekolahLayout({
                   size={17}
                   strokeWidth={2.2}
                   className={`shrink-0 ${
-                    isActive ? "text-[#E7792B]" : "text-white/70"
+                    isActive
+                      ? "text-[#E7792B]"
+                      : "text-white/70"
                   }`}
                 />
 
@@ -193,12 +244,17 @@ export default function KepalaSekolahLayout({
               <p className="truncate text-[13px] font-extrabold">
                 {principalName}
               </p>
+
               <p className="truncate text-[11px] text-white/65">
                 {displayRole}
               </p>
             </div>
 
-            <Link href="/" className="text-white/70 hover:text-white">
+            <Link
+              href="/"
+              className="text-white/70 transition hover:text-white"
+              title="Keluar"
+            >
               <LogOut size={15} strokeWidth={2.2} />
             </Link>
           </div>
@@ -225,8 +281,10 @@ export default function KepalaSekolahLayout({
               <button
                 type="button"
                 className="relative flex h-10 w-10 items-center justify-center rounded-full text-[#7A1F2B] transition hover:bg-[#F1DFD5]"
+                aria-label="Notifikasi"
               >
                 <Bell size={18} strokeWidth={2.2} />
+
                 <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-[#E7792B]" />
               </button>
 
@@ -241,6 +299,7 @@ export default function KepalaSekolahLayout({
                   <p className="text-[15px] font-extrabold text-[#2B1B18]">
                     {principalName}
                   </p>
+
                   <p className="mt-0.5 text-[12px] text-[#6B4A3A]">
                     {displayRole}
                   </p>
@@ -252,6 +311,7 @@ export default function KepalaSekolahLayout({
 
         <main className="px-6 py-7 lg:px-8">
           {children}
+
           <AcademicFooter />
         </main>
       </div>

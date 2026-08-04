@@ -237,8 +237,47 @@ function getSubjectLabel(subject?: SubjectRow | null) {
   return subject.name || "-";
 }
 
+function getValidLevelByGrade(grade?: string | null) {
+  const gradeNumber = getGradeNumber(grade);
+
+  if (gradeNumber >= 1 && gradeNumber <= 6) return "SD";
+  if (gradeNumber >= 7 && gradeNumber <= 9) return "SMP";
+  if (gradeNumber >= 10 && gradeNumber <= 12) return "SMA";
+
+  return "";
+}
+
 function getClassKey(student: StudentRow) {
-  return `${normalizeLevel(student.level)} ${student.grade || ""}`.trim();
+  const gradeNumber = getGradeNumber(student.grade);
+  const validLevel = getValidLevelByGrade(student.grade);
+
+  if (!validLevel || gradeNumber === 999) return "";
+
+  return `${validLevel} ${gradeNumber}`;
+}
+
+function normalizeClassInput(value?: string | null) {
+  return normalizeText(value)
+    .replace(/\bkelas\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function matchesClassInput(student: StudentRow, classInput: string) {
+  const input = normalizeClassInput(classInput);
+
+  if (!input) return false;
+
+  const studentGradeNumber = getGradeNumber(student.grade);
+  const validClass = normalizeClassInput(getClassKey(student));
+
+  if (studentGradeNumber === 999 || !validClass) return false;
+
+  if (/^\d+$/.test(input)) {
+    return studentGradeNumber === Number(input);
+  }
+
+  return validClass === input;
 }
 
 function uniqueStrings(values: string[]) {
@@ -261,7 +300,7 @@ export default function TeacherAbsensiPage() {
 
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState(todayYMD());
-  const [classFilter, setClassFilter] = useState("Semua Kelas");
+  const [classFilter, setClassFilter] = useState("");
 
   const [subjectId, setSubjectId] = useState("");
   const [startTime, setStartTime] = useState("");
@@ -469,7 +508,7 @@ export default function TeacherAbsensiPage() {
   }, []);
 
   const subjectOptions = useMemo(() => {
-    return subjects.sort((a, b) => {
+    return [...subjects].sort((a, b) => {
       const nameA = getSubjectLabel(a);
       const nameB = getSubjectLabel(b);
 
@@ -499,53 +538,49 @@ export default function TeacherAbsensiPage() {
   }, [students, studentIdsBySelectedSubject]);
 
   const classOptions = useMemo(() => {
-    const uniqueClass = Array.from(
-      new Set(
-        studentsAllowedBySubject
-          .map((student) => getClassKey(student))
-          .filter((item) => item && item !== "-")
-      )
+    const allowedClasses = [
+      "SD 1",
+      "SD 2",
+      "SD 3",
+      "SD 4",
+      "SD 5",
+      "SD 6",
+      "SMP 7",
+      "SMP 8",
+      "SMP 9",
+      "SMA 10",
+      "SMA 11",
+      "SMA 12",
+    ];
+
+    const availableClasses = new Set(
+      studentsAllowedBySubject
+        .map((student) => getClassKey(student))
+        .filter(Boolean)
     );
 
-    return uniqueClass.sort((a, b) => {
-      const numberA = getGradeNumber(a);
-      const numberB = getGradeNumber(b);
-
-      if (numberA !== numberB) return numberA - numberB;
-
-      return a.localeCompare(b);
-    });
+    return allowedClasses.filter((className) =>
+      availableClasses.has(className)
+    );
   }, [studentsAllowedBySubject]);
 
   useEffect(() => {
-    if (classFilter === "Semua Kelas") return;
+    if (!classFilter.trim()) return;
 
-    if (!classOptions.includes(classFilter)) {
-      setClassFilter("Semua Kelas");
+    const hasMatchingClass = studentsAllowedBySubject.some((student) =>
+      matchesClassInput(student, classFilter)
+    );
+
+    if (!hasMatchingClass) {
       setAttendanceStudents([]);
     }
-  }, [classFilter, classOptions]);
+  }, [classFilter, studentsAllowedBySubject]);
 
-  const filteredStudents = useMemo(() => {
-    const q = normalizeText(search);
+  const studentsInSelectedClass = useMemo(() => {
+    if (!classFilter.trim()) return [];
 
     return studentsAllowedBySubject
-      .filter((student) => {
-        const studentClass = getClassKey(student);
-
-        const matchClass =
-          classFilter === "Semua Kelas" || studentClass === classFilter;
-
-        const matchSearch =
-          !q ||
-          normalizeText(student.full_name).includes(q) ||
-          normalizeText(student.nis).includes(q) ||
-          normalizeText(student.nisn).includes(q) ||
-          normalizeText(student.grade).includes(q) ||
-          normalizeText(student.level).includes(q);
-
-        return matchClass && matchSearch;
-      })
+      .filter((student) => matchesClassInput(student, classFilter))
       .sort((a, b) => {
         const gradeA = getGradeNumber(a.grade);
         const gradeB = getGradeNumber(b.grade);
@@ -554,7 +589,22 @@ export default function TeacherAbsensiPage() {
 
         return (a.full_name || "").localeCompare(b.full_name || "");
       });
-  }, [studentsAllowedBySubject, search, classFilter]);
+  }, [studentsAllowedBySubject, classFilter]);
+
+  const filteredStudents = useMemo(() => {
+    const q = normalizeText(search);
+
+    return studentsInSelectedClass.filter((student) => {
+      return (
+        !q ||
+        normalizeText(student.full_name).includes(q) ||
+        normalizeText(student.nis).includes(q) ||
+        normalizeText(student.nisn).includes(q) ||
+        normalizeText(student.grade).includes(q) ||
+        normalizeText(student.level).includes(q)
+      );
+    });
+  }, [studentsInSelectedClass, search]);
 
   const existingAttendanceByStudent = useMemo(() => {
     const map = new Map<string, AttendanceRow>();
@@ -580,7 +630,7 @@ export default function TeacherAbsensiPage() {
       return item.attendance_date === dateFilter;
     });
 
-    const selectedClassStudents = filteredStudents.length;
+    const selectedClassStudents = studentsInSelectedClass.length;
 
     const completedStudents = attendanceStudents.filter((student) => {
       return Boolean(existingAttendanceByStudent.get(student.id));
@@ -605,63 +655,61 @@ export default function TeacherAbsensiPage() {
   }, [
     attendance,
     dateFilter,
-    filteredStudents.length,
+    studentsInSelectedClass.length,
     attendanceStudents,
     existingAttendanceByStudent,
   ]);
 
-  function loadStudentsForAttendance() {
-    if (!teacher?.id) {
-      alert("Data guru belum terhubung.");
-      return;
-    }
+  function resetAttendanceInput() {
+    setAttendanceStudents([]);
+  }
 
-    if (!subjectId) {
-      alert("Pilih mata pelajaran terlebih dahulu.");
-      return;
-    }
-
-    if (!dateFilter) {
-      alert("Pilih tanggal absensi terlebih dahulu.");
-      return;
-    }
-
-    if (!startTime || !endTime) {
-      alert("Isi jam datang dan pulang terlebih dahulu.");
+  useEffect(() => {
+    if (
+      !teacher?.id ||
+      !subjectId ||
+      !classFilter.trim() ||
+      !dateFilter ||
+      !startTime ||
+      !endTime
+    ) {
+      setAttendanceStudents([]);
       return;
     }
 
     const duration = calculateDurationMinutes(startTime, endTime);
 
-    if (!duration) {
-      alert("Jam pulang harus lebih besar dari jam datang.");
+    if (!duration || studentsInSelectedClass.length === 0) {
+      setAttendanceStudents([]);
       return;
     }
 
-    if (filteredStudents.length === 0) {
-      alert(
-        "Tidak ada siswa pada filter kelas/search saat ini, atau siswa belum terhubung dengan guru dan mapel ini."
-      );
-      return;
-    }
+    const nextStudents: AttendanceStudent[] = studentsInSelectedClass.map(
+      (student) => {
+        const existing = existingAttendanceByStudent.get(student.id);
 
-    const nextStudents: AttendanceStudent[] = filteredStudents.map((student) => {
-      const existing = existingAttendanceByStudent.get(student.id);
-
-      return {
-        ...student,
-        attendanceStatus: normalizeAttendanceStatus(existing?.attendance_status),
-        understandingStatus: existing?.understanding_status || "Paham",
-        note: getAttendanceNote(existing),
-      };
-    });
+        return {
+          ...student,
+          attendanceStatus: normalizeAttendanceStatus(
+            existing?.attendance_status
+          ),
+          understandingStatus: existing?.understanding_status || "Paham",
+          note: getAttendanceNote(existing),
+        };
+      }
+    );
 
     setAttendanceStudents(nextStudents);
-  }
-
-  function resetAttendanceInput() {
-    setAttendanceStudents([]);
-  }
+  }, [
+    teacher?.id,
+    subjectId,
+    classFilter,
+    dateFilter,
+    startTime,
+    endTime,
+    studentsInSelectedClass,
+    existingAttendanceByStudent,
+  ]);
 
   function updateStudentAttendance(
     studentId: string,
@@ -741,7 +789,7 @@ export default function TeacherAbsensiPage() {
     }
 
     if (attendanceStudents.length === 0) {
-      alert("Belum ada siswa yang ditampilkan untuk absensi.");
+      alert("Pilih kelas yang memiliki siswa terlebih dahulu.");
       return false;
     }
 
@@ -848,8 +896,9 @@ export default function TeacherAbsensiPage() {
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
             Guru dapat input absensi secara mandiri tanpa integrasi Program
-            Semester, Bab/Sub Bab, atau Jadwal Guru. Siswa yang tampil hanya
-            siswa yang terhubung dengan guru dan mapel melalui data siswa.
+            Semester, Bab/Sub Bab, atau Jadwal Guru. Pilih mapel lalu ketik atau
+            pilih kelas; seluruh siswa pada kelas tersebut akan langsung muncul,
+            selama sudah terhubung dengan guru dan mapel.
           </p>
         </div>
 
@@ -879,7 +928,7 @@ export default function TeacherAbsensiPage() {
             icon={<Users className="h-5 w-5" />}
             label="Siswa di Filter"
             value={summary.totalStudents}
-            info={classFilter}
+            info={classFilter || "Pilih Kelas"}
             tone="blue"
           />
 
@@ -908,32 +957,36 @@ export default function TeacherAbsensiPage() {
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
-                  resetAttendanceInput();
                 }}
                 placeholder="Cari nama siswa, NIPD, NISN, kelas, atau level..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
 
-            <select
-              value={classFilter}
-              onChange={(event) => {
-                setClassFilter(event.target.value);
-                resetAttendanceInput();
-              }}
-              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            >
-              <option>Semua Kelas</option>
-              {classOptions.map((item) => (
-                <option key={item}>{item}</option>
-              ))}
-            </select>
+            <div>
+              <input
+                list="teacher-attendance-class-options"
+                value={classFilter}
+                onChange={(event) => {
+                  setClassFilter(event.target.value);
+                  resetAttendanceInput();
+                }}
+                placeholder="Ketik atau pilih kelas, contoh SMP 8"
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
+
+              <datalist id="teacher-attendance-class-options">
+                {classOptions.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+            </div>
 
             <select
               value={subjectId}
               onChange={(event) => {
                 setSubjectId(event.target.value);
-                setClassFilter("Semua Kelas");
+                setClassFilter("");
                 resetAttendanceInput();
               }}
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
@@ -966,8 +1019,8 @@ export default function TeacherAbsensiPage() {
               </h2>
 
               <p className="mt-1 text-[13px] text-[#6F5549]">
-                Isi data KBM secara manual, lalu tampilkan siswa berdasarkan
-                mapel dan kelas.
+                Pilih mapel lalu ketik atau pilih kelas. Semua siswa pada
+                kelas tersebut langsung muncul otomatis untuk diabsen.
               </p>
             </div>
 
@@ -1018,7 +1071,7 @@ export default function TeacherAbsensiPage() {
                 </FormGroup>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 <FormGroup label="Sesi">
                   <input
                     value={sessionName}
@@ -1037,16 +1090,6 @@ export default function TeacherAbsensiPage() {
                   />
                 </FormGroup>
 
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={loadStudentsForAttendance}
-                    disabled={loading || !teacher}
-                    className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Tampilkan Siswa
-                  </button>
-                </div>
               </div>
 
               <FormGroup label="Keterangan Umum">
@@ -1085,7 +1128,7 @@ export default function TeacherAbsensiPage() {
                     ? `${getSubjectLabel(selectedSubject)} • ${formatDate(
                         dateFilter
                       )}`
-                    : "Pilih mapel, kelas, tanggal, dan klik Tampilkan Siswa."}
+: "Pilih mapel lalu ketik atau pilih kelas. Siswa akan muncul otomatis."}
                 </p>
               </div>
 
@@ -1182,7 +1225,7 @@ export default function TeacherAbsensiPage() {
                         colSpan={14}
                         className="px-5 py-12 text-center text-[#6F5549]"
                       >
-                        Belum ada siswa ditampilkan.
+                        Pilih mapel dan ketik/pilih kelas untuk menampilkan semua siswa.
                       </td>
                     </tr>
                   ) : (

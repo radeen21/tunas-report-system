@@ -118,6 +118,11 @@ function formatTime(time: string | null) {
   return time.slice(0, 5);
 }
 
+function getGradeNumber(value?: string | null) {
+  const match = (value || "").match(/\d+/);
+  return match ? Number(match[0]) : 999;
+}
+
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -188,6 +193,7 @@ export default function TeacherJadwalPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
+  const [classFilter, setClassFilter] = useState("Semua Kelas");
   const [dayFilter, setDayFilter] = useState("Semua Hari");
   const [subjectFilter, setSubjectFilter] = useState("Semua Mapel");
 
@@ -373,6 +379,41 @@ export default function TeacherJadwalPage() {
     };
   }, []);
 
+  const classOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        schedules
+          .map((schedule) =>
+            formatClass(schedule.student_level, schedule.student_grade)
+          )
+          .filter((value) => value && value !== "-")
+      )
+    ).sort((a, b) => {
+      const gradeA = getGradeNumber(a);
+      const gradeB = getGradeNumber(b);
+
+      if (gradeA !== gradeB) return gradeA - gradeB;
+      return a.localeCompare(b);
+    });
+  }, [schedules]);
+
+  const studentsInSelectedClass = useMemo(() => {
+    if (classFilter === "Semua Kelas") return [];
+
+    return Array.from(
+      new Set(
+        schedules
+          .filter(
+            (schedule) =>
+              formatClass(schedule.student_level, schedule.student_grade) ===
+              classFilter
+          )
+          .map((schedule) => schedule.student_name)
+          .filter((name) => name && name !== "-")
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [schedules, classFilter]);
+
   const subjectOptions = useMemo(() => {
     const names = schedules
       .map((schedule) => schedule.subject_name)
@@ -398,6 +439,11 @@ export default function TeacherJadwalPage() {
         normalizeText(schedule.session_name).includes(keyword) ||
         normalizeText(schedule.day_name).includes(keyword);
 
+      const matchClass =
+        classFilter === "Semua Kelas" ||
+        formatClass(schedule.student_level, schedule.student_grade) ===
+          classFilter;
+
       const matchDay =
         dayFilter === "Semua Hari" || schedule.day_name === dayFilter;
 
@@ -405,9 +451,9 @@ export default function TeacherJadwalPage() {
         subjectFilter === "Semua Mapel" ||
         schedule.subject_name === subjectFilter;
 
-      return matchSearch && matchDay && matchSubject;
+      return matchSearch && matchClass && matchDay && matchSubject;
     });
-  }, [schedules, search, dayFilter, subjectFilter]);
+  }, [schedules, search, classFilter, dayFilter, subjectFilter]);
 
   const sortedSchedules = useMemo(() => {
     return [...filteredSchedules].sort((a, b) => {
@@ -604,13 +650,29 @@ export default function TeacherJadwalPage() {
             </div>
 
             <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_200px_220px]">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_220px_200px_220px]">
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Cari siswa, NIPD, NISN, kelas, mapel, materi, keterangan..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
+
+                <div>
+                  <input
+                    list="teacher-jadwal-class-options"
+                    value={classFilter}
+                    onChange={(event) => setClassFilter(event.target.value)}
+                    placeholder="Ketik atau pilih kelas"
+                    className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none placeholder:text-[#9A7B6C] focus:border-[#7A1F2B]"
+                  />
+                  <datalist id="teacher-jadwal-class-options">
+                    <option value="Semua Kelas" />
+                    {classOptions.map((className) => (
+                      <option key={className} value={className} />
+                    ))}
+                  </datalist>
+                </div>
 
                 <select
                   value={dayFilter}
@@ -639,6 +701,19 @@ export default function TeacherJadwalPage() {
                 </select>
               </div>
             </div>
+
+            {classFilter !== "Semua Kelas" ? (
+              <div className="mt-5 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] px-5 py-4">
+                <p className="text-sm font-bold text-[#2B1B18]">
+                  Siswa {classFilter}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[#6B4A3A]">
+                  {studentsInSelectedClass.length > 0
+                    ? studentsInSelectedClass.join(", ")
+                    : "Tidak ada siswa pada kelas ini di jadwal guru."}
+                </p>
+              </div>
+            ) : null}
 
             <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
               <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
