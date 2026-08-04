@@ -46,6 +46,14 @@ type SubjectRow = {
   grade?: string | null;
 };
 
+type StudentTeacherRow = {
+  id: string;
+  student_id: string | null;
+  teacher_id: string | null;
+  subject_id: string | null;
+  academic_year: string | null;
+};
+
 type ScheduleRow = {
   id: string;
   student_id: string | null;
@@ -103,7 +111,6 @@ type ScheduleForm = {
   start_time: string;
   end_time: string;
   session_name: string;
-  material_topic: string;
   semester: string;
   notes: string;
   temporary_schedule_url: string;
@@ -129,7 +136,6 @@ const initialForm: ScheduleForm = {
   start_time: "",
   end_time: "",
   session_name: "Sesi 1",
-  material_topic: "",
   semester: "Ganjil",
   notes: "",
   temporary_schedule_url: "",
@@ -361,6 +367,7 @@ export default function KepalaSekolahJadwalPage() {
   const [teachers, setTeachers] = useState<TeacherRow[]>([]);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
+  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>([]);
   const [schedules, setSchedules] = useState<EnrichedSchedule[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -388,26 +395,40 @@ export default function KepalaSekolahJadwalPage() {
     setErrorMessage("");
 
     try {
-      const [teachersRes, studentsRes, subjectsRes, schedulesRes] =
-        await Promise.all([
-          supabase.from("teachers").select("*").order("full_name"),
-          supabase.from("students").select("*").order("full_name"),
-          supabase.from("subjects").select("*").order("name"),
-          supabase
-            .from("schedules")
-            .select("*")
-            .order("schedule_date", { ascending: false })
-            .order("start_time", { ascending: true }),
-        ]);
+      const [
+        teachersRes,
+        studentsRes,
+        subjectsRes,
+        studentTeachersRes,
+        schedulesRes,
+      ] = await Promise.all([
+        supabase.from("teachers").select("*").order("full_name"),
+        supabase.from("students").select("*").order("full_name"),
+        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("student_teachers")
+          .select("id, student_id, teacher_id, subject_id, academic_year")
+          .eq("academic_year", ACADEMIC_YEAR),
+        supabase
+          .from("schedules")
+          .select("*")
+          .order("schedule_date", { ascending: false })
+          .order("start_time", { ascending: true }),
+      ]);
 
       if (teachersRes.error) throw new Error(teachersRes.error.message);
       if (studentsRes.error) throw new Error(studentsRes.error.message);
       if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+      if (studentTeachersRes.error) {
+        throw new Error(studentTeachersRes.error.message);
+      }
       if (schedulesRes.error) throw new Error(schedulesRes.error.message);
 
       const teachersData = (teachersRes.data || []) as TeacherRow[];
       const studentsData = (studentsRes.data || []) as StudentRow[];
       const subjectsData = (subjectsRes.data || []) as SubjectRow[];
+      const studentTeachersData = (studentTeachersRes.data ||
+        []) as StudentTeacherRow[];
       const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
 
       const teacherMap = new Map(
@@ -450,6 +471,7 @@ export default function KepalaSekolahJadwalPage() {
       setTeachers(teachersData);
       setStudents(studentsData);
       setSubjects(subjectsData);
+      setStudentTeachers(studentTeachersData);
       setSchedules(enriched);
     } catch (error) {
       if (error instanceof Error) {
@@ -461,6 +483,7 @@ export default function KepalaSekolahJadwalPage() {
       setTeachers([]);
       setStudents([]);
       setSubjects([]);
+      setStudentTeachers([]);
       setSchedules([]);
     } finally {
       setLoading(false);
@@ -492,12 +515,36 @@ export default function KepalaSekolahJadwalPage() {
         { event: "*", schema: "public", table: "subjects" },
         () => fetchData()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_teachers" },
+        () => fetchData()
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
   }, []);
+
+  const selectedTeacherRelations = useMemo(() => {
+    if (!form.teacher_id) return [];
+
+    return studentTeachers.filter(
+      (relation) =>
+        relation.teacher_id === form.teacher_id &&
+        (!relation.academic_year ||
+          relation.academic_year === ACADEMIC_YEAR)
+    );
+  }, [studentTeachers, form.teacher_id]);
+
+  const allowedStudentIdsForTeacher = useMemo(() => {
+    return new Set(
+      selectedTeacherRelations
+        .map((relation) => relation.student_id)
+        .filter(Boolean) as string[]
+    );
+  }, [selectedTeacherRelations]);
 
   const selectedStudentsForForm = useMemo(() => {
     return students.filter((student) => selectedStudentIds.includes(student.id));
@@ -513,9 +560,39 @@ export default function KepalaSekolahJadwalPage() {
     );
   }, [selectedStudentsForForm]);
 
+  const teacherSubjectIds = useMemo(() => {
+    return new Set(
+      selectedTeacherRelations
+        .map((relation) => relation.subject_id)
+        .filter(Boolean) as string[]
+    );
+  }, [selectedTeacherRelations]);
+
+  const selectedStudentSubjectIds = useMemo(() => {
+    if (selectedStudentIds.length === 0) {
+      return teacherSubjectIds;
+    }
+
+    return new Set(
+      selectedTeacherRelations
+        .filter(
+          (relation) =>
+            relation.student_id &&
+            selectedStudentIds.includes(relation.student_id)
+        )
+        .map((relation) => relation.subject_id)
+        .filter(Boolean) as string[]
+    );
+  }, [selectedTeacherRelations, selectedStudentIds, teacherSubjectIds]);
+
   const subjectOptionsForSchedule = useMemo(() => {
+    if (!form.teacher_id) return [];
+
     return subjects.filter((subject) => {
       const subjectGradeNumber = getGradeNumber(subject.grade);
+      const isConnectedToTeacher = selectedStudentSubjectIds.has(subject.id);
+
+      if (!isConnectedToTeacher) return false;
 
       if (isMathSubject(subject) && isAllGrade(subject.grade)) {
         return false;
@@ -531,7 +608,12 @@ export default function KepalaSekolahJadwalPage() {
 
       return selectedStudentGradeNumbers.includes(subjectGradeNumber);
     });
-  }, [subjects, selectedStudentGradeNumbers]);
+  }, [
+    subjects,
+    form.teacher_id,
+    selectedStudentSubjectIds,
+    selectedStudentGradeNumbers,
+  ]);
 
   useEffect(() => {
     if (!form.subject_id) return;
@@ -544,7 +626,6 @@ export default function KepalaSekolahJadwalPage() {
       setForm((prev) => ({
         ...prev,
         subject_id: "",
-        material_topic: "",
       }));
     }
   }, [form.subject_id, subjectOptionsForSchedule]);
@@ -587,6 +668,9 @@ export default function KepalaSekolahJadwalPage() {
     const q = normalizeText(studentSearch);
 
     return students.filter((student) => {
+      const matchTeacher =
+        !form.teacher_id || allowedStudentIdsForTeacher.has(student.id);
+
       const matchSearch =
         !q ||
         normalizeText(student.full_name).includes(q) ||
@@ -595,9 +679,14 @@ export default function KepalaSekolahJadwalPage() {
         normalizeText(student.nis).includes(q) ||
         normalizeText(student.nisn).includes(q);
 
-      return matchSearch;
+      return matchTeacher && matchSearch;
     });
-  }, [students, studentSearch]);
+  }, [
+    students,
+    studentSearch,
+    form.teacher_id,
+    allowedStudentIdsForTeacher,
+  ]);
 
   const summary = useMemo(() => {
     const groups = groupSchedules(schedules);
@@ -668,6 +757,35 @@ export default function KepalaSekolahJadwalPage() {
       return;
     }
 
+    const subjectConnectedToTeacher = selectedTeacherRelations.some(
+      (relation) =>
+        relation.subject_id === form.subject_id &&
+        relation.teacher_id === form.teacher_id
+    );
+
+    if (!subjectConnectedToTeacher) {
+      alert(
+        "Mapel yang dipilih belum terhubung dengan guru ini. Hubungkan melalui menu Guru → Assign."
+      );
+      return;
+    }
+
+    const studentsNotConnectedToSubject = selectedStudentIds.filter(
+      (studentId) =>
+        !selectedTeacherRelations.some(
+          (relation) =>
+            relation.student_id === studentId &&
+            relation.subject_id === form.subject_id
+        )
+    );
+
+    if (studentsNotConnectedToSubject.length > 0) {
+      alert(
+        "Ada siswa yang belum terhubung dengan guru dan mapel yang dipilih. Periksa kembali assignment siswa-mapel."
+      );
+      return;
+    }
+
     const selectedSubjectForSave =
       subjects.find((subject) => subject.id === form.subject_id) || null;
 
@@ -731,11 +849,6 @@ export default function KepalaSekolahJadwalPage() {
       return;
     }
 
-    if (!form.material_topic.trim()) {
-      alert("Isi materi/topik pembelajaran terlebih dahulu.");
-      return;
-    }
-
     if (selectedStudentIds.length === 0) {
       alert("Pilih minimal 1 siswa untuk jadwal rombel.");
       return;
@@ -760,7 +873,7 @@ export default function KepalaSekolahJadwalPage() {
         end_time: form.end_time,
         duration_minutes: durationMinutes,
         session_name: form.session_name.trim() || "Sesi 1",
-        material_topic: form.material_topic.trim(),
+        material_topic: null,
         semester: form.semester,
         notes: form.notes.trim() || null,
         temporary_schedule_url: temporaryScheduleUrl,
@@ -824,10 +937,10 @@ export default function KepalaSekolahJadwalPage() {
             </h1>
 
             <p className="mt-2 max-w-[880px] text-[15px] leading-6 text-[#6F5549]">
-              Format jadwal mengikuti template sekolah: Hari, Tanggal, Nama
-              Guru, Datang, Pulang, Jam, Sesi, Kelas, Mapel, Materi, Siswa, dan
-              Keterangan. Jadwal ini tidak terhubung otomatis ke Program
-              Semester atau Absensi.
+              Admin/Kepala Sekolah hanya mengatur Hari, Tanggal, Guru, Jam,
+              Sesi, Kelas, Mapel, Siswa, dan Keterangan. Materi pembelajaran
+              diisi oleh guru masing-masing. Jadwal ini tidak terhubung otomatis
+              ke Program Semester atau Absensi.
             </p>
           </div>
 
@@ -1125,9 +1238,15 @@ export default function KepalaSekolahJadwalPage() {
                         </td>
 
                         <td className="max-w-[260px] border-r border-[#F0E1D4] px-4 py-4 print:px-2 print:py-2">
-                          <p className="line-clamp-2 font-bold">
-                            {group.material_topic || "-"}
-                          </p>
+                          {group.material_topic ? (
+                            <p className="line-clamp-2 font-bold">
+                              {group.material_topic}
+                            </p>
+                          ) : (
+                            <span className="inline-flex rounded-full bg-[#F1F5F9] px-3 py-1 text-[11px] font-extrabold text-[#64748B]">
+                              Belum diisi guru
+                            </span>
+                          )}
                         </td>
 
                         <td className="max-w-[280px] border-r border-[#F0E1D4] px-4 py-4 print:px-2 print:py-2">
@@ -1197,7 +1316,7 @@ export default function KepalaSekolahJadwalPage() {
                   Tambah Jadwal Rombel
                 </h2>
                 <p className="mt-1 text-[13px] text-[#6F5549]">
-                  Jadwal ini berdiri sendiri dan tidak otomatis membuat absensi.
+                  Admin mengatur jadwal dasar. Materi pembelajaran diisi oleh guru masing-masing.
                 </p>
               </div>
 
@@ -1215,12 +1334,18 @@ export default function KepalaSekolahJadwalPage() {
                 <FormGroup label="Nama Guru">
                   <select
                     value={form.teacher_id}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const teacherId = event.target.value;
+
                       setForm((prev) => ({
                         ...prev,
-                        teacher_id: event.target.value,
-                      }))
-                    }
+                        teacher_id: teacherId,
+                        subject_id: "",
+                      }));
+
+                      setSelectedStudentIds([]);
+                      setStudentSearch("");
+                    }}
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
                   >
                     <option value="">Pilih guru</option>
@@ -1252,6 +1377,23 @@ export default function KepalaSekolahJadwalPage() {
                   </select>
                 </FormGroup>
               </div>
+
+              {form.teacher_id ? (
+                <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4 text-[13px] leading-6 text-[#6F5549]">
+                  <p>
+                    Siswa dan mapel hanya menampilkan assignment guru pada tahun
+                    ajaran {ACADEMIC_YEAR}.
+                  </p>
+
+                  {subjectOptionsForSchedule.length === 0 ? (
+                    <p className="mt-2 font-bold text-[#BE123C]">
+                      Belum ada mapel yang terhubung dengan guru dan siswa yang
+                      dipilih. Hubungkan terlebih dahulu melalui menu Guru →
+                      Assign.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <FormGroup label="Tanggal">
@@ -1376,20 +1518,6 @@ export default function KepalaSekolahJadwalPage() {
                 </FormGroup>
               </div>
 
-              <FormGroup label="Materi">
-                <input
-                  value={form.material_topic}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      material_topic: event.target.value,
-                    }))
-                  }
-                  placeholder="Contoh: Bab II - Wujud Zat"
-                  className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824]"
-                />
-              </FormGroup>
-
               <FormGroup label="Keterangan">
                 <textarea
                   value={form.notes}
@@ -1475,7 +1603,9 @@ export default function KepalaSekolahJadwalPage() {
                 <div className="mt-4 max-h-[280px] overflow-y-auto rounded-2xl border border-[#EADACA]">
                   {filteredStudents.length === 0 ? (
                     <div className="px-4 py-8 text-center text-[14px] text-[#6F5549]">
-                      Tidak ada siswa ditemukan.
+                      {form.teacher_id
+                        ? "Tidak ada siswa yang terhubung dengan guru ini."
+                        : "Pilih guru terlebih dahulu."}
                     </div>
                   ) : (
                     filteredStudents.map((student) => {
@@ -1612,7 +1742,7 @@ export default function KepalaSekolahJadwalPage() {
 
                   <InfoItem
                     label="Materi"
-                    value={selectedGroup.material_topic || "-"}
+                    value={selectedGroup.material_topic || "Belum diisi guru"}
                   />
 
                   <InfoItem

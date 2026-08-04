@@ -191,6 +191,12 @@ export default function TeacherJadwalPage() {
   const [dayFilter, setDayFilter] = useState("Semua Hari");
   const [subjectFilter, setSubjectFilter] = useState("Semua Mapel");
 
+  const [editingSchedule, setEditingSchedule] =
+    useState<EnrichedSchedule | null>(null);
+  const [materialInput, setMaterialInput] = useState("");
+  const [savingMaterial, setSavingMaterial] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
   async function fetchActiveTeacher() {
     const { data: authData, error: authError } = await supabase.auth.getUser();
 
@@ -439,6 +445,72 @@ export default function TeacherJadwalPage() {
 
   const totalSessions = schedules.length;
 
+  function openMaterialModal(schedule: EnrichedSchedule) {
+    setEditingSchedule(schedule);
+    setMaterialInput(schedule.material_topic || "");
+    setErrorMessage("");
+    setSuccessMessage("");
+  }
+
+  function closeMaterialModal() {
+    if (savingMaterial) return;
+
+    setEditingSchedule(null);
+    setMaterialInput("");
+  }
+
+  async function handleSaveMaterial() {
+    if (!teacher?.id) {
+      setErrorMessage("Data guru aktif tidak ditemukan.");
+      return;
+    }
+
+    if (!editingSchedule?.id) {
+      setErrorMessage("Data jadwal tidak ditemukan.");
+      return;
+    }
+
+    if (editingSchedule.teacher_id !== teacher.id) {
+      setErrorMessage("Jadwal ini bukan milik guru aktif.");
+      return;
+    }
+
+    if (!materialInput.trim()) {
+      setErrorMessage("Materi pembelajaran wajib diisi.");
+      return;
+    }
+
+    setSavingMaterial(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const { error } = await supabase
+        .from("schedules")
+        .update({
+          material_topic: materialInput.trim(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", editingSchedule.id)
+        .eq("teacher_id", teacher.id);
+
+      if (error) throw new Error(error.message);
+
+      setSuccessMessage("Materi pembelajaran berhasil disimpan.");
+      setEditingSchedule(null);
+      setMaterialInput("");
+      await fetchPageData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Gagal menyimpan materi pembelajaran.");
+      }
+    } finally {
+      setSavingMaterial(false);
+    }
+  }
+
   return (
     <TeacherLayout
       activeMenu="Jadwal Mengajar"
@@ -462,7 +534,7 @@ export default function TeacherJadwalPage() {
               <span className="font-bold text-[#2B1B18]">
                 {teacher?.full_name || "guru aktif"}
               </span>
-              .
+              . Materi pembelajaran diisi oleh guru pada jadwal masing-masing.
             </p>
 
             <p className="mt-1 text-xs font-semibold text-[#8A5A48]">
@@ -474,6 +546,12 @@ export default function TeacherJadwalPage() {
         {errorMessage ? (
           <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="mt-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {successMessage}
           </div>
         ) : null}
 
@@ -567,9 +645,8 @@ export default function TeacherJadwalPage() {
                 <div className="border-b border-[#E8D6C1] px-6 py-5">
                   <h2 className="text-lg font-bold">Daftar Jadwal</h2>
                   <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Format mengikuti template jadwal sekolah: hari, tanggal,
-                    datang, pulang, jam, sesi, kelas, mapel, materi, siswa, dan
-                    keterangan.
+                    Admin mengatur jadwal dasar. Guru mengisi atau memperbarui
+                    materi pembelajaran pada jadwal masing-masing.
                   </p>
                 </div>
 
@@ -593,6 +670,7 @@ export default function TeacherJadwalPage() {
                         <th className="px-4 py-4">NIPD</th>
                         <th className="px-4 py-4">Keterangan</th>
                         <th className="px-4 py-4">File</th>
+                        <th className="px-4 py-4">Aksi</th>
                       </tr>
                     </thead>
 
@@ -600,7 +678,7 @@ export default function TeacherJadwalPage() {
                       {sortedSchedules.length === 0 ? (
                         <tr>
                           <td
-                            colSpan={16}
+                            colSpan={17}
                             className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
                           >
                             Belum ada jadwal mengajar untuk guru ini pada
@@ -668,9 +746,15 @@ export default function TeacherJadwalPage() {
                           </td>
 
                           <td className="max-w-[260px] px-4 py-4">
-                            <p className="line-clamp-2 font-semibold text-[#2B1B18]">
-                              {schedule.material_topic || "-"}
-                            </p>
+                            {schedule.material_topic ? (
+                              <p className="line-clamp-2 font-semibold text-[#2B1B18]">
+                                {schedule.material_topic}
+                              </p>
+                            ) : (
+                              <span className="inline-flex whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">
+                                Belum diisi
+                              </span>
+                            )}
                           </td>
 
                           <td className="px-4 py-4 font-semibold">
@@ -700,6 +784,18 @@ export default function TeacherJadwalPage() {
                             ) : (
                               <span className="text-sm text-[#6B4A3A]">-</span>
                             )}
+                          </td>
+
+                          <td className="px-4 py-4">
+                            <button
+                              type="button"
+                              onClick={() => openMaterialModal(schedule)}
+                              className="inline-flex whitespace-nowrap rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
+                            >
+                              {schedule.material_topic
+                                ? "Edit Materi"
+                                : "Isi Materi"}
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -774,8 +870,16 @@ export default function TeacherJadwalPage() {
 
                         <p className="mt-1 text-sm text-[#6B4A3A]">
                           {schedule.subject_name || "-"} •{" "}
-                          {schedule.material_topic || "-"}
+                          {schedule.material_topic || "Materi belum diisi"}
                         </p>
+
+                        <button
+                          type="button"
+                          onClick={() => openMaterialModal(schedule)}
+                          className="mt-3 w-full rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
+                        >
+                          {schedule.material_topic ? "Edit Materi" : "Isi Materi"}
+                        </button>
 
                         {schedule.notes ? (
                           <p className="mt-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-xs text-[#6B4A3A]">
@@ -790,10 +894,11 @@ export default function TeacherJadwalPage() {
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
                   <h2 className="text-lg font-bold">Catatan</h2>
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Jadwal guru hanya bersifat lihat data. Untuk membuat atau
-                    mengubah jadwal, gunakan menu Kepala Sekolah → Jadwal Guru.
-                    Jadwal ini tidak terhubung langsung dengan Program Semester,
-                    Bab/Sub Bab, Absensi, atau Laporan KBM.
+                    Jadwal dasar dibuat oleh Kepala Sekolah/Admin. Guru tidak
+                    dapat mengubah tanggal, jam, siswa, atau mapel, tetapi guru
+                    dapat mengisi dan memperbarui materi pembelajaran pada jadwal
+                    miliknya sendiri. Jadwal ini tidak terhubung langsung dengan
+                    Program Semester, Bab/Sub Bab, Absensi, atau Laporan KBM.
                   </p>
                 </div>
               </div>
@@ -801,6 +906,111 @@ export default function TeacherJadwalPage() {
           </>
         ) : null}
       </div>
+
+      {editingSchedule ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="w-full max-w-[520px] overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex items-start justify-between border-b border-[#E8D6C1] px-6 py-5">
+              <div>
+                <h2 className="text-xl font-bold text-[#2B1B18]">
+                  {editingSchedule.material_topic
+                    ? "Edit Materi Pembelajaran"
+                    : "Isi Materi Pembelajaran"}
+                </h2>
+                <p className="mt-1 text-sm text-[#6B4A3A]">
+                  {editingSchedule.subject_name} •{" "}
+                  {formatDate(editingSchedule.schedule_date)}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeMaterialModal}
+                disabled={savingMaterial}
+                className="text-2xl leading-none text-[#6B4A3A] transition hover:text-[#7A1F2B] disabled:opacity-50"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-3 rounded-2xl border border-[#E8D6C1] bg-white p-4 text-sm md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-bold text-[#6B4A3A]">Siswa</p>
+                  <p className="mt-1 font-bold text-[#2B1B18]">
+                    {editingSchedule.student_name}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold text-[#6B4A3A]">Kelas</p>
+                  <p className="mt-1 font-bold text-[#2B1B18]">
+                    {formatClass(
+                      editingSchedule.student_level,
+                      editingSchedule.student_grade
+                    )}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold text-[#6B4A3A]">Jam</p>
+                  <p className="mt-1 font-bold text-[#2B1B18]">
+                    {formatTime(editingSchedule.start_time)} -{" "}
+                    {formatTime(editingSchedule.end_time)}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold text-[#6B4A3A]">Mapel</p>
+                  <p className="mt-1 font-bold text-[#2B1B18]">
+                    {editingSchedule.subject_name}
+                  </p>
+                </div>
+              </div>
+
+              {errorMessage ? (
+                <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {errorMessage}
+                </div>
+              ) : null}
+
+              <label className="block">
+                <span className="text-sm font-bold text-[#2B1B18]">
+                  Materi Pembelajaran
+                </span>
+                <textarea
+                  value={materialInput}
+                  onChange={(event) => setMaterialInput(event.target.value)}
+                  rows={5}
+                  autoFocus
+                  placeholder="Contoh: Bab II - Wujud Zat dan Perubahannya"
+                  className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#7A1F2B]"
+                />
+              </label>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={closeMaterialModal}
+                  disabled={savingMaterial}
+                  className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+                >
+                  Batal
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveMaterial}
+                  disabled={savingMaterial}
+                  className="h-11 rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingMaterial ? "Menyimpan..." : "Simpan Materi"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </TeacherLayout>
   );
 }

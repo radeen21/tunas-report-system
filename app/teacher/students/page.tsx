@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
@@ -109,19 +114,25 @@ type KbmForm = {
 
 const ACADEMIC_YEAR = "2026/2027";
 
-const initialKbmForm: KbmForm = {
-  student_id: "",
-  subject_id: "",
-  report_date: new Date().toISOString().slice(0, 10),
-  class_level: "",
-  semester: "Genap",
-  chapter: "",
-  material_topic: "",
-  learning_issue: "",
-  solution: "",
-  teacher_note: "",
-  status: "pending_review",
-};
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function createInitialKbmForm(): KbmForm {
+  return {
+    student_id: "",
+    subject_id: "",
+    report_date: getTodayDate(),
+    class_level: "",
+    semester: "Genap",
+    chapter: "",
+    material_topic: "",
+    learning_issue: "",
+    solution: "",
+    teacher_note: "",
+    status: "pending_review",
+  };
+}
 
 function normalizeRelation<T>(value: T | T[] | null): T | null {
   if (Array.isArray(value)) return value[0] || null;
@@ -194,10 +205,6 @@ function getProgressColor(progress: number | null) {
   return "bg-red-500";
 }
 
-function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -239,19 +246,29 @@ export default function TeacherStudentsPage() {
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [levelFilter, setLevelFilter] = useState("Semua Level");
   const [statusFilter, setStatusFilter] = useState("Semua Status");
 
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [studentNameInput, setStudentNameInput] = useState("");
+  const [savingStudentName, setSavingStudentName] = useState(false);
+
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
-  const [reportForm, setReportForm] = useState<KbmForm>(initialKbmForm);
+  const [reportForm, setReportForm] = useState<KbmForm>(
+    createInitialKbmForm()
+  );
 
   async function fetchActiveTeacher() {
-    const { data: authData, error: authError } = await supabase.auth.getUser();
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser();
 
-    if (authError) throw new Error(authError.message);
+    if (authError) {
+      throw new Error(authError.message);
+    }
 
     const email = (
       authData.user?.email ||
@@ -278,8 +295,9 @@ export default function TeacherStudentsPage() {
       if (error) throw new Error(error.message);
 
       if (data) {
-        setTeacher(data as Teacher);
-        return data as Teacher;
+        const activeTeacher = data as Teacher;
+        setTeacher(activeTeacher);
+        return activeTeacher;
       }
     }
 
@@ -294,8 +312,9 @@ export default function TeacherStudentsPage() {
       if (error) throw new Error(error.message);
 
       if (data) {
-        setTeacher(data as Teacher);
-        return data as Teacher;
+        const activeTeacher = data as Teacher;
+        setTeacher(activeTeacher);
+        return activeTeacher;
       }
     }
 
@@ -310,7 +329,9 @@ export default function TeacherStudentsPage() {
       .eq("teacher_id", teacherId)
       .eq("academic_year", ACADEMIC_YEAR);
 
-    if (relationError) throw new Error(relationError.message);
+    if (relationError) {
+      throw new Error(relationError.message);
+    }
 
     const relations = (relationData || []) as StudentTeacherRow[];
 
@@ -335,44 +356,52 @@ export default function TeacherStudentsPage() {
         .from("students")
         .select(
           `
-          id,
-          user_id,
-          parent_id,
-          homeroom_teacher_id,
-          nis,
-          nisn,
-          full_name,
-          level,
-          grade,
-          academic_year,
-          status,
-          birth_date,
-          progress,
-          attendance,
-          created_at,
-          parents (
             id,
+            user_id,
+            parent_id,
+            homeroom_teacher_id,
+            nis,
+            nisn,
             full_name,
-            email,
-            phone,
-            relation
-          )
-        `
+            level,
+            grade,
+            academic_year,
+            status,
+            birth_date,
+            progress,
+            attendance,
+            created_at,
+            parents (
+              id,
+              full_name,
+              email,
+              phone,
+              relation
+            )
+          `
         )
         .in("id", studentIds)
         .order("full_name", { ascending: true }),
 
       subjectIds.length > 0
         ? supabase
-          .from("subjects")
-          .select("id, name, level, grade")
-          .in("id", subjectIds)
-          .order("name", { ascending: true })
-        : Promise.resolve({ data: [], error: null }),
+            .from("subjects")
+            .select("id, name, level, grade")
+            .in("id", subjectIds)
+            .order("name", { ascending: true })
+        : Promise.resolve({
+            data: [] as Subject[],
+            error: null,
+          }),
     ]);
 
-    if (studentsRes.error) throw new Error(studentsRes.error.message);
-    if (subjectsRes.error) throw new Error(subjectsRes.error.message);
+    if (studentsRes.error) {
+      throw new Error(studentsRes.error.message);
+    }
+
+    if (subjectsRes.error) {
+      throw new Error(subjectsRes.error.message);
+    }
 
     const rows = (studentsRes.data || []) as StudentRow[];
 
@@ -402,10 +431,14 @@ export default function TeacherStudentsPage() {
   async function fetchAcademicReports(teacherId: string) {
     const { data, error } = await supabase
       .from("academic_reports")
-      .select("id, student_id, teacher_id, subject_id, final_score, final_grade, status")
+      .select(
+        "id, student_id, teacher_id, subject_id, final_score, final_grade, status"
+      )
       .eq("teacher_id", teacherId);
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw new Error(error.message);
+    }
 
     setAcademicReports((data || []) as AcademicReportRow[]);
   }
@@ -413,10 +446,14 @@ export default function TeacherStudentsPage() {
   async function fetchAttendance(teacherId: string) {
     const { data, error } = await supabase
       .from("attendance")
-      .select("id, student_id, teacher_id, subject_id, attendance_status")
+      .select(
+        "id, student_id, teacher_id, subject_id, attendance_status"
+      )
       .eq("teacher_id", teacherId);
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw new Error(error.message);
+    }
 
     setAttendanceList((data || []) as AttendanceRow[]);
   }
@@ -463,39 +500,47 @@ export default function TeacherStudentsPage() {
   }
 
   useEffect(() => {
-    fetchPageData();
+    void fetchPageData();
 
     const channel = supabase
       .channel("teacher-students-realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students" },
-        () => fetchPageData()
+        () => void fetchPageData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "student_teachers" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "student_teachers",
+        },
+        () => void fetchPageData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "teachers" },
-        () => fetchPageData()
+        () => void fetchPageData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "subjects" },
-        () => fetchPageData()
+        () => void fetchPageData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "academic_reports" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "academic_reports",
+        },
+        () => void fetchPageData()
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "attendance" },
-        () => fetchPageData()
+        () => void fetchPageData()
       )
       .subscribe();
 
@@ -505,31 +550,35 @@ export default function TeacherStudentsPage() {
   }, []);
 
   const filteredStudents = useMemo(() => {
-    const keyword = search.toLowerCase().trim();
+    const keyword = normalizeText(search);
 
     return students.filter((student) => {
       const level = normalizeLevel(student.level);
 
       const matchSearch =
         !keyword ||
-        student.full_name.toLowerCase().includes(keyword) ||
-        student.nis?.toLowerCase().includes(keyword) ||
-        student.nisn?.toLowerCase().includes(keyword) ||
-        student.parents?.full_name?.toLowerCase().includes(keyword) ||
-        level.toLowerCase().includes(keyword) ||
-        student.grade?.toLowerCase().includes(keyword);
+        normalizeText(student.full_name).includes(keyword) ||
+        normalizeText(student.nis).includes(keyword) ||
+        normalizeText(student.nisn).includes(keyword) ||
+        normalizeText(student.parents?.full_name).includes(keyword) ||
+        normalizeText(level).includes(keyword) ||
+        normalizeText(student.grade).includes(keyword);
 
-      const matchLevel = levelFilter === "Semua Level" || level === levelFilter;
+      const matchLevel =
+        levelFilter === "Semua Level" || level === levelFilter;
 
       const matchStatus =
-        statusFilter === "Semua Status" || student.status === statusFilter;
+        statusFilter === "Semua Status" ||
+        student.status === statusFilter;
 
       return matchSearch && matchLevel && matchStatus;
     });
   }, [students, search, levelFilter, statusFilter]);
 
   const subjectMap = useMemo(() => {
-    return new Map(subjects.map((subject) => [subject.id, subject]));
+    return new Map(
+      subjects.map((subject) => [subject.id, subject])
+    );
   }, [subjects]);
 
   const subjectOptionsForSelectedStudent = useMemo(() => {
@@ -537,105 +586,269 @@ export default function TeacherStudentsPage() {
 
     const subjectIds = new Set(
       studentTeachers
-        .filter((relation) => relation.student_id === reportForm.student_id)
+        .filter(
+          (relation) =>
+            relation.student_id === reportForm.student_id
+        )
         .map((relation) => relation.subject_id)
         .filter(Boolean) as string[]
     );
 
-    return subjects.filter((subject) => subjectIds.has(subject.id));
+    return subjects.filter((subject) =>
+      subjectIds.has(subject.id)
+    );
   }, [subjects, studentTeachers, reportForm.student_id]);
 
   const activeStudents = students.filter(
-    (student) => student.status === "active" || !student.status
+    (student) =>
+      student.status === "active" || !student.status
   ).length;
 
   const sdStudents = students.filter(
-    (student) => normalizeLevel(student.level) === "SD"
+    (student) =>
+      normalizeLevel(student.level) === "SD"
   ).length;
 
   const smpStudents = students.filter(
-    (student) => normalizeLevel(student.level) === "SMP"
+    (student) =>
+      normalizeLevel(student.level) === "SMP"
   ).length;
 
   const smaStudents = students.filter(
-    (student) => normalizeLevel(student.level) === "SMA"
+    (student) =>
+      normalizeLevel(student.level) === "SMA"
   ).length;
 
   const averageScore = useMemo(() => {
-    const studentIds = new Set(students.map((student) => student.id));
+    const studentIds = new Set(
+      students.map((student) => student.id)
+    );
 
     const scores = academicReports
-      .filter((report) => report.student_id && studentIds.has(report.student_id))
-      .map((report) => Number(report.final_grade ?? report.final_score ?? 0))
+      .filter(
+        (report) =>
+          report.student_id &&
+          studentIds.has(report.student_id)
+      )
+      .map((report) =>
+        Number(
+          report.final_grade ??
+            report.final_score ??
+            0
+        )
+      )
       .filter((score) => score > 0);
 
     if (scores.length === 0) return 0;
 
-    const total = scores.reduce((sum, score) => sum + score, 0);
+    const total = scores.reduce(
+      (sum, score) => sum + score,
+      0
+    );
 
     return Math.round(total / scores.length);
   }, [academicReports, students]);
 
   function getStudentAverageScore(studentId: string) {
-    const reports = academicReports.filter(
-      (report) => report.student_id === studentId
-    );
-
-    const scores = reports
-      .map((report) => Number(report.final_grade ?? report.final_score ?? 0))
+    const scores = academicReports
+      .filter(
+        (report) => report.student_id === studentId
+      )
+      .map((report) =>
+        Number(
+          report.final_grade ??
+            report.final_score ??
+            0
+        )
+      )
       .filter((score) => score > 0);
 
     if (scores.length === 0) return 0;
 
-    const total = scores.reduce((sum, score) => sum + score, 0);
+    const total = scores.reduce(
+      (sum, score) => sum + score,
+      0
+    );
 
     return Math.round(total / scores.length);
   }
 
-  function getStudentAttendancePercentage(studentId: string) {
+  function getStudentAttendancePercentage(
+    studentId: string
+  ) {
     const records = attendanceList.filter(
-      (attendance) => attendance.student_id === studentId
+      (attendance) =>
+        attendance.student_id === studentId
     );
 
     if (records.length === 0) return 0;
 
     const present = records.filter(
-      (attendance) => attendance.attendance_status === "Hadir"
+      (attendance) =>
+        normalizeText(
+          attendance.attendance_status
+        ) === "hadir"
     ).length;
 
-    return Math.round((present / records.length) * 100);
+    return Math.round(
+      (present / records.length) * 100
+    );
   }
 
   function getStudentSubjectLabels(studentId: string) {
     const relationSubjects = studentTeachers
-      .filter((relation) => relation.student_id === studentId)
+      .filter(
+        (relation) =>
+          relation.student_id === studentId
+      )
       .map((relation) => {
         if (!relation.subject_id) return null;
-        return subjectMap.get(relation.subject_id) || null;
+
+        return (
+          subjectMap.get(relation.subject_id) || null
+        );
       })
       .filter(Boolean) as Subject[];
 
     if (relationSubjects.length === 0) return "-";
 
-    return relationSubjects.map((subject) => subject.name || "-").join(", ");
+    return relationSubjects
+      .map((subject) => subject.name || "-")
+      .join(", ");
+  }
+
+  function openEditStudentName(student: Student) {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setEditingStudent(student);
+    setStudentNameInput(student.full_name);
+  }
+
+  function closeEditStudentName() {
+    if (savingStudentName) return;
+
+    setEditingStudent(null);
+    setStudentNameInput("");
+    setErrorMessage("");
+  }
+
+  async function handleSaveStudentName() {
+    if (!teacher?.id) {
+      setErrorMessage(
+        "Data guru aktif tidak ditemukan."
+      );
+      return;
+    }
+
+    if (!editingStudent?.id) {
+      setErrorMessage(
+        "Data siswa tidak ditemukan."
+      );
+      return;
+    }
+
+    const newName = studentNameInput.trim();
+
+    if (!newName) {
+      setErrorMessage(
+        "Nama siswa wajib diisi."
+      );
+      return;
+    }
+
+    const isConnectedToTeacher =
+      studentTeachers.some(
+        (relation) =>
+          relation.teacher_id === teacher.id &&
+          relation.student_id ===
+            editingStudent.id &&
+          relation.academic_year ===
+            ACADEMIC_YEAR
+      );
+
+    if (!isConnectedToTeacher) {
+      setErrorMessage(
+        "Siswa ini tidak terhubung dengan guru aktif."
+      );
+      return;
+    }
+
+    setSavingStudentName(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const { error } = await supabase
+        .from("students")
+        .update({
+          full_name: newName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", editingStudent.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      setStudents((currentStudents) =>
+        currentStudents
+          .map((student) =>
+            student.id === editingStudent.id
+              ? {
+                  ...student,
+                  full_name: newName,
+                }
+              : student
+          )
+          .sort((a, b) =>
+            a.full_name.localeCompare(b.full_name)
+          )
+      );
+
+      setSuccessMessage(
+        `Nama siswa berhasil diubah menjadi "${newName}".`
+      );
+
+      setEditingStudent(null);
+      setStudentNameInput("");
+
+      await fetchPageData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage(
+          "Gagal mengubah nama siswa."
+        );
+      }
+    } finally {
+      setSavingStudentName(false);
+    }
   }
 
   function openReportModal(student?: Student) {
     setErrorMessage("");
 
     const studentSubjects = student
-      ? studentTeachers.filter((relation) => relation.student_id === student.id)
+      ? studentTeachers.filter(
+          (relation) =>
+            relation.student_id === student.id
+        )
       : [];
 
-    const firstSubjectId = studentSubjects[0]?.subject_id || "";
+    const firstSubjectId =
+      studentSubjects[0]?.subject_id || "";
 
     setReportForm({
-      ...initialKbmForm,
+      ...createInitialKbmForm(),
       student_id: student?.id || "",
       subject_id: firstSubjectId,
-      class_level: student ? formatClass(student.level, student.grade) : "",
-      report_date: getTodayDate(),
-      status: "pending_review",
+      class_level: student
+        ? formatClass(
+            student.level,
+            student.grade
+          )
+        : "",
     });
 
     setIsReportModalOpen(true);
@@ -644,36 +857,42 @@ export default function TeacherStudentsPage() {
   function closeReportModal() {
     setIsReportModalOpen(false);
     setErrorMessage("");
-
-    setReportForm({
-      ...initialKbmForm,
-      report_date: getTodayDate(),
-      status: "pending_review",
-    });
+    setReportForm(createInitialKbmForm());
   }
 
-  function handleReportStudentChange(studentId: string) {
-    const selectedStudent = students.find((student) => student.id === studentId);
-
-    const studentSubjects = studentTeachers.filter(
-      (relation) => relation.student_id === studentId
+  function handleReportStudentChange(
+    studentId: string
+  ) {
+    const selectedStudent = students.find(
+      (student) => student.id === studentId
     );
 
-    const firstSubjectId = studentSubjects[0]?.subject_id || "";
+    const studentSubjects = studentTeachers.filter(
+      (relation) =>
+        relation.student_id === studentId
+    );
 
-    setReportForm({
-      ...reportForm,
+    const firstSubjectId =
+      studentSubjects[0]?.subject_id || "";
+
+    setReportForm((previous) => ({
+      ...previous,
       student_id: studentId,
       subject_id: firstSubjectId,
       class_level: selectedStudent
-        ? formatClass(selectedStudent.level, selectedStudent.grade)
+        ? formatClass(
+            selectedStudent.level,
+            selectedStudent.grade
+          )
         : "",
-    });
+    }));
   }
 
   function validateKbmReport() {
     if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
+      setErrorMessage(
+        "Data guru aktif tidak ditemukan."
+      );
       return false;
     }
 
@@ -683,17 +902,21 @@ export default function TeacherStudentsPage() {
     }
 
     if (!reportForm.subject_id) {
-      setErrorMessage("Mata pelajaran wajib dipilih.");
+      setErrorMessage(
+        "Mata pelajaran wajib dipilih."
+      );
       return false;
     }
 
-    const allowedRelation = studentTeachers.some((relation) => {
-      return (
-        relation.student_id === reportForm.student_id &&
-        relation.teacher_id === teacher.id &&
-        relation.subject_id === reportForm.subject_id
+    const allowedRelation =
+      studentTeachers.some(
+        (relation) =>
+          relation.student_id ===
+            reportForm.student_id &&
+          relation.teacher_id === teacher.id &&
+          relation.subject_id ===
+            reportForm.subject_id
       );
-    });
 
     if (!allowedRelation) {
       setErrorMessage(
@@ -703,12 +926,16 @@ export default function TeacherStudentsPage() {
     }
 
     if (!reportForm.report_date) {
-      setErrorMessage("Tanggal laporan wajib diisi.");
+      setErrorMessage(
+        "Tanggal laporan wajib diisi."
+      );
       return false;
     }
 
     if (!reportForm.material_topic.trim()) {
-      setErrorMessage("Materi KBM wajib diisi.");
+      setErrorMessage(
+        "Materi KBM wajib diisi."
+      );
       return false;
     }
 
@@ -716,7 +943,7 @@ export default function TeacherStudentsPage() {
   }
 
   async function handleSubmitKbmReport(
-    event: React.FormEvent<HTMLFormElement>
+    event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
     setErrorMessage("");
@@ -727,33 +954,52 @@ export default function TeacherStudentsPage() {
     setSavingReport(true);
 
     try {
-      const { error } = await supabase.from("kbm_reports").insert({
-        student_id: reportForm.student_id,
-        teacher_id: teacher.id,
-        subject_id: reportForm.subject_id,
-        report_date: reportForm.report_date,
-        class_level: reportForm.class_level.trim() || null,
-        semester: reportForm.semester,
-        chapter: reportForm.chapter.trim() || null,
-        material_topic: reportForm.material_topic.trim(),
-        learning_issue: reportForm.learning_issue.trim() || null,
-        solution: reportForm.solution.trim() || null,
-        teacher_note: reportForm.teacher_note.trim() || null,
-        status: reportForm.status,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      const now = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("kbm_reports")
+        .insert({
+          student_id: reportForm.student_id,
+          teacher_id: teacher.id,
+          subject_id: reportForm.subject_id,
+          report_date: reportForm.report_date,
+          class_level:
+            reportForm.class_level.trim() ||
+            null,
+          semester: reportForm.semester,
+          chapter:
+            reportForm.chapter.trim() || null,
+          material_topic:
+            reportForm.material_topic.trim(),
+          learning_issue:
+            reportForm.learning_issue.trim() ||
+            null,
+          solution:
+            reportForm.solution.trim() || null,
+          teacher_note:
+            reportForm.teacher_note.trim() ||
+            null,
+          status: reportForm.status,
+          created_at: now,
+          updated_at: now,
+        });
 
       if (error) {
         throw new Error(error.message);
       }
+
+      setSuccessMessage(
+        "Laporan KBM berhasil disimpan."
+      );
 
       closeReportModal();
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
       } else {
-        setErrorMessage("Gagal menyimpan laporan KBM.");
+        setErrorMessage(
+          "Gagal menyimpan laporan KBM."
+        );
       }
     } finally {
       setSavingReport(false);
@@ -764,7 +1010,9 @@ export default function TeacherStudentsPage() {
     <TeacherLayout
       activeMenu={"Murid Saya" as any}
       teacherName={teacher?.full_name || "Guru"}
-      teacherSubject={formatTeacherSubjects(teacher?.subjects ?? null)}
+      teacherSubject={formatTeacherSubjects(
+        teacher?.subjects ?? null
+      )}
       searchPlaceholder="Cari murid saya..."
     >
       <div className="w-full max-w-full overflow-hidden">
@@ -781,7 +1029,8 @@ export default function TeacherStudentsPage() {
             <p className="mt-1 text-sm text-[#6B4A3A]">
               Daftar murid yang terhubung dengan{" "}
               <span className="font-bold text-[#2B1B18]">
-                {teacher?.full_name || "guru aktif"}
+                {teacher?.full_name ||
+                  "guru aktif"}
               </span>{" "}
               melalui data siswa.
             </p>
@@ -790,73 +1039,89 @@ export default function TeacherStudentsPage() {
           <button
             type="button"
             onClick={() => openReportModal()}
-            disabled={!teacher || students.length === 0}
+            disabled={
+              !teacher || students.length === 0
+            }
             className="w-fit rounded-xl bg-[#7A1F2B] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:bg-[#C9AAB2]"
           >
             + Buat Laporan
           </button>
         </div>
 
-        {errorMessage && !isReportModalOpen && (
+        {errorMessage &&
+        !isReportModalOpen &&
+        !editingStudent ? (
           <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
           </div>
-        )}
+        ) : null}
 
-        {loading && (
+        {successMessage ? (
+          <div className="mt-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
+
+        {loading ? (
           <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
             Loading data murid...
           </div>
-        )}
+        ) : null}
 
-        {!loading && teacher && students.length === 0 ? (
+        {!loading &&
+        teacher &&
+        students.length === 0 ? (
           <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 text-sm leading-6 text-[#6B4A3A] shadow-sm">
-            Belum ada murid yang terhubung ke guru ini. Hubungkan siswa dari menu{" "}
+            Belum ada murid yang terhubung ke guru
+            ini. Hubungkan siswa dari menu{" "}
             <span className="font-bold text-[#2B1B18]">
-              Kepala Sekolah → Siswa → Edit Siswa → Guru yang Mengajar / Mapel
+              Kepala Sekolah → Siswa → Edit Siswa
+              → Guru yang Mengajar / Mapel
             </span>
             .
           </div>
         ) : null}
 
-        {!loading && (
+        {!loading ? (
           <>
             <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Total Murid</p>
-                <p className="mt-4 text-3xl font-bold">{students.length}</p>
-              </div>
+              <SummaryCard
+                label="Total Murid"
+                value={students.length}
+              />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Murid Aktif</p>
-                <p className="mt-4 text-3xl font-bold">{activeStudents}</p>
-              </div>
+              <SummaryCard
+                label="Murid Aktif"
+                value={activeStudents}
+              />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">SD / SMP / SMA</p>
-                <p className="mt-4 text-3xl font-bold">
-                  {sdStudents}/{smpStudents}/{smaStudents}
-                </p>
-              </div>
+              <SummaryCard
+                label="SD / SMP / SMA"
+                value={`${sdStudents}/${smpStudents}/${smaStudents}`}
+              />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Rata-rata Nilai</p>
-                <p className="mt-4 text-3xl font-bold">{averageScore}</p>
-              </div>
+              <SummaryCard
+                label="Rata-rata Nilai"
+                value={averageScore}
+              />
             </div>
 
             <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_220px_220px]">
                 <input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) =>
+                    setSearch(event.target.value)
+                  }
                   placeholder="Cari nama murid, NIPD, NISN, orang tua..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
                 <select
                   value={levelFilter}
-                  onChange={(event) => setLevelFilter(event.target.value)}
+                  onChange={(event) =>
+                    setLevelFilter(event.target.value)
+                  }
                   className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 >
                   <option>Semua Level</option>
@@ -867,12 +1132,20 @@ export default function TeacherStudentsPage() {
 
                 <select
                   value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value)}
+                  onChange={(event) =>
+                    setStatusFilter(
+                      event.target.value
+                    )
+                  }
                   className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 >
                   <option>Semua Status</option>
-                  <option value="active">active</option>
-                  <option value="inactive">inactive</option>
+                  <option value="active">
+                    active
+                  </option>
+                  <option value="inactive">
+                    inactive
+                  </option>
                 </select>
               </div>
             </div>
@@ -880,157 +1153,213 @@ export default function TeacherStudentsPage() {
             <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
               <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
                 <div className="border-b border-[#E8D6C1] px-6 py-5">
-                  <h2 className="text-lg font-bold">Daftar Murid</h2>
+                  <h2 className="text-lg font-bold">
+                    Daftar Murid
+                  </h2>
                   <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Murid yang terhubung dengan guru dari relasi siswa-guru-mapel.
+                    Guru dapat memperbaiki nama murid
+                    yang terhubung dengannya.
                   </p>
                 </div>
 
                 <div className="divide-y divide-[#E8D6C1]">
-                  {filteredStudents.length === 0 && (
+                  {filteredStudents.length === 0 ? (
                     <div className="px-6 py-10 text-center text-sm text-[#6B4A3A]">
-                      Belum ada murid yang sesuai filter.
+                      Belum ada murid yang sesuai
+                      filter.
                     </div>
+                  ) : null}
+
+                  {filteredStudents.map(
+                    (student) => {
+                      const score =
+                        getStudentAverageScore(
+                          student.id
+                        );
+
+                      const attendance =
+                        getStudentAttendancePercentage(
+                          student.id
+                        );
+
+                      const progress = Number(
+                        student.progress ||
+                          score ||
+                          0
+                      );
+
+                      const subjectLabels =
+                        getStudentSubjectLabels(
+                          student.id
+                        );
+
+                      return (
+                        <div
+                          key={student.id}
+                          className="flex flex-col gap-4 px-6 py-5 transition hover:bg-[#FFF8EF] xl:flex-row xl:items-center xl:justify-between"
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
+                              {getInitials(
+                                student.full_name
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-base font-bold">
+                                  {
+                                    student.full_name
+                                  }
+                                </p>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openEditStudentName(
+                                      student
+                                    )
+                                  }
+                                  className="rounded-lg border border-[#DCC8B6] bg-white px-2.5 py-1 text-[11px] font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF]"
+                                >
+                                  Edit Nama
+                                </button>
+
+                                <span
+                                  className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
+                                    student.status ||
+                                      "active"
+                                  )}`}
+                                >
+                                  {student.status ||
+                                    "active"}
+                                </span>
+                              </div>
+
+                              <p className="mt-1 text-sm text-[#6B4A3A]">
+                                {formatClass(
+                                  student.level,
+                                  student.grade
+                                )}{" "}
+                                •{" "}
+                                {student.academic_year ||
+                                  "-"}
+                              </p>
+
+                              <p className="mt-1 text-sm text-[#6B4A3A]">
+                                Mapel:{" "}
+                                <span className="font-semibold text-[#2B1B18]">
+                                  {subjectLabels}
+                                </span>
+                              </p>
+
+                              <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#6B4A3A] md:grid-cols-2">
+                                <StudentInfo
+                                  label="NIPD"
+                                  value={
+                                    student.nis || "-"
+                                  }
+                                />
+
+                                <StudentInfo
+                                  label="NISN"
+                                  value={
+                                    student.nisn || "-"
+                                  }
+                                />
+
+                                <StudentInfo
+                                  label="Lahir"
+                                  value={formatDate(
+                                    student.birth_date
+                                  )}
+                                />
+
+                                <StudentInfo
+                                  label="Orang Tua"
+                                  value={
+                                    student.parents
+                                      ?.full_name ||
+                                    "-"
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 xl:w-[260px]">
+                            <MetricCard
+                              label="Nilai"
+                              value={score}
+                            />
+
+                            <MetricCard
+                              label="Absensi"
+                              value={`${attendance}%`}
+                            />
+
+                            <div className="col-span-2">
+                              <div className="mb-2 flex items-center justify-between text-xs">
+                                <span className="text-[#6B4A3A]">
+                                  Progress
+                                </span>
+
+                                <span className="font-bold text-[#2B1B18]">
+                                  {progress}%
+                                </span>
+                              </div>
+
+                              <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
+                                <div
+                                  className={`h-full rounded-full ${getProgressColor(
+                                    progress
+                                  )}`}
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      progress
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openReportModal(
+                                  student
+                                )
+                              }
+                              className="col-span-2 mt-2 rounded-xl bg-[#7A1F2B] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#54131D]"
+                            >
+                              + Buat Laporan
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
                   )}
-
-                  {filteredStudents.map((student) => {
-                    const score = getStudentAverageScore(student.id);
-                    const attendance = getStudentAttendancePercentage(
-                      student.id
-                    );
-                    const progress = Number(student.progress || score || 0);
-                    const subjectLabels = getStudentSubjectLabels(student.id);
-
-                    return (
-                      <div
-                        key={student.id}
-                        className="flex flex-col gap-4 px-6 py-5 transition hover:bg-[#FFF8EF] xl:flex-row xl:items-center xl:justify-between"
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#FDE7D7] text-sm font-bold text-[#7A1F2B]">
-                            {getInitials(student.full_name)}
-                          </div>
-
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-base font-bold">
-                                {student.full_name}
-                              </p>
-
-                              <span
-                                className={`rounded-full px-3 py-1 text-xs font-bold ${getStatusBadge(
-                                  student.status || "active"
-                                )}`}
-                              >
-                                {student.status || "active"}
-                              </span>
-                            </div>
-
-                            <p className="mt-1 text-sm text-[#6B4A3A]">
-                              {formatClass(student.level, student.grade)} •{" "}
-                              {student.academic_year || "-"}
-                            </p>
-
-                            <p className="mt-1 text-sm text-[#6B4A3A]">
-                              Mapel:{" "}
-                              <span className="font-semibold text-[#2B1B18]">
-                                {subjectLabels}
-                              </span>
-                            </p>
-
-                            <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#6B4A3A] md:grid-cols-2">
-                              <p>
-                                <span className="font-semibold text-[#2B1B18]">
-                                  NIPD:
-                                </span>{" "}
-                                {student.nis || "-"}
-                              </p>
-
-                              <p>
-                                <span className="font-semibold text-[#2B1B18]">
-                                  NISN:
-                                </span>{" "}
-                                {student.nisn || "-"}
-                              </p>
-
-                              <p>
-                                <span className="font-semibold text-[#2B1B18]">
-                                  Lahir:
-                                </span>{" "}
-                                {formatDate(student.birth_date)}
-                              </p>
-
-                              <p>
-                                <span className="font-semibold text-[#2B1B18]">
-                                  Orang Tua:
-                                </span>{" "}
-                                {student.parents?.full_name || "-"}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 xl:w-[260px]">
-                          <div className="rounded-2xl bg-[#FFF8EF] p-4">
-                            <p className="text-xs text-[#6B4A3A]">Nilai</p>
-                            <p className="mt-2 text-2xl font-bold text-[#7A1F2B]">
-                              {score}
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl bg-[#FFF8EF] p-4">
-                            <p className="text-xs text-[#6B4A3A]">Absensi</p>
-                            <p className="mt-2 text-2xl font-bold text-[#7A1F2B]">
-                              {attendance}%
-                            </p>
-                          </div>
-
-                          <div className="col-span-2">
-                            <div className="mb-2 flex items-center justify-between text-xs">
-                              <span className="text-[#6B4A3A]">Progress</span>
-                              <span className="font-bold text-[#2B1B18]">
-                                {progress}%
-                              </span>
-                            </div>
-
-                            <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
-                              <div
-                                className={`h-full rounded-full ${getProgressColor(
-                                  progress
-                                )}`}
-                                style={{
-                                  width: `${Math.min(100, progress)}%`,
-                                }}
-                              />
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => openReportModal(student)}
-                            className="col-span-2 mt-2 rounded-xl bg-[#7A1F2B] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#54131D]"
-                          >
-                            + Buat Laporan
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
 
               <div className="space-y-5">
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Guru Aktif</h2>
+                  <h2 className="text-lg font-bold">
+                    Guru Aktif
+                  </h2>
 
                   <div className="mt-5 flex items-center gap-4">
                     <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#7A1F2B] text-lg font-bold text-white">
-                      {getInitials(teacher?.full_name || "Guru")}
+                      {getInitials(
+                        teacher?.full_name || "Guru"
+                      )}
                     </div>
 
                     <div>
                       <p className="font-bold">
-                        {teacher?.full_name || "Belum ada guru"}
+                        {teacher?.full_name ||
+                          "Belum ada guru"}
                       </p>
                       <p className="mt-1 text-sm text-[#6B4A3A]">
                         {teacher?.teacher_code || "-"}
@@ -1039,31 +1368,29 @@ export default function TeacherStudentsPage() {
                   </div>
 
                   <div className="mt-5 space-y-3 text-sm text-[#6B4A3A]">
-                    <p>
-                      <span className="font-semibold text-[#2B1B18]">
-                        Email:
-                      </span>{" "}
-                      {teacher?.email || "-"}
-                    </p>
+                    <SidebarInfo
+                      label="Email"
+                      value={teacher?.email || "-"}
+                    />
 
-                    <p>
-                      <span className="font-semibold text-[#2B1B18]">
-                        Telepon:
-                      </span>{" "}
-                      {teacher?.phone || "-"}
-                    </p>
+                    <SidebarInfo
+                      label="Telepon"
+                      value={teacher?.phone || "-"}
+                    />
 
-                    <p>
-                      <span className="font-semibold text-[#2B1B18]">
-                        Mapel:
-                      </span>{" "}
-                      formatTeacherSubjects(teacher?.subjects ?? null)
-                    </p>
+                    <SidebarInfo
+                      label="Mapel"
+                      value={formatTeacherSubjects(
+                        teacher?.subjects ?? null
+                      )}
+                    />
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Ringkasan Level</h2>
+                  <h2 className="text-lg font-bold">
+                    Ringkasan Level
+                  </h2>
 
                   <div className="mt-5 space-y-4">
                     <LevelProgress
@@ -1090,258 +1417,549 @@ export default function TeacherStudentsPage() {
                 </div>
 
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Catatan</h2>
+                  <h2 className="text-lg font-bold">
+                    Catatan
+                  </h2>
+
                   <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Data murid di halaman ini sekarang diambil dari table{" "}
+                    Guru hanya dapat mengubah nama siswa
+                    yang terhubung melalui tabel{" "}
                     <span className="font-bold text-[#2B1B18]">
                       student_teachers
                     </span>
-                    . Jadi guru hanya melihat murid yang memang dihubungkan dari
-                    menu Data Siswa.
+                    . Data NIPD, NISN, level, kelas,
+                    dan orang tua tetap hanya dapat
+                    dikelola Kepala Sekolah/Admin.
                   </p>
                 </div>
               </div>
             </div>
           </>
-        )}
+        ) : null}
       </div>
 
-      {isReportModalOpen && (
+      {editingStudent ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <h2 className="text-xl font-bold">Buat Laporan KBM</h2>
+          <div className="w-full max-w-[480px] overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+            <div className="flex items-start justify-between border-b border-[#E8D6C1] px-6 py-5">
+              <div>
+                <h2 className="text-xl font-bold text-[#2B1B18]">
+                  Edit Nama Siswa
+                </h2>
+
+                <p className="mt-1 text-sm text-[#6B4A3A]">
+                  Guru hanya dapat memperbaiki nama
+                  siswa.
+                </p>
+              </div>
 
               <button
                 type="button"
-                onClick={closeReportModal}
-                className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+                onClick={closeEditStudentName}
+                disabled={savingStudentName}
+                className="text-2xl leading-none text-[#6B4A3A] transition hover:text-[#7A1F2B] disabled:opacity-50"
               >
                 ×
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              {errorMessage && (
-                <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="space-y-5 px-6 py-6">
+              {errorMessage ? (
+                <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
                   {errorMessage}
                 </div>
-              )}
+              ) : null}
 
-              <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
-                Laporan dari menu ini bersifat input manual. Murid dan mapel
-                yang muncul hanya yang sudah terhubung dengan guru aktif.
+              <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-sm text-[#6B4A3A]">
+                <StudentInfo
+                  label="NIPD"
+                  value={editingStudent.nis || "-"}
+                />
+
+                <div className="mt-1">
+                  <StudentInfo
+                    label="Kelas"
+                    value={formatClass(
+                      editingStudent.level,
+                      editingStudent.grade
+                    )}
+                  />
+                </div>
               </div>
 
-              <form onSubmit={handleSubmitKbmReport} className="space-y-4 pb-2">
-                <div>
-                  <label className="text-sm font-bold">Murid</label>
-                  <select
-                    value={reportForm.student_id}
-                    onChange={(event) =>
-                      handleReportStudentChange(event.target.value)
+              <label className="block">
+                <span className="text-sm font-bold text-[#2B1B18]">
+                  Nama Siswa
+                </span>
+
+                <input
+                  value={studentNameInput}
+                  onChange={(event) =>
+                    setStudentNameInput(
+                      event.target.value
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void handleSaveStudentName();
                     }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="">Pilih murid</option>
-                    {students.map((student) => (
-                      <option key={student.id} value={student.id}>
-                        {student.full_name} —{" "}
-                        {formatClass(student.level, student.grade)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  }}
+                  autoFocus
+                  maxLength={150}
+                  placeholder="Masukkan nama siswa"
+                  className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                />
+              </label>
 
-                <div>
-                  <label className="text-sm font-bold">Mata Pelajaran</label>
-                  <select
-                    value={reportForm.subject_id}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        subject_id: event.target.value,
-                      })
-                    }
-                    disabled={!reportForm.student_id}
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
-                  >
-                    <option value="">
-                      {reportForm.student_id
-                        ? "Pilih mata pelajaran"
-                        : "Pilih murid dulu"}
-                    </option>
-                    {subjectOptionsForSelectedStudent.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {getSubjectLabel(subject)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={closeEditStudentName}
+                  disabled={savingStudentName}
+                  className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+                >
+                  Batal
+                </button>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm font-bold">Tanggal</label>
-                    <input
-                      type="date"
-                      value={reportForm.report_date}
-                      onChange={(event) =>
-                        setReportForm({
-                          ...reportForm,
-                          report_date: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-bold">Semester</label>
-                    <select
-                      value={reportForm.semester}
-                      onChange={(event) =>
-                        setReportForm({
-                          ...reportForm,
-                          semester: event.target.value,
-                        })
-                      }
-                      className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                    >
-                      <option>Ganjil</option>
-                      <option>Genap</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Kelas</label>
-                  <input
-                    value={reportForm.class_level}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        class_level: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: SD Grade 4"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Bab / Unit</label>
-                  <input
-                    value={reportForm.chapter}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        chapter: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: Bab 5 / Unit 8"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Materi KBM</label>
-                  <input
-                    value={reportForm.material_topic}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        material_topic: event.target.value,
-                      })
-                    }
-                    placeholder="Contoh: Pecahan Senilai"
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Masalah Belajar</label>
-                  <textarea
-                    value={reportForm.learning_issue}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        learning_issue: event.target.value,
-                      })
-                    }
-                    rows={3}
-                    placeholder="Contoh: Siswa masih kesulitan memahami materi"
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Solusi</label>
-                  <textarea
-                    value={reportForm.solution}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        solution: event.target.value,
-                      })
-                    }
-                    rows={3}
-                    placeholder="Contoh: Latihan tambahan dengan visual"
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Keterangan Guru</label>
-                  <textarea
-                    value={reportForm.teacher_note}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        teacher_note: event.target.value,
-                      })
-                    }
-                    rows={3}
-                    placeholder="Catatan guru terkait proses KBM"
-                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-sm font-bold">Status</label>
-                  <select
-                    value={reportForm.status}
-                    onChange={(event) =>
-                      setReportForm({
-                        ...reportForm,
-                        status: event.target.value,
-                      })
-                    }
-                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                  >
-                    <option value="pending_review">pending_review</option>
-                    <option value="draft">draft</option>
-                  </select>
-                  <p className="mt-1 text-xs text-[#6B4A3A]">
-                    Default pending_review agar langsung masuk ke review Kepala
-                    Sekolah.
-                  </p>
-                </div>
-
-                <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
-                  <button
-                    type="submit"
-                    disabled={savingReport}
-                    className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {savingReport ? "Menyimpan..." : "Simpan Laporan KBM"}
-                  </button>
-                </div>
-              </form>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void handleSaveStudentName()
+                  }
+                  disabled={savingStudentName}
+                  className="h-11 rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingStudentName
+                    ? "Menyimpan..."
+                    : "Simpan Nama"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
+
+      {isReportModalOpen ? (
+        <ReportModal
+          students={students}
+          subjectOptions={
+            subjectOptionsForSelectedStudent
+          }
+          form={reportForm}
+          saving={savingReport}
+          errorMessage={errorMessage}
+          onChange={setReportForm}
+          onStudentChange={
+            handleReportStudentChange
+          }
+          onClose={closeReportModal}
+          onSubmit={handleSubmitKbmReport}
+        />
+      ) : null}
     </TeacherLayout>
+  );
+}
+
+function ReportModal({
+  students,
+  subjectOptions,
+  form,
+  saving,
+  errorMessage,
+  onChange,
+  onStudentChange,
+  onClose,
+  onSubmit,
+}: {
+  students: Student[];
+  subjectOptions: Subject[];
+  form: KbmForm;
+  saving: boolean;
+  errorMessage: string;
+  onChange: React.Dispatch<
+    React.SetStateAction<KbmForm>
+  >;
+  onStudentChange: (studentId: string) => void;
+  onClose: () => void;
+  onSubmit: (
+    event: FormEvent<HTMLFormElement>
+  ) => void;
+}) {
+  function updateField(
+    field: keyof KbmForm,
+    value: string
+  ) {
+    onChange((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+      <div className="flex max-h-[92vh] w-full max-w-[500px] flex-col overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between border-b border-[#E8D6C1] px-6 py-5">
+          <h2 className="text-xl font-bold">
+            Buat Laporan KBM
+          </h2>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-2xl leading-none text-[#6B4A3A] hover:text-[#7A1F2B]"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {errorMessage ? (
+            <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          <div className="mb-4 rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-xs leading-5 text-[#6B4A3A]">
+            Murid dan mapel yang muncul hanya yang
+            sudah terhubung dengan guru aktif.
+          </div>
+
+          <form
+            onSubmit={onSubmit}
+            className="space-y-4 pb-2"
+          >
+            <FormGroup label="Murid">
+              <select
+                value={form.student_id}
+                onChange={(event) =>
+                  onStudentChange(
+                    event.target.value
+                  )
+                }
+                className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+              >
+                <option value="">
+                  Pilih murid
+                </option>
+
+                {students.map((student) => (
+                  <option
+                    key={student.id}
+                    value={student.id}
+                  >
+                    {student.full_name} —{" "}
+                    {formatClass(
+                      student.level,
+                      student.grade
+                    )}
+                  </option>
+                ))}
+              </select>
+            </FormGroup>
+
+            <FormGroup label="Mata Pelajaran">
+              <select
+                value={form.subject_id}
+                onChange={(event) =>
+                  updateField(
+                    "subject_id",
+                    event.target.value
+                  )
+                }
+                disabled={!form.student_id}
+                className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
+              >
+                <option value="">
+                  {form.student_id
+                    ? "Pilih mata pelajaran"
+                    : "Pilih murid dulu"}
+                </option>
+
+                {subjectOptions.map((subject) => (
+                  <option
+                    key={subject.id}
+                    value={subject.id}
+                  >
+                    {getSubjectLabel(subject)}
+                  </option>
+                ))}
+              </select>
+            </FormGroup>
+
+            <div className="grid grid-cols-2 gap-3">
+              <FormGroup label="Tanggal">
+                <input
+                  type="date"
+                  value={form.report_date}
+                  onChange={(event) =>
+                    updateField(
+                      "report_date",
+                      event.target.value
+                    )
+                  }
+                  className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                />
+              </FormGroup>
+
+              <FormGroup label="Semester">
+                <select
+                  value={form.semester}
+                  onChange={(event) =>
+                    updateField(
+                      "semester",
+                      event.target.value
+                    )
+                  }
+                  className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                >
+                  <option>Ganjil</option>
+                  <option>Genap</option>
+                </select>
+              </FormGroup>
+            </div>
+
+            <FormInput
+              label="Kelas"
+              value={form.class_level}
+              placeholder="Contoh: SD 4"
+              onChange={(value) =>
+                updateField(
+                  "class_level",
+                  value
+                )
+              }
+            />
+
+            <FormInput
+              label="Bab / Unit"
+              value={form.chapter}
+              placeholder="Contoh: Bab 5"
+              onChange={(value) =>
+                updateField("chapter", value)
+              }
+            />
+
+            <FormInput
+              label="Materi KBM"
+              value={form.material_topic}
+              placeholder="Contoh: Pecahan Senilai"
+              onChange={(value) =>
+                updateField(
+                  "material_topic",
+                  value
+                )
+              }
+            />
+
+            <FormTextarea
+              label="Masalah Belajar"
+              value={form.learning_issue}
+              placeholder="Masalah atau kendala siswa"
+              onChange={(value) =>
+                updateField(
+                  "learning_issue",
+                  value
+                )
+              }
+            />
+
+            <FormTextarea
+              label="Solusi"
+              value={form.solution}
+              placeholder="Solusi yang diberikan guru"
+              onChange={(value) =>
+                updateField("solution", value)
+              }
+            />
+
+            <FormTextarea
+              label="Keterangan Guru"
+              value={form.teacher_note}
+              placeholder="Catatan guru terkait proses KBM"
+              onChange={(value) =>
+                updateField(
+                  "teacher_note",
+                  value
+                )
+              }
+            />
+
+            <FormGroup label="Status">
+              <select
+                value={form.status}
+                onChange={(event) =>
+                  updateField(
+                    "status",
+                    event.target.value
+                  )
+                }
+                className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+              >
+                <option value="pending_review">
+                  pending_review
+                </option>
+                <option value="draft">
+                  draft
+                </option>
+              </select>
+            </FormGroup>
+
+            <div className="sticky bottom-0 -mx-6 mt-5 border-t border-[#E8D6C1] bg-[#FAF3EA] px-6 pb-1 pt-4">
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-xl bg-[#7A1F2B] py-3 text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving
+                  ? "Menyimpan..."
+                  : "Simpan Laporan KBM"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
+      <p className="text-sm text-[#6B4A3A]">
+        {label}
+      </p>
+      <p className="mt-4 text-3xl font-bold">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
+  return (
+    <div className="rounded-2xl bg-[#FFF8EF] p-4">
+      <p className="text-xs text-[#6B4A3A]">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-bold text-[#7A1F2B]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function StudentInfo({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <p>
+      <span className="font-semibold text-[#2B1B18]">
+        {label}:
+      </span>{" "}
+      {value}
+    </p>
+  );
+}
+
+function SidebarInfo({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <p>
+      <span className="font-semibold text-[#2B1B18]">
+        {label}:
+      </span>{" "}
+      {value}
+    </p>
+  );
+}
+
+function FormGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-bold">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function FormInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <FormGroup label={label}>
+      <input
+        value={value}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+      />
+    </FormGroup>
+  );
+}
+
+function FormTextarea({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <FormGroup label={label}>
+      <textarea
+        value={value}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        rows={3}
+        placeholder={placeholder}
+        className="w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+      />
+    </FormGroup>
   );
 }
 
@@ -1360,13 +1978,19 @@ function LevelProgress({
     <div>
       <div className="mb-2 flex justify-between text-sm">
         <span>{label}</span>
-        <span className="font-bold">{value}</span>
+        <span className="font-bold">
+          {value}
+        </span>
       </div>
+
       <div className="h-2 overflow-hidden rounded-full bg-[#F1DFD5]">
         <div
           className={`h-full rounded-full ${color}`}
           style={{
-            width: total > 0 ? `${(value / total) * 100}%` : "0%",
+            width:
+              total > 0
+                ? `${(value / total) * 100}%`
+                : "0%",
           }}
         />
       </div>
