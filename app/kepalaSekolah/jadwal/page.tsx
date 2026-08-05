@@ -92,6 +92,8 @@ type AttendanceRow = {
 };
 
 type EnrichedSchedule = ScheduleRow & {
+  data_source: "schedule" | "attendance";
+  source_attendance_id?: string | null;
   student_name: string;
   student_grade: string;
   student_level: string;
@@ -398,14 +400,8 @@ function getScheduleGroupKey(schedule: EnrichedSchedule) {
     schedule.teacher_id || "",
     schedule.subject_id || "",
     schedule.schedule_date || "",
-    schedule.start_time || "",
-    schedule.end_time || "",
-    schedule.session_name || "",
-    normalizeText(schedule.material_topic),
-    schedule.semester || "",
-    normalizeText(schedule.notes),
-    schedule.temporary_schedule_url || "",
-    schedule.academic_year || "",
+    formatTime(schedule.start_time),
+    formatTime(schedule.end_time),
   ].join("__");
 }
 
@@ -598,56 +594,142 @@ export default function KepalaSekolahJadwalPage() {
         ])
       );
 
-      const enriched: EnrichedSchedule[] = schedulesData.map((schedule) => {
-        const teacher = schedule.teacher_id
-          ? teacherMap.get(schedule.teacher_id)
-          : null;
+      const matchedAttendanceKeys = new Set<string>();
 
-        const student = schedule.student_id
-          ? studentMap.get(schedule.student_id)
-          : null;
+      const enrichedFromSchedules: EnrichedSchedule[] = schedulesData.map(
+        (schedule) => {
+          const teacher = schedule.teacher_id
+            ? teacherMap.get(schedule.teacher_id)
+            : null;
 
-        const subject = schedule.subject_id
-          ? subjectMap.get(schedule.subject_id)
-          : null;
+          const student = schedule.student_id
+            ? studentMap.get(schedule.student_id)
+            : null;
 
-        const attendance = attendanceMap.get(
-          getAttendanceKey({
+          const subject = schedule.subject_id
+            ? subjectMap.get(schedule.subject_id)
+            : null;
+
+          const attendanceKey = getAttendanceKey({
             student_id: schedule.student_id,
             teacher_id: schedule.teacher_id,
             subject_id: schedule.subject_id,
             schedule_date: schedule.schedule_date,
             start_time: schedule.start_time,
             end_time: schedule.end_time,
-          })
-        );
+          });
 
-        return {
-          ...schedule,
-          teacher_name: teacher?.full_name || "-",
-          student_name: student?.full_name || "-",
-          student_grade: student?.grade || "-",
-          student_level: student?.level || "-",
-          student_nipd: student?.nis || "-",
-          student_nisn: student?.nisn || "-",
-          subject_name: subject ? getSubjectLabel(subject) : "-",
-          teacher_arrival_time:
-            attendance?.teacher_arrival_time || null,
-          teacher_departure_time:
-            attendance?.teacher_departure_time || null,
-          attendance_status:
-            normalizeAttendanceStatus(attendance?.attendance_status) || null,
-          attendance_note:
-            attendance?.note || attendance?.notes || null,
-          attendance_material: attendance?.material_topic || null,
-        };
-      });
+          const attendance = attendanceMap.get(attendanceKey);
+
+          if (attendance) {
+            matchedAttendanceKeys.add(attendanceKey);
+          }
+
+          return {
+            ...schedule,
+            data_source: "schedule",
+            source_attendance_id: attendance?.id || null,
+            teacher_name: teacher?.full_name || "-",
+            student_name: student?.full_name || "-",
+            student_grade: student?.grade || "-",
+            student_level: student?.level || "-",
+            student_nipd: student?.nis || "-",
+            student_nisn: student?.nisn || "-",
+            subject_name: subject ? getSubjectLabel(subject) : "-",
+            teacher_arrival_time:
+              attendance?.teacher_arrival_time || null,
+            teacher_departure_time:
+              attendance?.teacher_departure_time || null,
+            attendance_status:
+              normalizeAttendanceStatus(attendance?.attendance_status) || null,
+            attendance_note:
+              attendance?.note || attendance?.notes || null,
+            attendance_material: attendance?.material_topic || null,
+          };
+        }
+      );
+
+      const enrichedFromUnmatchedAttendance: EnrichedSchedule[] =
+        attendanceData
+          .filter((attendance) => {
+            const key = getAttendanceKey(attendance);
+            return !matchedAttendanceKeys.has(key);
+          })
+          .map((attendance) => {
+            const teacher = attendance.teacher_id
+              ? teacherMap.get(attendance.teacher_id)
+              : null;
+
+            const student = attendance.student_id
+              ? studentMap.get(attendance.student_id)
+              : null;
+
+            const subject = attendance.subject_id
+              ? subjectMap.get(attendance.subject_id)
+              : null;
+
+            const durationMinutes =
+              attendance.duration_minutes ||
+              calculateDurationMinutes(
+                attendance.start_time,
+                attendance.end_time
+              );
+
+            return {
+              id: `attendance-${attendance.id}`,
+              data_source: "attendance",
+              source_attendance_id: attendance.id,
+              student_id: attendance.student_id,
+              teacher_id: attendance.teacher_id,
+              subject_id: attendance.subject_id,
+              day_name:
+                attendance.day_name ||
+                getDayName(attendance.attendance_date || ""),
+              schedule_date: attendance.attendance_date,
+              start_time: attendance.start_time || null,
+              end_time: attendance.end_time || null,
+              duration_minutes: durationMinutes,
+              session_name:
+                attendance.session_name ||
+                formatSessionValue(
+                  durationMinutes,
+                  attendance.start_time,
+                  attendance.end_time
+                ),
+              material_topic: attendance.material_topic || null,
+              semester: null,
+              notes: attendance.note || attendance.notes || null,
+              temporary_schedule_url: null,
+              academic_year: ACADEMIC_YEAR,
+              teacher_name: teacher?.full_name || "-",
+              student_name: student?.full_name || "-",
+              student_grade: student?.grade || "-",
+              student_level: student?.level || "-",
+              student_nipd: student?.nis || "-",
+              student_nisn: student?.nisn || "-",
+              subject_name: subject ? getSubjectLabel(subject) : "-",
+              teacher_arrival_time:
+                attendance.teacher_arrival_time || null,
+              teacher_departure_time:
+                attendance.teacher_departure_time || null,
+              attendance_status:
+                normalizeAttendanceStatus(attendance.attendance_status) || null,
+              attendance_note:
+                attendance.note || attendance.notes || null,
+              attendance_material: attendance.material_topic || null,
+            };
+          });
+
+      const merged = [
+        ...enrichedFromSchedules,
+        ...enrichedFromUnmatchedAttendance,
+      ];
 
       setTeachers(teachersData);
       setStudents(studentsData);
       setSubjects(subjectsData);
       setStudentTeachers(studentTeachersData);
-      setSchedules(enriched);
+      setSchedules(merged);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -1122,7 +1204,16 @@ export default function KepalaSekolahJadwalPage() {
 
     if (!confirmDelete) return;
 
-    const ids = group.students.map((item) => item.id);
+    const ids = group.students
+      .filter((item) => item.data_source === "schedule")
+      .map((item) => item.id);
+
+    if (ids.length === 0) {
+      alert(
+        "Data ini berasal dari input absensi guru dan tidak memiliki jadwal admin yang dapat dihapus."
+      );
+      return;
+    }
 
     const { error } = await supabase
       .from("schedules")
@@ -1193,7 +1284,7 @@ export default function KepalaSekolahJadwalPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 print:hidden">
           <SummaryCard
             icon={<CalendarDays className="h-5 w-5" />}
-            label="Total Jadwal"
+            label="Total Data KBM"
             value={summary.totalSchedules}
             info="Data"
             tone="pink"
@@ -1209,7 +1300,7 @@ export default function KepalaSekolahJadwalPage() {
 
           <SummaryCard
             icon={<UserRound className="h-5 w-5" />}
-            label="Siswa Terjadwal"
+            label="Siswa KBM"
             value={summary.totalStudentsScheduled}
             info="Siswa"
             tone="green"
@@ -1292,8 +1383,8 @@ export default function KepalaSekolahJadwalPage() {
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Nama siswa, status kehadiran, dan keterangan sudah
-              dibuat sejajar per baris.
+              Menampilkan gabungan jadwal admin dan input absensi guru,
+              sehingga seluruh guru yang sudah mengisi KBM tetap muncul.
             </p>
           </div>
 
@@ -1545,14 +1636,22 @@ export default function KepalaSekolahJadwalPage() {
                         </td>
 
                         <td className="px-4 py-4">
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteGroup(group)}
-                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626]"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                            Hapus
-                          </button>
+                          {group.students.some(
+                            (item) => item.data_source === "schedule"
+                          ) ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteGroup(group)}
+                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Hapus
+                            </button>
+                          ) : (
+                            <span className="inline-flex rounded-full bg-[#E8F5EE] px-3 py-1 text-[11px] font-extrabold text-[#158A58]">
+                              Input Guru
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
