@@ -45,8 +45,12 @@ type AttendanceRow = {
   subject_id: string | null;
   attendance_date: string | null;
   day_name: string | null;
+  teacher_arrival_time?: string | null;
+  teacher_departure_time?: string | null;
   start_time: string | null;
   end_time: string | null;
+  duration_minutes?: number | null;
+  session_name?: string | null;
   attendance_status: string | null;
   understanding_status: string | null;
   material_topic: string | null;
@@ -68,8 +72,12 @@ type RombelGroup = {
   key: string;
   attendance_date: string | null;
   day_name: string | null;
+  teacher_arrival_time: string | null;
+  teacher_departure_time: string | null;
   start_time: string | null;
   end_time: string | null;
+  duration_minutes: number | null;
+  session_name: string | null;
   teacher_id: string | null;
   teacher_name: string;
   subject_id: string | null;
@@ -147,6 +155,52 @@ function formatDate(value?: string | null) {
 function formatTime(value?: string | null) {
   if (!value) return "-";
   return value.slice(0, 5);
+}
+
+function calculateDurationMinutes(
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  if (!startTime || !endTime) return null;
+
+  const [startHour, startMinute] = startTime.split(":").map(Number);
+  const [endHour, endMinute] = endTime.split(":").map(Number);
+
+  if (
+    Number.isNaN(startHour) ||
+    Number.isNaN(startMinute) ||
+    Number.isNaN(endHour) ||
+    Number.isNaN(endMinute)
+  ) {
+    return null;
+  }
+
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = endHour * 60 + endMinute;
+  const duration = endTotal - startTotal;
+
+  return duration > 0 ? duration : null;
+}
+
+function formatSessionValue(
+  sessionName?: string | null,
+  durationMinutes?: number | null,
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  const savedSession = (sessionName || "").trim();
+
+  if (savedSession) return savedSession;
+
+  const duration =
+    durationMinutes || calculateDurationMinutes(startTime, endTime);
+
+  if (!duration) return "-";
+
+  return new Intl.NumberFormat("id-ID", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(duration / 60);
 }
 
 function getInitials(name?: string | null) {
@@ -258,8 +312,19 @@ function groupAttendanceByRombel(attendance: EnrichedAttendance[]) {
       key,
       attendance_date: first.attendance_date,
       day_name: first.day_name,
+      teacher_arrival_time: first.teacher_arrival_time || null,
+      teacher_departure_time: first.teacher_departure_time || null,
       start_time: first.start_time,
       end_time: first.end_time,
+      duration_minutes:
+        first.duration_minutes ||
+        calculateDurationMinutes(first.start_time, first.end_time),
+      session_name: formatSessionValue(
+        first.session_name,
+        first.duration_minutes,
+        first.start_time,
+        first.end_time
+      ),
       teacher_id: first.teacher_id,
       teacher_name: first.teacher_name,
       subject_id: first.subject_id,
@@ -564,7 +629,17 @@ export default function KepalaSekolahAbsensiPage() {
         Tanggal: formatDate(item.attendance_date),
         Nama: item.student_name || "-",
         Kelas: formatClass(item.student_level, item.student_grade),
-        Jam: `${formatTime(item.start_time)}-${formatTime(item.end_time)}`,
+        "Datang Guru": formatTime(item.teacher_arrival_time),
+        "Pulang Guru": formatTime(item.teacher_departure_time),
+        "Jam Siswa": `${formatTime(item.start_time)}-${formatTime(
+          item.end_time
+        )}`,
+        Sesi: formatSessionValue(
+          item.session_name,
+          item.duration_minutes,
+          item.start_time,
+          item.end_time
+        ),
         Guru: item.teacher_name || "-",
         Mapel: item.subject_name || "-",
         NIPD: item.student_nis || "-",
@@ -595,7 +670,10 @@ export default function KepalaSekolahAbsensiPage() {
       { wch: 16 },
       { wch: 26 },
       { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
       { wch: 16 },
+      { wch: 10 },
       { wch: 24 },
       { wch: 20 },
       { wch: 18 },
@@ -625,7 +703,7 @@ export default function KepalaSekolahAbsensiPage() {
 
   return (
     <KepalaSekolahLayout
-      activeMenu="Absensi KBM"
+      activeMenu="ABSENSI KBM SISWA DAN GURU HARIAN"
       searchPlaceholder="Cari absensi, guru, siswa, atau materi..."
     >
       <section className="space-y-7">
@@ -779,8 +857,8 @@ export default function KepalaSekolahAbsensiPage() {
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Format tabel: Nama, Kelas, Jam, Guru, Mapel, Hadir, Izin, Alpa,
-              Keterangan.
+              Datang dan pulang merupakan jam kehadiran guru. Jam Siswa dan
+              Sesi merupakan waktu kegiatan belajar siswa.
             </p>
           </div>
 
@@ -791,7 +869,10 @@ export default function KepalaSekolahAbsensiPage() {
                   <th className="px-5 py-4">No</th>
                   <th className="px-5 py-4">Nama</th>
                   <th className="px-5 py-4">Kelas</th>
-                  <th className="px-5 py-4">Jam</th>
+                  <th className="px-5 py-4">Datang Guru</th>
+                  <th className="px-5 py-4">Pulang Guru</th>
+                  <th className="px-5 py-4">Jam Siswa</th>
+                  <th className="px-5 py-4">Sesi</th>
                   <th className="px-5 py-4">Guru</th>
                   <th className="px-5 py-4">Mapel</th>
                   <th className="px-5 py-4 text-center">Hadir</th>
@@ -806,7 +887,7 @@ export default function KepalaSekolahAbsensiPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={14}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Memuat data absensi...
@@ -815,7 +896,7 @@ export default function KepalaSekolahAbsensiPage() {
                 ) : visibleAttendanceRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={14}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
                       Belum ada data absensi.
@@ -850,8 +931,25 @@ export default function KepalaSekolahAbsensiPage() {
                         </td>
 
                         <td className="whitespace-nowrap px-5 py-4">
+                          {formatTime(group.teacher_arrival_time)}
+                        </td>
+
+                        <td className="whitespace-nowrap px-5 py-4">
+                          {formatTime(group.teacher_departure_time)}
+                        </td>
+
+                        <td className="whitespace-nowrap px-5 py-4">
                           {formatTime(group.start_time)}-
                           {formatTime(group.end_time)}
+                        </td>
+
+                        <td className="px-5 py-4 font-extrabold">
+                          {formatSessionValue(
+                            group.session_name,
+                            group.duration_minutes,
+                            group.start_time,
+                            group.end_time
+                          )}
                         </td>
 
                         <td className="px-5 py-4 font-extrabold">
@@ -945,10 +1043,27 @@ export default function KepalaSekolahAbsensiPage() {
                     value={formatDate(selectedRombel.attendance_date)}
                   />
                   <InfoItem
-                    label="Jam"
+                    label="Datang Guru"
+                    value={formatTime(selectedRombel.teacher_arrival_time)}
+                  />
+                  <InfoItem
+                    label="Pulang Guru"
+                    value={formatTime(selectedRombel.teacher_departure_time)}
+                  />
+                  <InfoItem
+                    label="Jam Siswa"
                     value={`${formatTime(selectedRombel.start_time)}-${formatTime(
                       selectedRombel.end_time
                     )}`}
+                  />
+                  <InfoItem
+                    label="Sesi"
+                    value={formatSessionValue(
+                      selectedRombel.session_name,
+                      selectedRombel.duration_minutes,
+                      selectedRombel.start_time,
+                      selectedRombel.end_time
+                    )}
                   />
                   <InfoItem label="Mapel" value={selectedRombel.subject_name} />
                   <InfoItem label="Guru" value={selectedRombel.teacher_name} />

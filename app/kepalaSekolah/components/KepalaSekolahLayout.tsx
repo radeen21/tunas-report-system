@@ -30,7 +30,6 @@ type ActiveMenu =
   | "Guru"
   | "Data Mapel"
   | "ABSENSI KBM SISWA DAN GURU HARIAN"
-  | "Absensi KBM"
   | "Laporan KBM"
   | "Laporan Akademik"
   | "RPP"
@@ -77,11 +76,6 @@ const menus: MenuItem[] = [
     name: "ABSENSI KBM SISWA DAN GURU HARIAN",
     icon: CalendarDays,
     href: "/kepalaSekolah/jadwal",
-  },
-  {
-    name: "Absensi KBM",
-    icon: ClipboardCheck,
-    href: "/kepalaSekolah/absensi",
   },
   {
     name: "Laporan KBM",

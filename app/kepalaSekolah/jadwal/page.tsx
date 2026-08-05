@@ -79,6 +79,8 @@ type AttendanceRow = {
   subject_id: string | null;
   attendance_date: string | null;
   day_name?: string | null;
+  teacher_arrival_time?: string | null;
+  teacher_departure_time?: string | null;
   start_time?: string | null;
   end_time?: string | null;
   duration_minutes?: number | null;
@@ -97,6 +99,8 @@ type EnrichedSchedule = ScheduleRow & {
   student_nisn: string;
   teacher_name: string;
   subject_name: string;
+  teacher_arrival_time: string | null;
+  teacher_departure_time: string | null;
   attendance_status: string | null;
   attendance_note: string | null;
   attendance_material: string | null;
@@ -106,6 +110,8 @@ type ScheduleGroup = {
   key: string;
   schedule_date: string | null;
   day_name: string | null;
+  teacher_arrival_time: string | null;
+  teacher_departure_time: string | null;
   start_time: string | null;
   end_time: string | null;
   duration_minutes: number | null;
@@ -435,6 +441,12 @@ function groupSchedules(schedules: EnrichedSchedule[]) {
         key,
         schedule_date: first.schedule_date,
         day_name: first.day_name,
+        teacher_arrival_time:
+          rows.find((row) => row.teacher_arrival_time)
+            ?.teacher_arrival_time || null,
+        teacher_departure_time:
+          rows.find((row) => row.teacher_departure_time)
+            ?.teacher_departure_time || null,
         start_time: first.start_time,
         end_time: first.end_time,
         duration_minutes: durationMinutes,
@@ -619,6 +631,10 @@ export default function KepalaSekolahJadwalPage() {
           student_nipd: student?.nis || "-",
           student_nisn: student?.nisn || "-",
           subject_name: subject ? getSubjectLabel(subject) : "-",
+          teacher_arrival_time:
+            attendance?.teacher_arrival_time || null,
+          teacher_departure_time:
+            attendance?.teacher_departure_time || null,
           attendance_status:
             normalizeAttendanceStatus(attendance?.attendance_status) || null,
           attendance_note:
@@ -1138,8 +1154,9 @@ export default function KepalaSekolahJadwalPage() {
             </h1>
 
             <p className="mt-2 max-w-[880px] text-[15px] leading-6 text-[#6F5549]">
-              Admin/Kepala Sekolah mengatur jadwal dasar. Materi
-              pembelajaran tetap diisi oleh masing-masing guru.
+              Admin/Kepala Sekolah mengatur jadwal dasar dan jam KBM
+              siswa. Jam datang/pulang guru serta materi pembelajaran
+              diisi oleh masing-masing guru.
             </p>
           </div>
 
@@ -1297,10 +1314,10 @@ export default function KepalaSekolahJadwalPage() {
                     Nama Guru
                   </th>
                   <th rowSpan={2} className="border-r px-4 py-4">
-                    Datang
+                    Datang Guru
                   </th>
                   <th rowSpan={2} className="border-r px-4 py-4">
-                    Pulang
+                    Pulang Guru
                   </th>
 
                   <th colSpan={9} className="border-r px-4 py-4 text-center">
@@ -1319,7 +1336,7 @@ export default function KepalaSekolahJadwalPage() {
                 </tr>
 
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-[13px] font-extrabold text-[#6F5549]">
-                  <th className="border-r px-4 py-3">Jam</th>
+                  <th className="border-r px-4 py-3">Jam Siswa</th>
                   <th className="border-r px-4 py-3">Sesi</th>
                   <th className="border-r px-4 py-3">Kls</th>
                   <th className="border-r px-4 py-3">Mapel</th>
@@ -1385,11 +1402,11 @@ export default function KepalaSekolahJadwalPage() {
                         </td>
 
                         <td className="border-r px-4 py-4">
-                          {formatTime(group.start_time)}
+                          {formatTime(group.teacher_arrival_time)}
                         </td>
 
                         <td className="border-r px-4 py-4">
-                          {formatTime(group.end_time)}
+                          {formatTime(group.teacher_departure_time)}
                         </td>
 
                         <td className="border-r px-4 py-4">
@@ -1557,7 +1574,8 @@ export default function KepalaSekolahJadwalPage() {
                 </h2>
 
                 <p className="mt-1 text-[13px] text-[#6F5549]">
-                  Materi pembelajaran diisi oleh guru.
+                  Admin hanya mengatur jam KBM siswa. Jam datang/pulang
+                  guru dan materi pembelajaran diisi oleh guru.
                 </p>
               </div>
 
@@ -1657,7 +1675,7 @@ export default function KepalaSekolahJadwalPage() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-4">
-                <FormGroup label="Datang">
+                <FormGroup label="Jam Mulai KBM Siswa">
                   <input
                     type="time"
                     value={form.start_time}
@@ -1671,7 +1689,7 @@ export default function KepalaSekolahJadwalPage() {
                   />
                 </FormGroup>
 
-                <FormGroup label="Pulang">
+                <FormGroup label="Jam Selesai KBM Siswa">
                   <input
                     type="time"
                     value={form.end_time}
@@ -1685,7 +1703,7 @@ export default function KepalaSekolahJadwalPage() {
                   />
                 </FormGroup>
 
-                <FormGroup label="Jam">
+                <FormGroup label="Jam Siswa">
                   <input
                     value={
                       form.start_time && form.end_time
@@ -1854,6 +1872,15 @@ export default function KepalaSekolahJadwalPage() {
                 <p className="text-sm text-[#6F5549]">
                   {selectedGroup.teacher_name} •{" "}
                   {selectedGroup.subject_name}
+                </p>
+
+                <p className="mt-1 text-xs text-[#8A6A5A]">
+                  Datang Guru:{" "}
+                  {formatTime(selectedGroup.teacher_arrival_time)} •
+                  Pulang Guru:{" "}
+                  {formatTime(selectedGroup.teacher_departure_time)} •
+                  Jam Siswa: {formatTime(selectedGroup.start_time)}-
+                  {formatTime(selectedGroup.end_time)}
                 </p>
               </div>
 
