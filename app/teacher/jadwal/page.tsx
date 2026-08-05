@@ -1,10 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  Edit3,
+  FileText,
+  Search,
+  UsersRound,
+  X,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
 
-type Teacher = {
+const ACADEMIC_YEAR = "2026/2027";
+const ACADEMIC_YEAR_START = "2026-07-01";
+const ACADEMIC_YEAR_END = "2027-06-30";
+
+type TeacherRow = {
   id: string;
   full_name: string | null;
   email: string | null;
@@ -45,7 +59,26 @@ type ScheduleRow = {
   temporary_schedule_url: string | null;
   academic_year: string | null;
   semester: string | null;
-  created_at: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type AttendanceRow = {
+  id: string;
+  teacher_id: string | null;
+  student_id: string | null;
+  subject_id: string | null;
+  attendance_date: string | null;
+  day_name?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_minutes?: number | null;
+  session_name?: string | null;
+  attendance_status?: string | null;
+  understanding_status?: string | null;
+  material_topic?: string | null;
+  note?: string | null;
+  notes?: string | null;
 };
 
 type EnrichedSchedule = ScheduleRow & {
@@ -57,11 +90,43 @@ type EnrichedSchedule = ScheduleRow & {
   subject_name: string;
   subject_level: string;
   subject_grade: string;
+
+  attendance_status: string;
+  attendance_note: string;
+  understanding_status: string;
+  attendance_material: string;
 };
 
-const ACADEMIC_YEAR = "2026/2027";
-const ACADEMIC_YEAR_START = "2026-07-01";
-const ACADEMIC_YEAR_END = "2027-06-30";
+type ScheduleGroup = {
+  key: string;
+
+  teacher_id: string;
+  teacher_name: string;
+
+  subject_id: string;
+  subject_name: string;
+
+  schedule_date: string;
+  day_name: string;
+
+  start_time: string;
+  end_time: string;
+  duration_minutes: number | null;
+
+  session_name: string;
+  semester: string;
+  academic_year: string;
+
+  schedule_material: string;
+  attendance_material: string;
+  display_material: string;
+
+  notes: string;
+  temporary_schedule_url: string;
+
+  rows: EnrichedSchedule[];
+  total_students: number;
+};
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
@@ -80,16 +145,31 @@ function normalizeLevel(level?: string | null) {
 
 function formatClass(level?: string | null, grade?: string | null) {
   const cleanLevel = normalizeLevel(level);
-  const cleanGrade = grade || "";
+  const gradeNumber = getGradeNumber(grade);
 
-  if (cleanLevel && cleanGrade) return `${cleanLevel} ${cleanGrade}`;
-  if (cleanLevel) return cleanLevel;
-  if (cleanGrade) return cleanGrade;
+  if (gradeNumber >= 1 && gradeNumber <= 6) {
+    return `SD ${gradeNumber}`;
+  }
+
+  if (gradeNumber >= 7 && gradeNumber <= 9) {
+    return `SMP ${gradeNumber}`;
+  }
+
+  if (gradeNumber >= 10 && gradeNumber <= 12) {
+    return `SMA ${gradeNumber}`;
+  }
+
+  if (cleanLevel !== "-" && grade) {
+    return `${cleanLevel} ${grade}`;
+  }
+
+  if (cleanLevel !== "-") return cleanLevel;
+  if (grade) return grade;
 
   return "-";
 }
 
-function formatTeacherSubject(subjects: Teacher["subjects"]) {
+function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
   if (!subjects) return "Guru";
 
   if (Array.isArray(subjects)) {
@@ -99,47 +179,42 @@ function formatTeacherSubject(subjects: Teacher["subjects"]) {
   return `Guru Mapel — ${subjects}`;
 }
 
-function formatDate(date: string | null) {
-  if (!date) return "-";
+function formatDate(value?: string | null) {
+  if (!value) return "-";
 
-  const parsedDate = new Date(`${date}T00:00:00`);
+  const date = new Date(`${value}T00:00:00`);
 
-  if (Number.isNaN(parsedDate.getTime())) return "-";
+  if (Number.isNaN(date.getTime())) return "-";
 
-  return parsedDate.toLocaleDateString("id-ID", {
+  return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  });
+  }).format(date);
 }
 
-function formatTime(time: string | null) {
-  if (!time) return "-";
-  return time.slice(0, 5);
+function formatTime(value?: string | null) {
+  if (!value) return "-";
+
+  return value.slice(0, 5);
+}
+
+function toYMD(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function todayYMD() {
+  return toYMD(new Date());
 }
 
 function getGradeNumber(value?: string | null) {
   const match = (value || "").match(/\d+/);
+
   return match ? Number(match[0]) : 999;
-}
-
-function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function getDayOrder(dayName: string | null) {
-  const days = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
-  const index = days.findIndex((day) => day === dayName);
-
-  return index === -1 ? 99 : index;
-}
-
-function getSessionBadge(session: string | null) {
-  if (session === "Sesi 1") return "bg-emerald-100 text-emerald-700";
-  if (session === "Sesi 2") return "bg-blue-100 text-blue-700";
-  if (session === "Sesi 3") return "bg-purple-100 text-purple-700";
-
-  return "bg-slate-200 text-slate-700";
 }
 
 function calculateDurationMinutes(
@@ -162,9 +237,9 @@ function calculateDurationMinutes(
 
   const startTotal = startHour * 60 + startMinute;
   const endTotal = endHour * 60 + endMinute;
-  const diff = endTotal - startTotal;
+  const duration = endTotal - startTotal;
 
-  return diff > 0 ? diff : null;
+  return duration > 0 ? duration : null;
 }
 
 function formatDuration(
@@ -172,39 +247,212 @@ function formatDuration(
   startTime?: string | null,
   endTime?: string | null
 ) {
-  const duration = minutes || calculateDurationMinutes(startTime, endTime);
+  const duration =
+    minutes || calculateDurationMinutes(startTime, endTime);
 
   if (!duration) return "-";
 
   const hour = Math.floor(duration / 60);
   const minute = duration % 60;
 
-  if (hour > 0 && minute > 0) return `${hour} jam ${minute} menit`;
-  if (hour > 0) return `${hour} jam`;
+  if (hour > 0 && minute > 0) {
+    return `${hour} jam ${minute} menit`;
+  }
+
+  if (hour > 0) {
+    return `${hour} jam`;
+  }
 
   return `${minute} menit`;
 }
 
+function normalizeAttendanceStatus(status?: string | null) {
+  const safe = normalizeText(status);
+
+  if (safe === "hadir") return "Hadir";
+  if (safe === "izin") return "Izin";
+  if (safe === "sakit") return "Izin";
+  if (safe === "alpa") return "Alpa";
+  if (safe === "alpha") return "Alpa";
+  if (safe === "tidak hadir") return "Alpa";
+
+  return "";
+}
+
+function getAttendanceNote(attendance?: AttendanceRow | null) {
+  return attendance?.note || attendance?.notes || "";
+}
+
+function getAttendanceKey({
+  teacherId,
+  studentId,
+  subjectId,
+  date,
+  startTime,
+  endTime,
+}: {
+  teacherId?: string | null;
+  studentId?: string | null;
+  subjectId?: string | null;
+  date?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+}) {
+  return [
+    teacherId || "",
+    studentId || "",
+    subjectId || "",
+    date || "",
+    formatTime(startTime),
+    formatTime(endTime),
+  ].join("__");
+}
+
+function getScheduleGroupKey(schedule: EnrichedSchedule) {
+  return [
+    schedule.teacher_id || "",
+    schedule.subject_id || "",
+    schedule.schedule_date || "",
+    formatTime(schedule.start_time),
+    formatTime(schedule.end_time),
+    schedule.session_name || "",
+    schedule.semester || "",
+    schedule.academic_year || "",
+  ].join("__");
+}
+
+function groupSchedules(
+  schedules: EnrichedSchedule[],
+  teacherName: string
+) {
+  const groupedMap = new Map<string, EnrichedSchedule[]>();
+
+  schedules.forEach((schedule) => {
+    const key = getScheduleGroupKey(schedule);
+    const current = groupedMap.get(key) || [];
+
+    current.push(schedule);
+    groupedMap.set(key, current);
+  });
+
+  const groups: ScheduleGroup[] = Array.from(
+    groupedMap.entries()
+  ).map(([key, rows]) => {
+    const sortedRows = [...rows].sort((a, b) => {
+      const classA = getGradeNumber(a.student_grade);
+      const classB = getGradeNumber(b.student_grade);
+
+      if (classA !== classB) return classA - classB;
+
+      return a.student_name.localeCompare(b.student_name);
+    });
+
+    const first = sortedRows[0];
+
+    const attendanceMaterial =
+      sortedRows.find((row) => row.attendance_material)?.attendance_material ||
+      "";
+
+    const scheduleMaterial =
+      sortedRows.find((row) => row.material_topic)?.material_topic || "";
+
+    return {
+      key,
+
+      teacher_id: first.teacher_id || "",
+      teacher_name: teacherName,
+
+      subject_id: first.subject_id || "",
+      subject_name: first.subject_name,
+
+      schedule_date: first.schedule_date || "",
+      day_name: first.day_name || "-",
+
+      start_time: first.start_time || "",
+      end_time: first.end_time || "",
+      duration_minutes:
+        first.duration_minutes ||
+        calculateDurationMinutes(first.start_time, first.end_time),
+
+      session_name: first.session_name || "-",
+      semester: first.semester || "-",
+      academic_year: first.academic_year || ACADEMIC_YEAR,
+
+      schedule_material: scheduleMaterial,
+      attendance_material: attendanceMaterial,
+      display_material: attendanceMaterial || scheduleMaterial,
+
+      notes: first.notes || "",
+      temporary_schedule_url: first.temporary_schedule_url || "",
+
+      rows: sortedRows,
+      total_students: sortedRows.length,
+    };
+  });
+
+  return groups.sort((a, b) => {
+    const dateCompare = a.schedule_date.localeCompare(b.schedule_date);
+
+    if (dateCompare !== 0) return dateCompare;
+
+    return a.start_time.localeCompare(b.start_time);
+  });
+}
+
+function getStatusBadgeClass(status: string) {
+  if (status === "Hadir") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+
+  if (status === "Izin") {
+    return "bg-amber-100 text-amber-700";
+  }
+
+  if (status === "Alpa") {
+    return "bg-red-100 text-red-700";
+  }
+
+  return "bg-slate-100 text-slate-600";
+}
+
+function getInitials(name?: string | null) {
+  if (!name) return "-";
+
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 export default function TeacherJadwalPage() {
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
+  const [teacher, setTeacher] = useState<TeacherRow | null>(null);
   const [schedules, setSchedules] = useState<EnrichedSchedule[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [savingMaterial, setSavingMaterial] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("Semua Kelas");
   const [dayFilter, setDayFilter] = useState("Semua Hari");
   const [subjectFilter, setSubjectFilter] = useState("Semua Mapel");
 
-  const [editingSchedule, setEditingSchedule] =
-    useState<EnrichedSchedule | null>(null);
-  const [materialInput, setMaterialInput] = useState("");
-  const [savingMaterial, setSavingMaterial] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  const [selectedGroup, setSelectedGroup] =
+    useState<ScheduleGroup | null>(null);
 
-  async function fetchActiveTeacher() {
-    const { data: authData, error: authError } = await supabase.auth.getUser();
+  const [editingGroup, setEditingGroup] =
+    useState<ScheduleGroup | null>(null);
+
+  const [materialInput, setMaterialInput] = useState("");
+
+  async function getCurrentTeacher() {
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser();
 
     if (authError) {
       throw new Error(authError.message);
@@ -227,40 +475,54 @@ export default function TeacherJadwalPage() {
     if (email) {
       const { data, error } = await supabase
         .from("teachers")
-        .select("id, full_name, email, phone, teacher_code, subjects")
+        .select(
+          "id, full_name, email, phone, teacher_code, subjects"
+        )
         .ilike("email", email)
         .limit(1)
         .maybeSingle();
 
-      if (error) throw new Error(error.message);
-      if (data) return data as Teacher;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (data) {
+        return data as TeacherRow;
+      }
     }
 
     if (teacherCode) {
       const { data, error } = await supabase
         .from("teachers")
-        .select("id, full_name, email, phone, teacher_code, subjects")
+        .select(
+          "id, full_name, email, phone, teacher_code, subjects"
+        )
         .eq("teacher_code", teacherCode)
         .limit(1)
         .maybeSingle();
 
-      if (error) throw new Error(error.message);
-      if (data) return data as Teacher;
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (data) {
+        return data as TeacherRow;
+      }
     }
 
     return null;
   }
 
-  async function fetchPageData() {
+  async function fetchData() {
     setLoading(true);
     setErrorMessage("");
 
     try {
-      const activeTeacher = await fetchActiveTeacher();
+      const currentTeacher = await getCurrentTeacher();
 
-      setTeacher(activeTeacher);
+      setTeacher(currentTeacher);
 
-      if (!activeTeacher?.id) {
+      if (!currentTeacher?.id) {
         setSchedules([]);
         setErrorMessage(
           "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
@@ -268,26 +530,60 @@ export default function TeacherJadwalPage() {
         return;
       }
 
-      const [studentsRes, subjectsRes, schedulesRes] = await Promise.all([
+      const [
+        studentsResponse,
+        subjectsResponse,
+        schedulesResponse,
+        attendanceResponse,
+      ] = await Promise.all([
         supabase.from("students").select("*").order("full_name"),
+
         supabase.from("subjects").select("*").order("name"),
+
         supabase
           .from("schedules")
           .select("*")
-          .eq("teacher_id", activeTeacher.id)
+          .eq("teacher_id", currentTeacher.id)
           .gte("schedule_date", ACADEMIC_YEAR_START)
           .lte("schedule_date", ACADEMIC_YEAR_END)
           .order("schedule_date", { ascending: true })
           .order("start_time", { ascending: true }),
+
+        supabase
+          .from("attendance")
+          .select("*")
+          .eq("teacher_id", currentTeacher.id)
+          .gte("attendance_date", ACADEMIC_YEAR_START)
+          .lte("attendance_date", ACADEMIC_YEAR_END),
       ]);
 
-      if (studentsRes.error) throw new Error(studentsRes.error.message);
-      if (subjectsRes.error) throw new Error(subjectsRes.error.message);
-      if (schedulesRes.error) throw new Error(schedulesRes.error.message);
+      if (studentsResponse.error) {
+        throw new Error(studentsResponse.error.message);
+      }
 
-      const studentsData = (studentsRes.data || []) as StudentRow[];
-      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-      const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
+      if (subjectsResponse.error) {
+        throw new Error(subjectsResponse.error.message);
+      }
+
+      if (schedulesResponse.error) {
+        throw new Error(schedulesResponse.error.message);
+      }
+
+      if (attendanceResponse.error) {
+        throw new Error(attendanceResponse.error.message);
+      }
+
+      const studentsData =
+        (studentsResponse.data || []) as StudentRow[];
+
+      const subjectsData =
+        (subjectsResponse.data || []) as SubjectRow[];
+
+      const schedulesData =
+        (schedulesResponse.data || []) as ScheduleRow[];
+
+      const attendanceData =
+        (attendanceResponse.data || []) as AttendanceRow[];
 
       const studentMap = new Map(
         studentsData.map((student) => [student.id, student])
@@ -297,18 +593,34 @@ export default function TeacherJadwalPage() {
         subjectsData.map((subject) => [subject.id, subject])
       );
 
-      const enriched = schedulesData
-        .filter((item) => {
-          if (!item.schedule_date) return false;
+      const attendanceMap = new Map<string, AttendanceRow>();
 
-          const isAcademicYearDate =
-            item.schedule_date >= ACADEMIC_YEAR_START &&
-            item.schedule_date <= ACADEMIC_YEAR_END;
+      attendanceData.forEach((attendance) => {
+        const key = getAttendanceKey({
+          teacherId: attendance.teacher_id,
+          studentId: attendance.student_id,
+          subjectId: attendance.subject_id,
+          date: attendance.attendance_date,
+          startTime: attendance.start_time,
+          endTime: attendance.end_time,
+        });
 
-          const isAcademicYearMatch =
-            !item.academic_year || item.academic_year === ACADEMIC_YEAR;
+        attendanceMap.set(key, attendance);
+      });
 
-          return isAcademicYearDate && isAcademicYearMatch;
+      const enrichedSchedules: EnrichedSchedule[] = schedulesData
+        .filter((schedule) => {
+          if (!schedule.schedule_date) return false;
+
+          const correctDate =
+            schedule.schedule_date >= ACADEMIC_YEAR_START &&
+            schedule.schedule_date <= ACADEMIC_YEAR_END;
+
+          const correctAcademicYear =
+            !schedule.academic_year ||
+            schedule.academic_year === ACADEMIC_YEAR;
+
+          return correctDate && correctAcademicYear;
         })
         .map((schedule) => {
           const student = schedule.student_id
@@ -319,20 +631,42 @@ export default function TeacherJadwalPage() {
             ? subjectMap.get(schedule.subject_id)
             : null;
 
+          const attendanceKey = getAttendanceKey({
+            teacherId: schedule.teacher_id,
+            studentId: schedule.student_id,
+            subjectId: schedule.subject_id,
+            date: schedule.schedule_date,
+            startTime: schedule.start_time,
+            endTime: schedule.end_time,
+          });
+
+          const attendance = attendanceMap.get(attendanceKey);
+
           return {
             ...schedule,
+
             student_name: student?.full_name || "-",
             student_grade: student?.grade || "-",
             student_level: student?.level || "-",
             student_nipd: student?.nis || "-",
             student_nisn: student?.nisn || "-",
+
             subject_name: subject?.name || "-",
             subject_level: subject?.level || "-",
             subject_grade: subject?.grade || "-",
+
+            attendance_status: normalizeAttendanceStatus(
+              attendance?.attendance_status
+            ),
+            attendance_note: getAttendanceNote(attendance),
+            understanding_status:
+              attendance?.understanding_status || "-",
+            attendance_material:
+              attendance?.material_topic || "",
           };
         });
 
-      setSchedules(enriched);
+      setSchedules(enrichedSchedules);
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -348,29 +682,54 @@ export default function TeacherJadwalPage() {
   }
 
   useEffect(() => {
-    fetchPageData();
+    void fetchData();
 
     const channel = supabase
-      .channel("teacher-jadwal-realtime")
+      .channel("teacher-jadwal-excel-realtime")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "teachers" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "teachers",
+        },
+        () => void fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "schedules" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "students",
+        },
+        () => void fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "students" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "subjects",
+        },
+        () => void fetchData()
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "subjects" },
-        () => fetchPageData()
+        {
+          event: "*",
+          schema: "public",
+          table: "schedules",
+        },
+        () => void fetchData()
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "attendance",
+        },
+        () => void fetchData()
       )
       .subscribe();
 
@@ -379,121 +738,131 @@ export default function TeacherJadwalPage() {
     };
   }, []);
 
+  const groupedSchedules = useMemo(() => {
+    return groupSchedules(
+      schedules,
+      teacher?.full_name || "Guru"
+    );
+  }, [schedules, teacher?.full_name]);
+
   const classOptions = useMemo(() => {
-    return Array.from(
-      new Set(
-        schedules
-          .map((schedule) =>
-            formatClass(schedule.student_level, schedule.student_grade)
-          )
-          .filter((value) => value && value !== "-")
-      )
-    ).sort((a, b) => {
-      const gradeA = getGradeNumber(a);
-      const gradeB = getGradeNumber(b);
+    const allowedClasses = [
+      "SD 1",
+      "SD 2",
+      "SD 3",
+      "SD 4",
+      "SD 5",
+      "SD 6",
+      "SMP 7",
+      "SMP 8",
+      "SMP 9",
+      "SMA 10",
+      "SMA 11",
+      "SMA 12",
+    ];
 
-      if (gradeA !== gradeB) return gradeA - gradeB;
-      return a.localeCompare(b);
-    });
+    const availableClasses = new Set(
+      schedules
+        .map((schedule) =>
+          formatClass(
+            schedule.student_level,
+            schedule.student_grade
+          )
+        )
+        .filter(Boolean)
+    );
+
+    return allowedClasses.filter((className) =>
+      availableClasses.has(className)
+    );
   }, [schedules]);
-
-  const studentsInSelectedClass = useMemo(() => {
-    if (classFilter === "Semua Kelas") return [];
-
-    return Array.from(
-      new Set(
-        schedules
-          .filter(
-            (schedule) =>
-              formatClass(schedule.student_level, schedule.student_grade) ===
-              classFilter
-          )
-          .map((schedule) => schedule.student_name)
-          .filter((name) => name && name !== "-")
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [schedules, classFilter]);
 
   const subjectOptions = useMemo(() => {
-    const names = schedules
-      .map((schedule) => schedule.subject_name)
-      .filter((name) => name && name !== "-");
-
-    return Array.from(new Set(names));
+    return Array.from(
+      new Set(
+        schedules
+          .map((schedule) => schedule.subject_name)
+          .filter((subject) => subject && subject !== "-")
+      )
+    ).sort((a, b) => a.localeCompare(b));
   }, [schedules]);
 
-  const filteredSchedules = useMemo(() => {
+  const filteredGroups = useMemo(() => {
     const keyword = normalizeText(search);
 
-    return schedules.filter((schedule) => {
+    return groupedSchedules.filter((group) => {
+      const groupClasses = group.rows.map((row) =>
+        formatClass(row.student_level, row.student_grade)
+      );
+
       const matchSearch =
         !keyword ||
-        normalizeText(schedule.student_name).includes(keyword) ||
-        normalizeText(schedule.student_grade).includes(keyword) ||
-        normalizeText(schedule.student_level).includes(keyword) ||
-        normalizeText(schedule.student_nipd).includes(keyword) ||
-        normalizeText(schedule.student_nisn).includes(keyword) ||
-        normalizeText(schedule.subject_name).includes(keyword) ||
-        normalizeText(schedule.material_topic).includes(keyword) ||
-        normalizeText(schedule.notes).includes(keyword) ||
-        normalizeText(schedule.session_name).includes(keyword) ||
-        normalizeText(schedule.day_name).includes(keyword);
+        normalizeText(group.teacher_name).includes(keyword) ||
+        normalizeText(group.subject_name).includes(keyword) ||
+        normalizeText(group.display_material).includes(keyword) ||
+        normalizeText(group.notes).includes(keyword) ||
+        normalizeText(group.session_name).includes(keyword) ||
+        normalizeText(group.day_name).includes(keyword) ||
+        group.rows.some((row) => {
+          return (
+            normalizeText(row.student_name).includes(keyword) ||
+            normalizeText(row.student_nipd).includes(keyword) ||
+            normalizeText(row.student_nisn).includes(keyword) ||
+            normalizeText(row.attendance_status).includes(keyword) ||
+            normalizeText(row.attendance_note).includes(keyword)
+          );
+        });
 
       const matchClass =
         classFilter === "Semua Kelas" ||
-        formatClass(schedule.student_level, schedule.student_grade) ===
-          classFilter;
+        groupClasses.includes(classFilter);
 
       const matchDay =
-        dayFilter === "Semua Hari" || schedule.day_name === dayFilter;
+        dayFilter === "Semua Hari" ||
+        group.day_name === dayFilter;
 
       const matchSubject =
         subjectFilter === "Semua Mapel" ||
-        schedule.subject_name === subjectFilter;
+        group.subject_name === subjectFilter;
 
-      return matchSearch && matchClass && matchDay && matchSubject;
-    });
-  }, [schedules, search, classFilter, dayFilter, subjectFilter]);
-
-  const sortedSchedules = useMemo(() => {
-    return [...filteredSchedules].sort((a, b) => {
-      const dateCompare = (a.schedule_date || "").localeCompare(
-        b.schedule_date || ""
+      return (
+        matchSearch &&
+        matchClass &&
+        matchDay &&
+        matchSubject
       );
-
-      if (dateCompare !== 0) return dateCompare;
-
-      const dayDiff = getDayOrder(a.day_name) - getDayOrder(b.day_name);
-
-      if (dayDiff !== 0) return dayDiff;
-
-      return formatTime(a.start_time).localeCompare(formatTime(b.start_time));
     });
-  }, [filteredSchedules]);
+  }, [
+    groupedSchedules,
+    search,
+    classFilter,
+    dayFilter,
+    subjectFilter,
+  ]);
 
-  const todaySchedules = useMemo(() => {
-    const today = getTodayDate();
-
-    return schedules.filter((schedule) => schedule.schedule_date === today);
-  }, [schedules]);
+  const todayGroups = useMemo(() => {
+    return groupedSchedules.filter(
+      (group) => group.schedule_date === todayYMD()
+    );
+  }, [groupedSchedules]);
 
   const totalStudents = useMemo(() => {
-    const studentIds = schedules
-      .map((schedule) => schedule.student_id)
-      .filter(Boolean) as string[];
-
-    return new Set(studentIds).size;
+    return new Set(
+      schedules
+        .map((schedule) => schedule.student_id)
+        .filter(Boolean)
+    ).size;
   }, [schedules]);
 
-  const totalTemporaryFiles = useMemo(() => {
-    return schedules.filter((schedule) => schedule.temporary_schedule_url).length;
+  const completedAttendance = useMemo(() => {
+    return schedules.filter(
+      (schedule) => Boolean(schedule.attendance_status)
+    ).length;
   }, [schedules]);
 
-  const totalSessions = schedules.length;
-
-  function openMaterialModal(schedule: EnrichedSchedule) {
-    setEditingSchedule(schedule);
-    setMaterialInput(schedule.material_topic || "");
+  function openMaterialModal(group: ScheduleGroup) {
+    setEditingGroup(group);
+    setMaterialInput(group.display_material || "");
     setErrorMessage("");
     setSuccessMessage("");
   }
@@ -501,7 +870,7 @@ export default function TeacherJadwalPage() {
   function closeMaterialModal() {
     if (savingMaterial) return;
 
-    setEditingSchedule(null);
+    setEditingGroup(null);
     setMaterialInput("");
   }
 
@@ -511,13 +880,8 @@ export default function TeacherJadwalPage() {
       return;
     }
 
-    if (!editingSchedule?.id) {
-      setErrorMessage("Data jadwal tidak ditemukan.");
-      return;
-    }
-
-    if (editingSchedule.teacher_id !== teacher.id) {
-      setErrorMessage("Jadwal ini bukan milik guru aktif.");
+    if (!editingGroup) {
+      setErrorMessage("Data rombel tidak ditemukan.");
       return;
     }
 
@@ -531,21 +895,50 @@ export default function TeacherJadwalPage() {
     setSuccessMessage("");
 
     try {
-      const { error } = await supabase
+      const scheduleIds = editingGroup.rows.map((row) => row.id);
+      const now = new Date().toISOString();
+
+      const { error: scheduleError } = await supabase
         .from("schedules")
         .update({
           material_topic: materialInput.trim(),
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         })
-        .eq("id", editingSchedule.id)
+        .in("id", scheduleIds)
         .eq("teacher_id", teacher.id);
 
-      if (error) throw new Error(error.message);
+      if (scheduleError) {
+        throw new Error(scheduleError.message);
+      }
 
-      setSuccessMessage("Materi pembelajaran berhasil disimpan.");
-      setEditingSchedule(null);
+      /*
+       * Jika absensi rombel ini sudah pernah dibuat, materi pada attendance
+       * ikut diperbarui agar tampilan Jadwal Admin dan Absensi konsisten.
+       */
+      const { error: attendanceError } = await supabase
+        .from("attendance")
+        .update({
+          material_topic: materialInput.trim(),
+          updated_at: now,
+        })
+        .eq("teacher_id", teacher.id)
+        .eq("subject_id", editingGroup.subject_id)
+        .eq("attendance_date", editingGroup.schedule_date)
+        .eq("start_time", editingGroup.start_time)
+        .eq("end_time", editingGroup.end_time);
+
+      if (attendanceError) {
+        throw new Error(attendanceError.message);
+      }
+
+      setSuccessMessage(
+        `Materi "${materialInput.trim()}" berhasil disimpan untuk ${editingGroup.total_students} siswa dalam rombel.`
+      );
+
+      setEditingGroup(null);
       setMaterialInput("");
-      await fetchPageData();
+
+      await fetchData();
     } catch (error) {
       if (error instanceof Error) {
         setErrorMessage(error.message);
@@ -559,318 +952,762 @@ export default function TeacherJadwalPage() {
 
   return (
     <TeacherLayout
-      activeMenu="Jadwal Mengajar"
+      activeMenu={"Jadwal Mengajar" as any}
       teacherName={teacher?.full_name || "Guru"}
       teacherSubject={formatTeacherSubject(teacher?.subjects)}
       searchPlaceholder="Cari jadwal mengajar..."
     >
-      <div className="w-full max-w-full overflow-hidden">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#6B4A3A]">
-              Teacher Portal
-            </p>
+      <section className="space-y-7">
+        <div>
+          <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
+            Teacher Portal
+          </p>
 
-            <h1 className="mt-1 text-[30px] font-bold tracking-tight">
-              Jadwal Mengajar
-            </h1>
+          <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+            Jadwal Mengajar
+          </h1>
 
-            <p className="mt-1 text-sm text-[#6B4A3A]">
-              Jadwal pembelajaran untuk{" "}
-              <span className="font-bold text-[#2B1B18]">
-                {teacher?.full_name || "guru aktif"}
-              </span>
-              . Materi pembelajaran diisi oleh guru pada jadwal masing-masing.
-            </p>
-
-            <p className="mt-1 text-xs font-semibold text-[#8A5A48]">
-              Academic Year {ACADEMIC_YEAR}
-            </p>
-          </div>
+          <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
+            Jadwal dasar dibuat oleh Admin/Kepala Sekolah. Guru dapat
+            mengisi materi untuk seluruh siswa dalam rombel yang sama.
+            Status Hadir, Izin, dan Alpa akan muncul setelah Absensi KBM
+            disimpan.
+          </p>
         </div>
 
         {errorMessage ? (
-          <div className="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
             {errorMessage}
           </div>
         ) : null}
 
         {successMessage ? (
-          <div className="mt-5 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] leading-6 text-emerald-700">
             {successMessage}
           </div>
         ) : null}
 
-        {loading ? (
-          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-8 text-center text-sm shadow-sm">
-            Loading jadwal mengajar...
-          </div>
-        ) : null}
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            icon={<CalendarDays className="h-5 w-5" />}
+            label="Total Rombel"
+            value={groupedSchedules.length}
+            info={ACADEMIC_YEAR}
+            tone="pink"
+          />
 
-        {!loading && schedules.length === 0 ? (
-          <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-            <p className="text-[15px] font-bold text-[#2B1B18]">
-              Belum ada jadwal untuk guru ini.
-            </p>
-            <p className="mt-2 text-sm leading-6 text-[#6B4A3A]">
-              Silakan buat jadwal terlebih dahulu dari menu Kepala Sekolah →
-              Jadwal Guru. Pastikan guru yang dipilih adalah{" "}
-              <span className="font-bold text-[#2B1B18]">
-                {teacher?.full_name || "guru aktif"}
-              </span>{" "}
-              dan tanggal masuk ke Academic Year {ACADEMIC_YEAR}.
-            </p>
-          </div>
-        ) : null}
+          <SummaryCard
+            icon={<Clock className="h-5 w-5" />}
+            label="Jadwal Hari Ini"
+            value={todayGroups.length}
+            info={formatDate(todayYMD())}
+            tone="orange"
+          />
 
-        {!loading ? (
-          <>
-            <div className="mt-7 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Total Jadwal</p>
-                <p className="mt-4 text-3xl font-bold">{totalSessions}</p>
-              </div>
+          <SummaryCard
+            icon={<UsersRound className="h-5 w-5" />}
+            label="Total Murid"
+            value={totalStudents}
+            info="Murid terjadwal"
+            tone="blue"
+          />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Jadwal Hari Ini</p>
-                <p className="mt-4 text-3xl font-bold">
-                  {todaySchedules.length}
-                </p>
-              </div>
+          <SummaryCard
+            icon={<CheckCircle2 className="h-5 w-5" />}
+            label="Sudah Diabsen"
+            value={completedAttendance}
+            info={`${schedules.length} data jadwal`}
+            tone="green"
+          />
+        </div>
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">Total Murid</p>
-                <p className="mt-4 text-3xl font-bold">{totalStudents}</p>
-              </div>
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_1fr]">
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
 
-              <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                <p className="text-sm text-[#6B4A3A]">File Jadwal</p>
-                <p className="mt-4 text-3xl font-bold">{totalTemporaryFiles}</p>
-              </div>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cari siswa, NIPD, NISN, mapel, materi, atau keterangan..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
+              />
             </div>
 
-            <div className="mt-7 rounded-2xl border border-[#E8D6C1] bg-white p-5 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_220px_200px_220px]">
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, NIPD, NISN, kelas, mapel, materi, keterangan..."
-                  className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                />
+            <select
+              value={classFilter}
+              onChange={(event) => setClassFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Kelas</option>
 
-                <div>
-                  <input
-                    list="teacher-jadwal-class-options"
-                    value={classFilter}
-                    onChange={(event) => setClassFilter(event.target.value)}
-                    placeholder="Ketik atau pilih kelas"
-                    className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none placeholder:text-[#9A7B6C] focus:border-[#7A1F2B]"
-                  />
-                  <datalist id="teacher-jadwal-class-options">
-                    <option value="Semua Kelas" />
-                    {classOptions.map((className) => (
-                      <option key={className} value={className} />
-                    ))}
-                  </datalist>
-                </div>
+              {classOptions.map((className) => (
+                <option key={className}>{className}</option>
+              ))}
+            </select>
 
-                <select
-                  value={dayFilter}
-                  onChange={(event) => setDayFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                >
-                  <option>Semua Hari</option>
-                  <option>Senin</option>
-                  <option>Selasa</option>
-                  <option>Rabu</option>
-                  <option>Kamis</option>
-                  <option>Jumat</option>
-                  <option>Sabtu</option>
-                  <option>Minggu</option>
-                </select>
+            <select
+              value={dayFilter}
+              onChange={(event) => setDayFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Hari</option>
+              <option>Senin</option>
+              <option>Selasa</option>
+              <option>Rabu</option>
+              <option>Kamis</option>
+              <option>Jumat</option>
+              <option>Sabtu</option>
+              <option>Minggu</option>
+            </select>
 
-                <select
-                  value={subjectFilter}
-                  onChange={(event) => setSubjectFilter(event.target.value)}
-                  className="rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
-                >
-                  <option>Semua Mapel</option>
-                  {subjectOptions.map((subject) => (
-                    <option key={subject}>{subject}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            <select
+              value={subjectFilter}
+              onChange={(event) => setSubjectFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Mapel</option>
 
-            {classFilter !== "Semua Kelas" ? (
-              <div className="mt-5 rounded-2xl border border-[#E8D6C1] bg-[#FFF8EF] px-5 py-4">
-                <p className="text-sm font-bold text-[#2B1B18]">
-                  Siswa {classFilter}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-[#6B4A3A]">
-                  {studentsInSelectedClass.length > 0
-                    ? studentsInSelectedClass.join(", ")
-                    : "Tidak ada siswa pada kelas ini di jadwal guru."}
-                </p>
-              </div>
-            ) : null}
+              {subjectOptions.map((subject) => (
+                <option key={subject}>{subject}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-            <div className="mt-7 grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
-              <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white shadow-sm">
-                <div className="border-b border-[#E8D6C1] px-6 py-5">
-                  <h2 className="text-lg font-bold">Daftar Jadwal</h2>
-                  <p className="mt-1 text-sm text-[#6B4A3A]">
-                    Admin mengatur jadwal dasar. Guru mengisi atau memperbarui
-                    materi pembelajaran pada jadwal masing-masing.
-                  </p>
-                </div>
+        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="border-b border-[#EADACA] px-6 py-5">
+            <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
+              Jadwal dan Absensi Guru & Siswa
+            </h2>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1580px] text-left">
-                    <thead className="bg-[#FFF8EF] text-sm font-bold text-[#6B4A3A]">
-                      <tr>
-                        <th className="px-4 py-4">No</th>
-                        <th className="px-4 py-4">Hari</th>
-                        <th className="px-4 py-4">Tanggal</th>
-                        <th className="px-4 py-4">Nama Guru</th>
-                        <th className="px-4 py-4">Datang</th>
-                        <th className="px-4 py-4">Pulang</th>
-                        <th className="px-4 py-4">Durasi</th>
-                        <th className="px-4 py-4">Jam</th>
-                        <th className="px-4 py-4">Sesi</th>
-                        <th className="px-4 py-4">Kls</th>
-                        <th className="px-4 py-4">Mapel</th>
-                        <th className="px-4 py-4">Materi</th>
-                        <th className="px-4 py-4">Siswa</th>
-                        <th className="px-4 py-4">NIPD</th>
-                        <th className="px-4 py-4">Keterangan</th>
-                        <th className="px-4 py-4">File</th>
-                        <th className="px-4 py-4">Aksi</th>
-                      </tr>
-                    </thead>
+            <p className="mt-1 text-[14px] text-[#6F5549]">
+              Tampilan mengikuti format Excel sekolah. Satu rombel dapat
+              berisi beberapa siswa.
+            </p>
+          </div>
 
-                    <tbody className="divide-y divide-[#E8D6C1]">
-                      {sortedSchedules.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={17}
-                            className="px-4 py-10 text-center text-sm text-[#6B4A3A]"
-                          >
-                            Belum ada jadwal mengajar untuk guru ini pada
-                            Academic Year {ACADEMIC_YEAR}.
-                          </td>
-                        </tr>
-                      ) : null}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1680px] border-collapse">
+              <thead>
+                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    No
+                  </th>
 
-                      {sortedSchedules.map((schedule, index) => (
-                        <tr key={schedule.id} className="hover:bg-[#FFF8EF]">
-                          <td className="px-4 py-4 font-bold">{index + 1}</td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Hari
+                  </th>
 
-                          <td className="px-4 py-4 font-semibold">
-                            {schedule.day_name || "-"}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Tanggal
+                  </th>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {formatDate(schedule.schedule_date)}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Nama Guru
+                  </th>
 
-                          <td className="px-4 py-4 font-semibold">
-                            {teacher?.full_name || "-"}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Datang
+                  </th>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {formatTime(schedule.start_time)}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Pulang
+                  </th>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {formatTime(schedule.end_time)}
-                          </td>
+                  <th
+                    colSpan={6}
+                    className="border-r border-[#EADACA] px-4 py-4 text-center"
+                  >
+                    Jadwal Kegiatan Belajar Mengajar
+                  </th>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {formatDuration(
-                              schedule.duration_minutes,
-                              schedule.start_time,
-                              schedule.end_time
-                            )}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4 text-center"
+                  >
+                    Hadir
+                  </th>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {formatTime(schedule.start_time)}-
-                            {formatTime(schedule.end_time)}
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4 text-center"
+                  >
+                    Izin
+                  </th>
 
-                          <td className="px-4 py-4">
-                            <span
-                              className={`inline-flex whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold ${getSessionBadge(
-                                schedule.session_name
-                              )}`}
-                            >
-                              {schedule.session_name || "-"}
-                            </span>
-                          </td>
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4 text-center"
+                  >
+                    Alpa
+                  </th>
 
-                          <td className="px-4 py-4">
+                  <th
+                    rowSpan={2}
+                    className="border-r border-[#EADACA] px-4 py-4"
+                  >
+                    Keterangan
+                  </th>
+
+                  <th
+                    rowSpan={2}
+                    className="px-4 py-4"
+                  >
+                    Aksi
+                  </th>
+                </tr>
+
+                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Jam
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Sesi
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Kls
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Mapel
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Materi
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
+                    Siswa
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan={18}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Memuat jadwal mengajar...
+                    </td>
+                  </tr>
+                ) : filteredGroups.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={18}
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Belum ada jadwal mengajar yang sesuai filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredGroups.flatMap((group, groupIndex) => {
+                    return group.rows.map((row, rowIndex) => {
+                      const firstRow = rowIndex === 0;
+                      const rowSpan = group.rows.length;
+
+                      return (
+                        <tr
+                          key={row.id}
+                          className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18] hover:bg-[#FFFDFC]"
+                        >
+                          {firstRow ? (
+                            <>
+                              <td
+                                rowSpan={rowSpan}
+                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
+                              >
+                                {groupIndex + 1}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-extrabold"
+                              >
+                                {group.day_name}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {formatDate(group.schedule_date)}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                <p className="font-extrabold">
+                                  {group.teacher_name}
+                                </p>
+
+                                <p className="mt-1 text-[12px] text-[#6F5549]">
+                                  {teacher?.teacher_code || "-"}
+                                </p>
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {formatTime(group.start_time)}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {formatTime(group.end_time)}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {formatTime(group.start_time)}-
+                                {formatTime(group.end_time)}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {group.session_name}
+                              </td>
+                            </>
+                          ) : null}
+
+                          <td className="border-r border-[#F0E1D4] px-4 py-4">
                             {formatClass(
-                              schedule.student_level,
-                              schedule.student_grade
+                              row.student_level,
+                              row.student_grade
                             )}
                           </td>
 
-                          <td className="px-4 py-4">
-                            {schedule.subject_name || "-"}
+                          {firstRow ? (
+                            <>
+                              <td
+                                rowSpan={rowSpan}
+                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
+                              >
+                                {group.subject_name}
+                              </td>
+
+                              <td
+                                rowSpan={rowSpan}
+                                className="min-w-[240px] border-r border-[#F0E1D4] px-4 py-4 align-top"
+                              >
+                                {group.display_material ? (
+                                  <p className="whitespace-pre-line font-bold leading-6">
+                                    {group.display_material}
+                                  </p>
+                                ) : (
+                                  <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-[11px] font-extrabold text-amber-700">
+                                    Belum diisi guru
+                                  </span>
+                                )}
+                              </td>
+                            </>
+                          ) : null}
+
+                          <td className="min-w-[220px] border-r border-[#F0E1D4] px-4 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F8DFD0] text-[12px] font-extrabold text-[#8C0F2D]">
+                                {getInitials(row.student_name)}
+                              </div>
+
+                              <div>
+                                <p className="font-extrabold">
+                                  {row.student_name}
+                                </p>
+
+                                <p className="mt-1 text-[11px] text-[#6F5549]">
+                                  NIPD: {row.student_nipd}
+                                </p>
+                              </div>
+                            </div>
                           </td>
 
-                          <td className="max-w-[260px] px-4 py-4">
-                            {schedule.material_topic ? (
-                              <p className="line-clamp-2 font-semibold text-[#2B1B18]">
-                                {schedule.material_topic}
-                              </p>
+                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                            <AttendanceMark
+                              active={row.attendance_status === "Hadir"}
+                              label="✓"
+                              tone="present"
+                            />
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                            <AttendanceMark
+                              active={row.attendance_status === "Izin"}
+                              label="✓"
+                              tone="permission"
+                            />
+                          </td>
+
+                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                            <AttendanceMark
+                              active={row.attendance_status === "Alpa"}
+                              label="✓"
+                              tone="absent"
+                            />
+                          </td>
+
+                          <td className="min-w-[230px] border-r border-[#F0E1D4] px-4 py-4">
+                            {row.attendance_status ? (
+                              <>
+                                <span
+                                  className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
+                                    row.attendance_status
+                                  )}`}
+                                >
+                                  {row.attendance_status}
+                                </span>
+
+                                <p className="mt-2 whitespace-pre-line text-[12px] leading-5 text-[#6F5549]">
+                                  {row.attendance_note ||
+                                    row.understanding_status ||
+                                    "-"}
+                                </p>
+                              </>
                             ) : (
-                              <span className="inline-flex whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700">
-                                Belum diisi
+                              <span className="text-[12px] text-[#8A6A5A]">
+                                Belum diabsen
                               </span>
                             )}
                           </td>
 
-                          <td className="px-4 py-4 font-semibold">
-                            {schedule.student_name || "-"}
+                          {firstRow ? (
+                            <td
+                              rowSpan={rowSpan}
+                              className="px-4 py-4 align-top"
+                            >
+                              <div className="flex min-w-[130px] flex-col gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openMaterialModal(group)
+                                  }
+                                  className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#8C0F2D] px-3 text-[12px] font-extrabold text-white transition hover:bg-[#54131D]"
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                  {group.display_material
+                                    ? "Edit Materi"
+                                    : "Isi Materi"}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedGroup(group)}
+                                  className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[12px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                                >
+                                  Detail Rombel
+                                </button>
+
+                                {group.temporary_schedule_url ? (
+                                  <a
+                                    href={group.temporary_schedule_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#BAE6FD] px-3 text-[12px] font-extrabold text-[#0369A1]"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" />
+                                    File
+                                  </a>
+                                ) : null}
+                              </div>
+                            </td>
+                          ) : null}
+                        </tr>
+                      );
+                    });
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {editingGroup ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="w-full max-w-[620px] overflow-hidden rounded-[22px] bg-[#FAF3EA] shadow-2xl">
+            <div className="flex items-start justify-between border-b border-[#E8D6C1] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  {editingGroup.display_material
+                    ? "Edit Materi Rombel"
+                    : "Isi Materi Rombel"}
+                </h2>
+
+                <p className="mt-1 text-[14px] text-[#6B4A3A]">
+                  {editingGroup.subject_name} •{" "}
+                  {formatDate(editingGroup.schedule_date)}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeMaterialModal}
+                disabled={savingMaterial}
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA] disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 rounded-2xl border border-[#E8D6C1] bg-white p-5 md:grid-cols-2">
+                <InfoItem
+                  label="Guru"
+                  value={editingGroup.teacher_name}
+                />
+
+                <InfoItem
+                  label="Mapel"
+                  value={editingGroup.subject_name}
+                />
+
+                <InfoItem
+                  label="Hari / Tanggal"
+                  value={`${editingGroup.day_name}, ${formatDate(
+                    editingGroup.schedule_date
+                  )}`}
+                />
+
+                <InfoItem
+                  label="Jam"
+                  value={`${formatTime(
+                    editingGroup.start_time
+                  )}-${formatTime(editingGroup.end_time)}`}
+                />
+
+                <InfoItem
+                  label="Sesi"
+                  value={editingGroup.session_name}
+                />
+
+                <InfoItem
+                  label="Jumlah Siswa"
+                  value={`${editingGroup.total_students} siswa`}
+                />
+              </div>
+
+              <label className="block">
+                <span className="text-[14px] font-extrabold text-[#2B1B18]">
+                  Materi Pembelajaran
+                </span>
+
+                <textarea
+                  value={materialInput}
+                  onChange={(event) =>
+                    setMaterialInput(event.target.value)
+                  }
+                  rows={6}
+                  autoFocus
+                  placeholder="Contoh: BAB I Tentang Tubuh Manusia"
+                  className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-[14px] leading-6 outline-none focus:border-[#7A1F2B]"
+                />
+              </label>
+
+              <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-[13px] leading-6 text-[#6B4A3A]">
+                Materi akan diterapkan ke seluruh{" "}
+                <strong>{editingGroup.total_students} siswa</strong> dalam
+                rombel ini.
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={closeMaterialModal}
+                  disabled={savingMaterial}
+                  className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-[14px] font-extrabold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+                >
+                  Batal
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleSaveMaterial()}
+                  disabled={savingMaterial}
+                  className="h-11 rounded-xl bg-[#7A1F2B] text-[14px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingMaterial
+                    ? "Menyimpan..."
+                    : "Simpan Materi Rombel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedGroup ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-[900px] overflow-y-auto rounded-[22px] bg-[#FAF3EA] shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between border-b border-[#E8D6C1] bg-[#FAF3EA] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  Detail Rombel
+                </h2>
+
+                <p className="mt-1 text-[14px] text-[#6B4A3A]">
+                  {selectedGroup.subject_name} •{" "}
+                  {formatDate(selectedGroup.schedule_date)}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedGroup(null)}
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 rounded-2xl border border-[#E8D6C1] bg-white p-5 md:grid-cols-3">
+                <InfoItem
+                  label="Guru"
+                  value={selectedGroup.teacher_name}
+                />
+
+                <InfoItem
+                  label="Mapel"
+                  value={selectedGroup.subject_name}
+                />
+
+                <InfoItem
+                  label="Hari"
+                  value={selectedGroup.day_name}
+                />
+
+                <InfoItem
+                  label="Tanggal"
+                  value={formatDate(selectedGroup.schedule_date)}
+                />
+
+                <InfoItem
+                  label="Jam"
+                  value={`${formatTime(
+                    selectedGroup.start_time
+                  )}-${formatTime(selectedGroup.end_time)}`}
+                />
+
+                <InfoItem
+                  label="Durasi"
+                  value={formatDuration(
+                    selectedGroup.duration_minutes,
+                    selectedGroup.start_time,
+                    selectedGroup.end_time
+                  )}
+                />
+
+                <InfoItem
+                  label="Sesi"
+                  value={selectedGroup.session_name}
+                />
+
+                <InfoItem
+                  label="Semester"
+                  value={selectedGroup.semester}
+                />
+
+                <InfoItem
+                  label="Materi"
+                  value={
+                    selectedGroup.display_material ||
+                    "Belum diisi guru"
+                  }
+                />
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-[#E8D6C1] bg-white">
+                <div className="border-b border-[#E8D6C1] px-5 py-4">
+                  <h3 className="text-[17px] font-extrabold text-[#2B1B18]">
+                    Daftar Siswa
+                  </h3>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[780px]">
+                    <thead className="bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6B4A3A]">
+                      <tr>
+                        <th className="px-5 py-4">No</th>
+                        <th className="px-5 py-4">Nama Siswa</th>
+                        <th className="px-5 py-4">Kelas</th>
+                        <th className="px-5 py-4">NIPD</th>
+                        <th className="px-5 py-4">Status</th>
+                        <th className="px-5 py-4">Keterangan</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-[#E8D6C1]">
+                      {selectedGroup.rows.map((row, index) => (
+                        <tr key={row.id}>
+                          <td className="px-5 py-4 font-bold">
+                            {index + 1}
                           </td>
 
-                          <td className="px-4 py-4">
-                            {schedule.student_nipd || "-"}
-                          </td>
+                          <td className="px-5 py-4">
+                            <p className="font-extrabold">
+                              {row.student_name}
+                            </p>
 
-                          <td className="max-w-[240px] px-4 py-4">
-                            <p className="line-clamp-2 text-sm text-[#6B4A3A]">
-                              {schedule.notes || "-"}
+                            <p className="mt-1 text-[12px] text-[#6B4A3A]">
+                              NISN: {row.student_nisn}
                             </p>
                           </td>
 
-                          <td className="px-4 py-4">
-                            {schedule.temporary_schedule_url ? (
-                              <a
-                                href={schedule.temporary_schedule_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex whitespace-nowrap rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700 underline"
-                              >
-                                Lihat File
-                              </a>
-                            ) : (
-                              <span className="text-sm text-[#6B4A3A]">-</span>
+                          <td className="px-5 py-4">
+                            {formatClass(
+                              row.student_level,
+                              row.student_grade
                             )}
                           </td>
 
-                          <td className="px-4 py-4">
-                            <button
-                              type="button"
-                              onClick={() => openMaterialModal(schedule)}
-                              className="inline-flex whitespace-nowrap rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
+                          <td className="px-5 py-4">
+                            {row.student_nipd}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
+                                row.attendance_status
+                              )}`}
                             >
-                              {schedule.material_topic
-                                ? "Edit Materi"
-                                : "Isi Materi"}
-                            </button>
+                              {row.attendance_status ||
+                                "Belum diabsen"}
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-4 text-[#6B4A3A]">
+                            {row.attendance_note ||
+                              row.understanding_status ||
+                              "-"}
                           </td>
                         </tr>
                       ))}
@@ -879,213 +1716,110 @@ export default function TeacherJadwalPage() {
                 </div>
               </div>
 
-              <div className="space-y-5">
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Guru Aktif</h2>
-
-                  <div className="mt-5 rounded-2xl bg-[#FFF8EF] p-5">
-                    <p className="text-sm text-[#6B4A3A]">Nama Guru</p>
-                    <p className="mt-2 text-xl font-bold">
-                      {teacher?.full_name || "-"}
-                    </p>
-
-                    <div className="mt-4 space-y-2 text-sm text-[#6B4A3A]">
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Kode:
-                        </span>{" "}
-                        {teacher?.teacher_code || "-"}
-                      </p>
-
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Email:
-                        </span>{" "}
-                        {teacher?.email || "-"}
-                      </p>
-
-                      <p>
-                        <span className="font-semibold text-[#2B1B18]">
-                          Mapel:
-                        </span>{" "}
-                        {Array.isArray(teacher?.subjects)
-                          ? teacher?.subjects.join(", ")
-                          : teacher?.subjects || "-"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Jadwal Hari Ini</h2>
-
-                  <div className="mt-5 space-y-3">
-                    {todaySchedules.length === 0 ? (
-                      <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] p-4 text-sm text-[#6B4A3A]">
-                        Tidak ada jadwal hari ini.
-                      </div>
-                    ) : null}
-
-                    {todaySchedules.map((schedule) => (
-                      <div
-                        key={schedule.id}
-                        className="rounded-xl border border-[#E8D6C1] p-4"
-                      >
-                        <p className="font-bold">{schedule.student_name || "-"}</p>
-
-                        <p className="mt-1 text-sm text-[#6B4A3A]">
-                          {formatTime(schedule.start_time)} -{" "}
-                          {formatTime(schedule.end_time)} •{" "}
-                          {formatDuration(
-                            schedule.duration_minutes,
-                            schedule.start_time,
-                            schedule.end_time
-                          )}
-                        </p>
-
-                        <p className="mt-1 text-sm text-[#6B4A3A]">
-                          {schedule.subject_name || "-"} •{" "}
-                          {schedule.material_topic || "Materi belum diisi"}
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => openMaterialModal(schedule)}
-                          className="mt-3 w-full rounded-xl bg-[#7A1F2B] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#54131D]"
-                        >
-                          {schedule.material_topic ? "Edit Materi" : "Isi Materi"}
-                        </button>
-
-                        {schedule.notes ? (
-                          <p className="mt-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-xs text-[#6B4A3A]">
-                            {schedule.notes}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#E8D6C1] bg-white p-6 shadow-sm">
-                  <h2 className="text-lg font-bold">Catatan</h2>
-                  <p className="mt-3 text-sm leading-6 text-[#6B4A3A]">
-                    Jadwal dasar dibuat oleh Kepala Sekolah/Admin. Guru tidak
-                    dapat mengubah tanggal, jam, siswa, atau mapel, tetapi guru
-                    dapat mengisi dan memperbarui materi pembelajaran pada jadwal
-                    miliknya sendiri. Jadwal ini tidak terhubung langsung dengan
-                    Program Semester, Bab/Sub Bab, Absensi, atau Laporan KBM.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      {editingSchedule ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-          <div className="w-full max-w-[520px] overflow-hidden rounded-2xl bg-[#FAF3EA] shadow-2xl">
-            <div className="flex items-start justify-between border-b border-[#E8D6C1] px-6 py-5">
-              <div>
-                <h2 className="text-xl font-bold text-[#2B1B18]">
-                  {editingSchedule.material_topic
-                    ? "Edit Materi Pembelajaran"
-                    : "Isi Materi Pembelajaran"}
-                </h2>
-                <p className="mt-1 text-sm text-[#6B4A3A]">
-                  {editingSchedule.subject_name} •{" "}
-                  {formatDate(editingSchedule.schedule_date)}
-                </p>
-              </div>
-
               <button
                 type="button"
-                onClick={closeMaterialModal}
-                disabled={savingMaterial}
-                className="text-2xl leading-none text-[#6B4A3A] transition hover:text-[#7A1F2B] disabled:opacity-50"
+                onClick={() => setSelectedGroup(null)}
+                className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
               >
-                ×
+                Tutup Detail
               </button>
-            </div>
-
-            <div className="space-y-5 px-6 py-6">
-              <div className="grid gap-3 rounded-2xl border border-[#E8D6C1] bg-white p-4 text-sm md:grid-cols-2">
-                <div>
-                  <p className="text-xs font-bold text-[#6B4A3A]">Siswa</p>
-                  <p className="mt-1 font-bold text-[#2B1B18]">
-                    {editingSchedule.student_name}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs font-bold text-[#6B4A3A]">Kelas</p>
-                  <p className="mt-1 font-bold text-[#2B1B18]">
-                    {formatClass(
-                      editingSchedule.student_level,
-                      editingSchedule.student_grade
-                    )}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs font-bold text-[#6B4A3A]">Jam</p>
-                  <p className="mt-1 font-bold text-[#2B1B18]">
-                    {formatTime(editingSchedule.start_time)} -{" "}
-                    {formatTime(editingSchedule.end_time)}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs font-bold text-[#6B4A3A]">Mapel</p>
-                  <p className="mt-1 font-bold text-[#2B1B18]">
-                    {editingSchedule.subject_name}
-                  </p>
-                </div>
-              </div>
-
-              {errorMessage ? (
-                <div className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {errorMessage}
-                </div>
-              ) : null}
-
-              <label className="block">
-                <span className="text-sm font-bold text-[#2B1B18]">
-                  Materi Pembelajaran
-                </span>
-                <textarea
-                  value={materialInput}
-                  onChange={(event) => setMaterialInput(event.target.value)}
-                  rows={5}
-                  autoFocus
-                  placeholder="Contoh: Bab II - Wujud Zat dan Perubahannya"
-                  className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-[#7A1F2B]"
-                />
-              </label>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={closeMaterialModal}
-                  disabled={savingMaterial}
-                  className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-sm font-bold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
-                >
-                  Batal
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSaveMaterial}
-                  disabled={savingMaterial}
-                  className="h-11 rounded-xl bg-[#7A1F2B] text-sm font-bold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {savingMaterial ? "Menyimpan..." : "Simpan Materi"}
-                </button>
-              </div>
             </div>
           </div>
         </div>
       ) : null}
     </TeacherLayout>
+  );
+}
+
+function AttendanceMark({
+  active,
+  label,
+  tone,
+}: {
+  active: boolean;
+  label: string;
+  tone: "present" | "permission" | "absent";
+}) {
+  const activeClass = {
+    present: "border-[#2F66C9] bg-[#3F73C8] text-white",
+    permission: "border-[#7C5CC4] bg-[#8B6CC7] text-white",
+    absent: "border-[#B93849] bg-[#C74758] text-white",
+  }[tone];
+
+  return (
+    <span
+      className={`mx-auto flex h-7 w-11 items-center justify-center rounded-[5px] border text-[14px] font-extrabold ${
+        active
+          ? activeClass
+          : "border-[#D5DDE9] bg-white text-transparent"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  info,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: number | string;
+  info: string;
+  tone: "pink" | "orange" | "blue" | "green";
+}) {
+  const toneClass = {
+    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
+    orange: "bg-[#F4DFD5] text-[#B85C38]",
+    blue: "bg-[#D7ECFA] text-[#1779B8]",
+    green: "bg-[#C7F0DA] text-[#158A58]",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-[#E8D6C1] bg-white px-5 py-5 shadow-sm">
+      <div className="mb-7 flex items-start justify-between">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-full ${toneClass}`}
+        >
+          {icon}
+        </div>
+
+        <span className="text-[13px] font-extrabold text-[#009B68]">
+          {info}
+        </span>
+      </div>
+
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
+        {value}
+      </p>
+
+      <p className="mt-2 text-[13px] text-[#6B4A3A]">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function InfoItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+
+      <p className="mt-1 whitespace-pre-line font-extrabold leading-6 text-[#2B1B18]">
+        {value}
+      </p>
+    </div>
   );
 }

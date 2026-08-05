@@ -29,7 +29,7 @@ type ActiveMenu =
   | "Siswa"
   | "Guru"
   | "Data Mapel"
-  | "Jadwal Guru"
+  | "ABSENSI KBM SISWA DAN GURU HARIAN"
   | "Absensi KBM"
   | "Laporan KBM"
   | "Laporan Akademik"
@@ -43,8 +43,6 @@ type KepalaSekolahLayoutProps = {
   children: React.ReactNode;
   activeMenu: ActiveMenu;
   searchPlaceholder?: string;
-
-  // Beberapa halaman lama masih mengirim buttonLabel
   buttonLabel?: string;
 };
 
@@ -76,7 +74,7 @@ const menus: MenuItem[] = [
     href: "/kepalaSekolah/subjects",
   },
   {
-    name: "Jadwal Guru",
+    name: "ABSENSI KBM SISWA DAN GURU HARIAN",
     icon: CalendarDays,
     href: "/kepalaSekolah/jadwal",
   },
@@ -140,8 +138,13 @@ function getDisplayRole(role?: string | null) {
   if (normalizedRole === "admin") return "Admin";
   if (normalizedRole === "super_admin") return "Admin";
 
-  if (normalizedRole === "kepala_sekolah") return "Kepala Sekolah";
-  if (normalizedRole === "kepala sekolah") return "Kepala Sekolah";
+  if (normalizedRole === "kepala_sekolah") {
+    return "Kepala Sekolah";
+  }
+
+  if (normalizedRole === "kepala sekolah") {
+    return "Kepala Sekolah";
+  }
 
   return "Kepala Sekolah";
 }
@@ -175,8 +178,8 @@ export default function KepalaSekolahLayout({
 
   return (
     <div className="min-h-screen bg-[#FAF3EA] text-[#2B1B18]">
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[250px] flex-col bg-[#7A0016] text-white lg:flex">
-        <div className="flex h-[96px] items-center gap-3 border-b border-white/10 px-5">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[270px] flex-col bg-[#7A0016] text-white lg:flex">
+        <div className="flex min-h-[96px] items-center gap-3 border-b border-white/10 px-5 py-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm">
             <Image
               src="/icon_hstkb_logo.png"
@@ -208,7 +211,7 @@ export default function KepalaSekolahLayout({
               <Link
                 key={menu.name}
                 href={menu.href}
-                className={`group flex items-center gap-3 rounded-2xl px-4 py-3 text-[14px] font-semibold transition ${
+                className={`group flex min-h-[48px] items-center gap-3 rounded-2xl px-4 py-3 text-[14px] font-semibold transition ${
                   isActive
                     ? "bg-white/12 text-white"
                     : "text-white/75 hover:bg-white/8 hover:text-white"
@@ -224,10 +227,12 @@ export default function KepalaSekolahLayout({
                   }`}
                 />
 
-                <span className="truncate">{menu.name}</span>
+                <span className="min-w-0 flex-1 whitespace-normal leading-5">
+                  {menu.name}
+                </span>
 
                 {isActive ? (
-                  <span className="ml-auto h-2 w-2 rounded-full bg-[#E7792B]" />
+                  <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-[#E7792B]" />
                 ) : null}
               </Link>
             );
@@ -261,7 +266,7 @@ export default function KepalaSekolahLayout({
         </div>
       </aside>
 
-      <div className="lg:pl-[250px]">
+      <div className="lg:pl-[270px]">
         <header className="sticky top-0 z-30 border-b border-[#E8D6C1] bg-[#FFF8EF]/95 backdrop-blur">
           <div className="flex h-[78px] items-center justify-between gap-5 px-6 lg:px-8">
             <div className="relative hidden w-full max-w-[430px] sm:block">
