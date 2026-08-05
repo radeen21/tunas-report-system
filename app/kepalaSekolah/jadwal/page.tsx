@@ -1123,8 +1123,8 @@ export default function KepalaSekolahJadwalPage() {
 
   return (
     <KepalaSekolahLayout
-      activeMenu="Jadwal Guru"
-      searchPlaceholder="Cari jadwal guru..."
+      activeMenu="ABSENSI KBM SISWA DAN GURU HARIAN"
+      searchPlaceholder="Cari absensi KBM siswa dan guru..."
     >
       <section className="space-y-7 print:space-y-4">
         <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end print:hidden">
@@ -1690,8 +1690,8 @@ export default function KepalaSekolahJadwalPage() {
                     value={
                       form.start_time && form.end_time
                         ? `${formatTime(form.start_time)}-${formatTime(
-                            form.end_time
-                          )}`
+                          form.end_time
+                        )}`
                         : "-"
                     }
                     readOnly
