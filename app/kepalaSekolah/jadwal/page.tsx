@@ -320,7 +320,15 @@ function formatSessionValue(
 
   if (!duration) return "-";
 
-  const sessionValue = duration / 60;
+  let sessionValue: number;
+
+  if (duration === 60) {
+    sessionValue = 0.75;
+  } else if (duration === 90) {
+    sessionValue = 1;
+  } else {
+    sessionValue = duration / 90;
+  }
 
   return new Intl.NumberFormat("id-ID", {
     minimumFractionDigits: 0,
@@ -1233,7 +1241,125 @@ export default function KepalaSekolahJadwalPage() {
       activeMenu="ABSENSI KBM SISWA DAN GURU HARIAN"
       searchPlaceholder="Cari absensi KBM siswa dan guru..."
     >
-      <section className="space-y-7 print:space-y-4">
+      <style jsx global>{`
+        .print-only {
+          display: none;
+        }
+
+        @media print {
+          @page {
+            size: A4 landscape;
+            margin: 8mm;
+          }
+
+          html,
+          body {
+            background: #ffffff !important;
+          }
+
+          body * {
+            visibility: hidden !important;
+          }
+
+          .print-root,
+          .print-root * {
+            visibility: visible !important;
+          }
+
+          .print-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            overflow: visible !important;
+            background: #ffffff !important;
+          }
+
+          .print-only {
+            display: block !important;
+          }
+
+          .print-hidden {
+            display: none !important;
+          }
+
+          .print-root > div {
+            overflow: visible !important;
+          }
+
+          .print-root table {
+            width: 100% !important;
+            min-width: 0 !important;
+            border-collapse: collapse !important;
+            table-layout: auto !important;
+            font-size: 8px !important;
+          }
+
+          .print-root thead {
+            display: table-header-group !important;
+          }
+
+          .print-root tr {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+
+          .print-root th,
+          .print-root td {
+            border: 1px solid #4b4b4b !important;
+            padding: 4px !important;
+            color: #111111 !important;
+            background: #ffffff !important;
+            vertical-align: top !important;
+          }
+
+          .print-root th {
+            font-weight: 800 !important;
+            text-align: center !important;
+          }
+
+          .print-root button {
+            appearance: none !important;
+            border: 0 !important;
+            background: transparent !important;
+            color: #111111 !important;
+            padding: 0 !important;
+            min-height: auto !important;
+            cursor: default !important;
+          }
+
+          .print-root .divide-y > :not([hidden]) ~ :not([hidden]) {
+            border-top: 1px solid #777777 !important;
+          }
+
+          .print-root .line-clamp-3 {
+            display: block !important;
+            overflow: visible !important;
+            -webkit-line-clamp: unset !important;
+          }
+
+          .print-root .rounded-md,
+          .print-root .rounded-xl,
+          .print-root .rounded-full {
+            border-radius: 2px !important;
+          }
+
+          .print-root .bg-\\[\\#22C55E\\],
+          .print-root .bg-\\[\\#7C3AED\\],
+          .print-root .bg-\\[\\#DC2626\\] {
+            background: transparent !important;
+            color: #111111 !important;
+            border: 0 !important;
+          }
+        }
+      `}</style>
+
+      <section className="space-y-7">
         <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end print:hidden">
           <div>
             <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
@@ -1241,7 +1367,7 @@ export default function KepalaSekolahJadwalPage() {
             </p>
 
             <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-              Jadwal Guru / Rombel
+              ABSENSI KBM GURU DAN SISWA HARIAN
             </h1>
 
             <p className="mt-2 max-w-[880px] text-[15px] leading-6 text-[#6F5549]">
@@ -1258,7 +1384,7 @@ export default function KepalaSekolahJadwalPage() {
               className="flex h-11 items-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D]"
             >
               <Printer className="h-4 w-4" />
-              Print Jadwal
+              Print Absensi
             </button>
 
             <button
@@ -1376,8 +1502,20 @@ export default function KepalaSekolahJadwalPage() {
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
-          <div className="border-b border-[#EADACA] px-6 py-5">
+        <div className="print-root overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="print-only px-4 pb-5 pt-2 text-center">
+            <h1 className="text-[20px] font-extrabold uppercase text-black">
+              ABSENSI KBM GURU DAN SISWA HARIAN
+            </h1>
+            <p className="mt-1 text-[12px] font-bold text-black">
+              HOMESCHOOLING TUNAS KARYA BANGSA
+            </p>
+            <p className="mt-1 text-[10px] text-black">
+              Tahun Ajaran {ACADEMIC_YEAR}
+            </p>
+          </div>
+
+          <div className="border-b border-[#EADACA] px-6 py-5 print:hidden">
             <h2 className="text-[20px] font-extrabold">
               Daftar Jadwal Rombel
             </h2>
@@ -1418,10 +1556,10 @@ export default function KepalaSekolahJadwalPage() {
                   <th rowSpan={2} className="border-r px-4 py-4">
                     Keterangan
                   </th>
-                  <th rowSpan={2} className="px-4 py-4">
+                  <th rowSpan={2} className="print-hidden px-4 py-4">
                     File
                   </th>
-                  <th rowSpan={2} className="px-4 py-4">
+                  <th rowSpan={2} className="print-hidden px-4 py-4">
                     Aksi
                   </th>
                 </tr>
@@ -1619,7 +1757,7 @@ export default function KepalaSekolahJadwalPage() {
                           </div>
                         </td>
 
-                        <td className="px-4 py-4">
+                        <td className="print-hidden px-4 py-4">
                           {group.temporary_schedule_url ? (
                             <a
                               href={group.temporary_schedule_url}
@@ -1635,7 +1773,7 @@ export default function KepalaSekolahJadwalPage() {
                           )}
                         </td>
 
-                        <td className="px-4 py-4">
+                        <td className="print-hidden px-4 py-4">
                           {group.students.some(
                             (item) => item.data_source === "schedule"
                           ) ? (

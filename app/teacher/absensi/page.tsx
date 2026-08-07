@@ -5,9 +5,11 @@ import {
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
+  Eye,
   Save,
   Search,
   Users,
+  X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import TeacherLayout from "../components/TeacherLayout";
@@ -45,6 +47,7 @@ type StudentTeacherRow = {
   notes?: string | null;
 };
 
+
 type AttendanceRow = {
   id: string;
   teacher_id: string | null;
@@ -78,6 +81,25 @@ type AttendanceStudent = StudentRow & {
   attendanceStatus: string;
   understandingStatus: string;
   note: string;
+};
+
+type AttendanceHistoryGroup = {
+  key: string;
+  attendanceDate: string;
+  dayName: string;
+  subjectId: string;
+  subjectName: string;
+  startTime: string;
+  endTime: string;
+  sessionName: string;
+  materialTopic: string;
+  teacherArrivalTime: string;
+  teacherDepartureTime: string;
+  rows: AttendanceRow[];
+  totalStudents: number;
+  hadir: number;
+  izin: number;
+  alpa: number;
 };
 
 const ACADEMIC_YEAR = "2026/2027";
@@ -259,7 +281,18 @@ function formatSessionValue(
 
   if (!duration) return "-";
 
-  const sessionValue = duration / 60;
+  let sessionValue: number;
+
+  // Ketentuan HSTKB:
+  // 60 menit = 0,75 sesi
+  // 90 menit = 1 sesi
+  if (duration === 60) {
+    sessionValue = 0.75;
+  } else if (duration === 90) {
+    sessionValue = 1;
+  } else {
+    sessionValue = duration / 90;
+  }
 
   return new Intl.NumberFormat("id-ID", {
     minimumFractionDigits: 0,
@@ -365,24 +398,24 @@ export default function TeacherAbsensiPage() {
   const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
     []
   );
-
   const [attendance, setAttendance] = useState<AttendanceRow[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [selectedHistory, setSelectedHistory] =
+    useState<AttendanceHistoryGroup | null>(null);
 
   const [search, setSearch] = useState("");
   const [dateFilter, setDateFilter] = useState(todayYMD());
   const [classFilter, setClassFilter] = useState("");
   const [subjectId, setSubjectId] = useState("");
 
-  // Kehadiran guru
   const [teacherArrivalTime, setTeacherArrivalTime] = useState("");
   const [teacherDepartureTime, setTeacherDepartureTime] = useState("");
 
-  // Waktu KBM siswa
   const [studentStartTime, setStudentStartTime] = useState("");
   const [studentEndTime, setStudentEndTime] = useState("");
 
@@ -504,12 +537,14 @@ export default function TeacherAbsensiPage() {
         throw new Error(relationsRes.error.message);
       }
 
+
       if (attendanceRes.error) {
         throw new Error(attendanceRes.error.message);
       }
 
       const relationsData =
         (relationsRes.data || []) as StudentTeacherRow[];
+
 
       const attendanceData =
         (attendanceRes.data || []) as AttendanceRow[];
@@ -628,9 +663,7 @@ export default function TeacherAbsensiPage() {
   }, [subjects]);
 
   const selectedSubject = useMemo(() => {
-    return (
-      subjects.find((subject) => subject.id === subjectId) || null
-    );
+    return subjects.find((subject) => subject.id === subjectId) || null;
   }, [subjects, subjectId]);
 
   const studentIdsBySelectedSubject = useMemo(() => {
@@ -695,9 +728,7 @@ export default function TeacherAbsensiPage() {
     if (!classFilter.trim()) return [];
 
     return studentsAllowedBySubject
-      .filter((student) =>
-        matchesClassInput(student, classFilter)
-      )
+      .filter((student) => matchesClassInput(student, classFilter))
       .sort((a, b) => {
         const gradeA = getGradeNumber(a.grade);
         const gradeB = getGradeNumber(b.grade);
@@ -748,6 +779,108 @@ export default function TeacherAbsensiPage() {
     studentStartTime,
     studentEndTime,
   ]);
+
+  const attendanceHistory = useMemo<AttendanceHistoryGroup[]>(() => {
+    const studentMap = new Map(
+      students.map((student) => [student.id, student])
+    );
+
+    const subjectMap = new Map(
+      subjects.map((subject) => [subject.id, subject])
+    );
+
+    const groupMap = new Map<string, AttendanceRow[]>();
+
+    attendance.forEach((item) => {
+      const key = [
+        item.attendance_date || "",
+        item.subject_id || "",
+        normalizeDatabaseTime(item.start_time),
+        normalizeDatabaseTime(item.end_time),
+        item.material_topic || "",
+      ].join("__");
+
+      const current = groupMap.get(key) || [];
+      current.push(item);
+      groupMap.set(key, current);
+    });
+
+    return Array.from(groupMap.entries())
+      .map(([key, rows]) => {
+        const first = rows[0];
+        const subject = first.subject_id
+          ? subjectMap.get(first.subject_id)
+          : null;
+
+        const hadir = rows.filter(
+          (item) => normalizeAttendanceStatus(item.attendance_status) === "Hadir"
+        ).length;
+        const izin = rows.filter(
+          (item) => normalizeAttendanceStatus(item.attendance_status) === "Izin"
+        ).length;
+        const alpa = rows.filter(
+          (item) => normalizeAttendanceStatus(item.attendance_status) === "Alpa"
+        ).length;
+
+        const classNames = Array.from(
+          new Set(
+            rows.map((item) => {
+              const student = item.student_id
+                ? studentMap.get(item.student_id)
+                : null;
+              return student
+                ? formatClass(student.level, student.grade)
+                : "-";
+            })
+          )
+        ).filter(Boolean);
+
+        return {
+          key,
+          attendanceDate: first.attendance_date || "",
+          dayName:
+            first.day_name || getDayNameFromDate(first.attendance_date),
+          subjectId: first.subject_id || "",
+          subjectName: `${getSubjectLabel(subject)}${
+            classNames.length > 0 ? ` • ${classNames.join(", ")}` : ""
+          }`,
+          startTime: normalizeDatabaseTime(first.start_time),
+          endTime: normalizeDatabaseTime(first.end_time),
+          sessionName:
+            first.session_name ||
+            formatSessionValue(
+              first.duration_minutes,
+              first.start_time,
+              first.end_time
+            ),
+          materialTopic: first.material_topic || "-",
+          teacherArrivalTime: normalizeDatabaseTime(
+            first.teacher_arrival_time
+          ),
+          teacherDepartureTime: normalizeDatabaseTime(
+            first.teacher_departure_time
+          ),
+          rows: [...rows].sort((a, b) => {
+            const studentA = a.student_id
+              ? studentMap.get(a.student_id)?.full_name || ""
+              : "";
+            const studentB = b.student_id
+              ? studentMap.get(b.student_id)?.full_name || ""
+              : "";
+            return studentA.localeCompare(studentB);
+          }),
+          totalStudents: rows.length,
+          hadir,
+          izin,
+          alpa,
+        };
+      })
+      .sort((a, b) => {
+        const dateCompare = b.attendanceDate.localeCompare(a.attendanceDate);
+        if (dateCompare !== 0) return dateCompare;
+        return b.startTime.localeCompare(a.startTime);
+      });
+  }, [attendance, students, subjects]);
 
   const summary = useMemo(() => {
     const todayAttendance = attendance.filter(
@@ -1011,6 +1144,8 @@ export default function TeacherAbsensiPage() {
 
   async function handleSaveAttendance() {
     if (!validateBeforeSave()) return;
+
+    setSuccessMessage("");
     if (!teacher?.id) return;
 
     setSaving(true);
@@ -1089,9 +1224,11 @@ export default function TeacherAbsensiPage() {
 
       await fetchData();
 
-      alert("Absensi KBM berhasil disimpan.");
-
-      setAttendanceStudents([]);
+      setSuccessMessage(
+        `Absensi ${getSubjectLabel(selectedSubject)} tanggal ${formatDate(
+          dateFilter
+        )} berhasil disimpan.`
+      );
     } catch (error) {
       alert(
         `Gagal simpan absensi: ${
@@ -1119,7 +1256,7 @@ export default function TeacherAbsensiPage() {
           </p>
 
           <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-            Absensi KBM
+             ABSENSI KBM GURU DAN SISWA HARIAN
           </h1>
 
           <p className="mt-2 max-w-[950px] text-[15px] leading-6 text-[#6F5549]">
@@ -1134,6 +1271,13 @@ export default function TeacherAbsensiPage() {
             {errorMessage}
           </div>
         ) : null}
+
+        {successMessage ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] font-bold leading-6 text-emerald-700">
+            {successMessage}
+          </div>
+        ) : null}
+
 
         {!loading && teacher && students.length === 0 ? (
           <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
@@ -1184,32 +1328,28 @@ export default function TeacherAbsensiPage() {
 
               <input
                 value={search}
-                onChange={(event) =>
-                  setSearch(event.target.value)
-                }
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="Cari nama siswa, NIPD, NISN, kelas, atau level..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
 
-            <div>
-              <input
-                list="teacher-attendance-class-options"
-                value={classFilter}
-                onChange={(event) => {
-                  setClassFilter(event.target.value);
-                  resetAttendanceInput();
-                }}
-                placeholder="Ketik atau pilih kelas, contoh SMP 8"
-                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
-              />
-
-              <datalist id="teacher-attendance-class-options">
-                {classOptions.map((item) => (
-                  <option key={item} value={item} />
-                ))}
-              </datalist>
-            </div>
+            <select
+              value={classFilter}
+              onChange={(event) => {
+                setClassFilter(event.target.value);
+                resetAttendanceInput();
+              }}
+              disabled={!subjectId}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">Pilih Kelas</option>
+              {classOptions.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
 
             <select
               value={subjectId}
@@ -1239,6 +1379,11 @@ export default function TeacherAbsensiPage() {
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             />
           </div>
+
+          <p className="mt-3 text-[12px] leading-5 text-[#6F5549]">
+            Guru memilih mapel, kelas, dan tanggal secara mandiri. Daftar siswa
+            mengikuti relasi guru, mata pelajaran, dan kelas yang dipilih.
+          </p>
         </div>
 
         <div className="space-y-5">
@@ -1578,8 +1723,8 @@ export default function TeacherAbsensiPage() {
                         colSpan={14}
                         className="px-5 py-12 text-center text-[#6F5549]"
                       >
-                        Pilih mapel, kelas, dan jam KBM untuk
-                        menampilkan seluruh siswa.
+                        Pilih mapel, kelas, tanggal, dan jam KBM untuk
+                        menampilkan siswa.
                       </td>
                     </tr>
                   ) : (
@@ -1782,7 +1927,242 @@ export default function TeacherAbsensiPage() {
             </div>
           </div>
         </div>
+
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="flex flex-col justify-between gap-3 border-b border-[#EADACA] px-5 py-4 md:flex-row md:items-center">
+            <div>
+              <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+                Riwayat Absensi Saya
+              </h2>
+              <p className="mt-1 text-[13px] text-[#6F5549]">
+                Menampilkan absensi yang sudah disimpan oleh guru yang sedang login.
+              </p>
+            </div>
+
+            <span className="inline-flex w-fit rounded-full bg-[#E8F5EE] px-3 py-1 text-[12px] font-extrabold text-[#158A58]">
+              {attendanceHistory.length} sesi tersimpan
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1080px] border-collapse">
+              <thead>
+                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                  <th className="px-5 py-4">No</th>
+                  <th className="px-5 py-4">Hari / Tanggal</th>
+                  <th className="px-5 py-4">Mapel / Kelas</th>
+                  <th className="px-5 py-4">Jam KBM</th>
+                  <th className="px-5 py-4">Sesi</th>
+                  <th className="px-5 py-4">Materi</th>
+                  <th className="px-5 py-4 text-center">Siswa</th>
+                  <th className="px-5 py-4 text-center">Hadir</th>
+                  <th className="px-5 py-4 text-center">Izin</th>
+                  <th className="px-5 py-4 text-center">Alpa</th>
+                  <th className="px-5 py-4">Aksi</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={11} className="px-5 py-10 text-center text-[#6F5549]">
+                      Memuat riwayat absensi...
+                    </td>
+                  </tr>
+                ) : attendanceHistory.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-5 py-10 text-center text-[#6F5549]">
+                      Belum ada absensi yang tersimpan.
+                    </td>
+                  </tr>
+                ) : (
+                  attendanceHistory.map((history, index) => (
+                    <tr
+                      key={history.key}
+                      className="border-b border-[#F0E1D4] text-[14px]"
+                    >
+                      <td className="px-5 py-4 font-bold">{index + 1}</td>
+                      <td className="px-5 py-4">
+                        <p className="font-extrabold text-[#2B1B18]">
+                          {history.dayName}
+                        </p>
+                        <p className="mt-1 text-[12px] text-[#6F5549]">
+                          {formatDate(history.attendanceDate)}
+                        </p>
+                      </td>
+                      <td className="px-5 py-4 font-bold text-[#2B1B18]">
+                        {history.subjectName}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-4 text-[#6F5549]">
+                        {formatTime(history.startTime)}-{formatTime(history.endTime)}
+                      </td>
+                      <td className="px-5 py-4 font-extrabold text-[#8C0F2D]">
+                        {history.sessionName}
+                      </td>
+                      <td className="max-w-[260px] px-5 py-4">
+                        <p className="line-clamp-2 font-bold">
+                          {history.materialTopic}
+                        </p>
+                      </td>
+                      <td className="px-5 py-4 text-center font-extrabold">
+                        {history.totalStudents}
+                      </td>
+                      <td className="px-5 py-4 text-center font-extrabold text-emerald-700">
+                        {history.hadir}
+                      </td>
+                      <td className="px-5 py-4 text-center font-extrabold text-amber-700">
+                        {history.izin}
+                      </td>
+                      <td className="px-5 py-4 text-center font-extrabold text-red-700">
+                        {history.alpa}
+                      </td>
+                      <td className="px-5 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedHistory(history)}
+                          className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                        >
+                          <Eye className="h-4 w-4" />
+                          Lihat Detail
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </section>
+
+      {selectedHistory ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
+          <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  Detail Riwayat Absensi
+                </h2>
+                <p className="mt-1 text-[14px] text-[#6F5549]">
+                  {selectedHistory.subjectName} • {formatDate(selectedHistory.attendanceDate)}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedHistory(null)}
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 rounded-2xl border border-[#E1CFBE] bg-white p-5 md:grid-cols-4">
+                <InfoItem label="Hari" value={selectedHistory.dayName} />
+                <InfoItem
+                  label="Tanggal"
+                  value={formatDate(selectedHistory.attendanceDate)}
+                />
+                <InfoItem
+                  label="Datang Guru"
+                  value={formatTime(selectedHistory.teacherArrivalTime)}
+                />
+                <InfoItem
+                  label="Pulang Guru"
+                  value={formatTime(selectedHistory.teacherDepartureTime)}
+                />
+                <InfoItem
+                  label="Jam KBM"
+                  value={`${formatTime(selectedHistory.startTime)}-${formatTime(
+                    selectedHistory.endTime
+                  )}`}
+                />
+                <InfoItem label="Sesi" value={selectedHistory.sessionName} />
+                <InfoItem
+                  label="Jumlah Siswa"
+                  value={`${selectedHistory.totalStudents} siswa`}
+                />
+                <InfoItem label="Materi" value={selectedHistory.materialTopic} />
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[920px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                        <th className="px-5 py-4">No</th>
+                        <th className="px-5 py-4">Nama Siswa</th>
+                        <th className="px-5 py-4">Kelas</th>
+                        <th className="px-5 py-4 text-center">Hadir</th>
+                        <th className="px-5 py-4 text-center">Izin</th>
+                        <th className="px-5 py-4 text-center">Alpa</th>
+                        <th className="px-5 py-4">Pemahaman</th>
+                        <th className="px-5 py-4">Keterangan</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {selectedHistory.rows.map((row, index) => {
+                        const student = students.find(
+                          (item) => item.id === row.student_id
+                        );
+                        const status = normalizeAttendanceStatus(
+                          row.attendance_status
+                        );
+
+                        return (
+                          <tr
+                            key={row.id}
+                            className="border-b border-[#F0E1D4] text-[14px]"
+                          >
+                            <td className="px-5 py-4 font-bold">{index + 1}</td>
+                            <td className="px-5 py-4">
+                              <p className="font-extrabold text-[#2B1B18]">
+                                {student?.full_name || "-"}
+                              </p>
+                              <p className="mt-1 text-[12px] text-[#6F5549]">
+                                NIPD: {student?.nis || "-"}
+                              </p>
+                            </td>
+                            <td className="px-5 py-4 text-[#6F5549]">
+                              {formatClass(student?.level, student?.grade)}
+                            </td>
+                            <td className="px-5 py-4 text-center">
+                              <HistoryCheck checked={status === "Hadir"} />
+                            </td>
+                            <td className="px-5 py-4 text-center">
+                              <HistoryCheck checked={status === "Izin"} />
+                            </td>
+                            <td className="px-5 py-4 text-center">
+                              <HistoryCheck checked={status === "Alpa"} />
+                            </td>
+                            <td className="px-5 py-4 text-[#6F5549]">
+                              {row.understanding_status || "-"}
+                            </td>
+                            <td className="px-5 py-4 text-[#6F5549]">
+                              {getAttendanceNote(row) || "-"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedHistory(null)}
+                className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+              >
+                Tutup Detail
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </TeacherLayout>
   );
 }
@@ -1852,6 +2232,20 @@ function ChecklistButton({
     >
       ✓
     </button>
+  );
+}
+
+function HistoryCheck({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`mx-auto flex h-7 w-11 items-center justify-center rounded-[5px] border text-[14px] font-extrabold ${
+        checked
+          ? "border-[#2F66C9] bg-[#3F73C8] text-white"
+          : "border-[#D5DDE9] bg-white text-transparent"
+      }`}
+    >
+      ✓
+    </span>
   );
 }
 

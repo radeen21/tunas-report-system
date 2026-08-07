@@ -116,6 +116,7 @@ type RombelToday = {
   start_time: string;
   end_time: string;
   students_count: number;
+  attendance_count: number;
   alreadyAttendance: boolean;
 };
 
@@ -165,6 +166,11 @@ function formatDate(value?: string | null) {
 
 function formatTime(value?: string | null) {
   if (!value) return "-";
+  return value.slice(0, 5);
+}
+
+function normalizeDatabaseTime(value?: string | null) {
+  if (!value) return "";
   return value.slice(0, 5);
 }
 
@@ -528,8 +534,10 @@ export default function KepalaSekolahDashboardPage() {
             item.teacher_id === schedule.teacher_id &&
             item.subject_id === schedule.subject_id &&
             item.attendance_date === schedule.schedule_date &&
-            item.start_time === schedule.start_time &&
-            item.end_time === schedule.end_time &&
+            normalizeDatabaseTime(item.start_time) ===
+              normalizeDatabaseTime(schedule.start_time) &&
+            normalizeDatabaseTime(item.end_time) ===
+              normalizeDatabaseTime(schedule.end_time) &&
             item.student_id === schedule.student_id
           );
         });
@@ -545,6 +553,7 @@ export default function KepalaSekolahDashboardPage() {
             start_time: schedule.start_time || "",
             end_time: schedule.end_time || "",
             students_count: 1,
+            attendance_count: hasAttendance ? 1 : 0,
             alreadyAttendance: hasAttendance,
           });
 
@@ -552,7 +561,13 @@ export default function KepalaSekolahDashboardPage() {
         }
 
         current.students_count += 1;
-        current.alreadyAttendance = current.alreadyAttendance || hasAttendance;
+
+        if (hasAttendance) {
+          current.attendance_count += 1;
+        }
+
+        current.alreadyAttendance =
+          current.attendance_count === current.students_count;
       });
 
     return Array.from(grouped.values()).sort((a, b) =>
@@ -738,11 +753,19 @@ export default function KepalaSekolahDashboardPage() {
                       </div>
 
                       <StatusBadge
-                        status={rombel.alreadyAttendance ? "approved" : "pending"}
+                        status={
+                          rombel.alreadyAttendance
+                            ? "approved"
+                            : rombel.attendance_count > 0
+                              ? "submitted"
+                              : "pending"
+                        }
                         label={
                           rombel.alreadyAttendance
                             ? "Sudah Absen"
-                            : "Belum Absen"
+                            : rombel.attendance_count > 0
+                              ? `Belum Lengkap (${rombel.attendance_count}/${rombel.students_count})`
+                              : "Belum Absen"
                         }
                       />
                     </div>

@@ -188,19 +188,41 @@ function formatSessionValue(
   startTime?: string | null,
   endTime?: string | null
 ) {
-  const savedSession = (sessionName || "").trim();
-
-  if (savedSession) return savedSession;
-
   const duration =
     durationMinutes || calculateDurationMinutes(startTime, endTime);
 
-  if (!duration) return "-";
+  let sessionValue: number | null = null;
+
+  // Ketentuan HSTKB:
+  // 60 menit = 0,75 sesi
+  // 90 menit = 1 sesi
+  // Durasi lain dihitung proporsional berdasarkan 90 menit.
+  if (duration) {
+    if (duration === 60) {
+      sessionValue = 0.75;
+    } else if (duration === 90) {
+      sessionValue = 1;
+    } else {
+      sessionValue = duration / 90;
+    }
+  } else {
+    const savedSession = (sessionName || "")
+      .trim()
+      .replace(",", ".");
+
+    const parsedSession = Number(savedSession);
+
+    if (!Number.isNaN(parsedSession)) {
+      sessionValue = parsedSession;
+    }
+  }
+
+  if (sessionValue === null) return "-";
 
   return new Intl.NumberFormat("id-ID", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(duration / 60);
+  }).format(sessionValue);
 }
 
 function getInitials(name?: string | null) {
