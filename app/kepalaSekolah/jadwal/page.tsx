@@ -1205,28 +1205,31 @@ export default function KepalaSekolahJadwalPage() {
     }
   }
 
-  async function handleDeleteGroup(group: ScheduleGroup) {
+  async function handleDeleteScheduleGroup(group: ScheduleGroup) {
+    const scheduleIds = Array.from(
+      new Set(
+        group.students
+          .filter((item) => item.data_source === "schedule")
+          .map((item) => item.id)
+          .filter(Boolean)
+      )
+    );
+
+    if (scheduleIds.length === 0) {
+      alert("Tidak ada jadwal admin yang dapat dihapus pada data ini.");
+      return;
+    }
+
     const confirmDelete = window.confirm(
-      `Hapus jadwal ${group.subject_name} - ${group.teacher_name} untuk ${group.total_students} siswa?`
+      `Hapus jadwal ${group.subject_name} - ${group.teacher_name} untuk ${group.total_students} siswa?\n\nData absensi guru yang sudah tersimpan tidak ikut dihapus.`
     );
 
     if (!confirmDelete) return;
 
-    const ids = group.students
-      .filter((item) => item.data_source === "schedule")
-      .map((item) => item.id);
-
-    if (ids.length === 0) {
-      alert(
-        "Data ini berasal dari input absensi guru dan tidak memiliki jadwal admin yang dapat dihapus."
-      );
-      return;
-    }
-
     const { error } = await supabase
       .from("schedules")
       .delete()
-      .in("id", ids);
+      .in("id", scheduleIds);
 
     if (error) {
       alert(`Gagal menghapus jadwal: ${error.message}`);
@@ -1234,6 +1237,47 @@ export default function KepalaSekolahJadwalPage() {
     }
 
     await fetchData();
+  }
+
+  async function handleDeleteAttendanceGroup(group: ScheduleGroup) {
+    const attendanceIds = Array.from(
+      new Set(
+        group.students
+          .map((item) => item.source_attendance_id || "")
+          .filter(Boolean)
+      )
+    );
+
+    if (attendanceIds.length === 0) {
+      alert("Belum ada data absensi guru pada sesi ini yang dapat dihapus.");
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `Hapus absensi ${group.subject_name} - ${group.teacher_name} tanggal ${formatDate(
+        group.schedule_date
+      )}?\n\n${attendanceIds.length} data absensi siswa akan dihapus. Tindakan ini tidak dapat dibatalkan.`
+    );
+
+    if (!confirmDelete) return;
+
+    const { error } = await supabase
+      .from("attendance")
+      .delete()
+      .in("id", attendanceIds);
+
+    if (error) {
+      alert(`Gagal menghapus absensi: ${error.message}`);
+      return;
+    }
+
+    if (selectedGroup?.key === group.key) {
+      setSelectedGroup(null);
+    }
+
+    await fetchData();
+
+    alert("Data absensi guru berhasil dihapus.");
   }
 
   return (
@@ -1774,22 +1818,43 @@ export default function KepalaSekolahJadwalPage() {
                         </td>
 
                         <td className="print-hidden px-4 py-4">
-                          {group.students.some(
-                            (item) => item.data_source === "schedule"
-                          ) ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteGroup(group)}
-                              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] px-3 text-[13px] font-extrabold text-[#DC2626]"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Hapus
-                            </button>
-                          ) : (
-                            <span className="inline-flex rounded-full bg-[#E8F5EE] px-3 py-1 text-[11px] font-extrabold text-[#158A58]">
-                              Input Guru
-                            </span>
-                          )}
+                          <div className="flex min-w-[150px] flex-col items-start gap-2">
+                            {group.students.some(
+                              (item) => Boolean(item.source_attendance_id)
+                            ) ? (
+                              <>
+                                <span className="inline-flex rounded-full bg-[#E8F5EE] px-3 py-1 text-[11px] font-extrabold text-[#158A58]">
+                                  Input Guru
+                                </span>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDeleteAttendanceGroup(group)
+                                  }
+                                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] bg-white px-3 text-[13px] font-extrabold text-[#DC2626] transition hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Hapus Absensi
+                                </button>
+                              </>
+                            ) : null}
+
+                            {group.students.some(
+                              (item) => item.data_source === "schedule"
+                            ) ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteScheduleGroup(group)
+                                }
+                                className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E6D5C4] bg-white px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Hapus Jadwal
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2121,12 +2186,30 @@ export default function KepalaSekolahJadwalPage() {
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedGroup(null)}
-              >
-                <X />
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedGroup.students.some(
+                  (item) => Boolean(item.source_attendance_id)
+                ) ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleDeleteAttendanceGroup(selectedGroup)
+                    }
+                    className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] bg-white px-3 text-[12px] font-extrabold text-[#DC2626] transition hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Hapus Absensi
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroup(null)}
+                  className="rounded-full p-2 transition hover:bg-[#F4E5DA]"
+                >
+                  <X />
+                </button>
+              </div>
             </div>
 
             <div className="mt-5 overflow-hidden rounded-xl border bg-white">
