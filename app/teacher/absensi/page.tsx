@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Eye,
+  Pencil,
   Save,
   Search,
   Users,
@@ -100,22 +101,35 @@ type AttendanceHistoryGroup = {
   hadir: number;
   izin: number;
   alpa: number;
+  tidakAdaJadwal: number;
 };
 
 const ACADEMIC_YEAR = "2026/2027";
 
 const understandingOptions = ["Paham", "Cukup Paham", "Belum Paham"];
 
-function normalizeAttendanceStatus(status?: string | null) {
+function normalizeAttendanceStatus(
+  status?: string | null
+): "Hadir" | "Izin" | "Alpa" | "Tidak Ada Jadwal" {
   const normalized = (status || "").trim().toLowerCase();
 
+  if (normalized === "hadir") return "Hadir";
   if (normalized === "tidak hadir") return "Alpa";
   if (normalized === "sakit") return "Izin";
   if (normalized === "izin") return "Izin";
   if (normalized === "alpa") return "Alpa";
   if (normalized === "alpha") return "Alpa";
 
-  return "Hadir";
+  if (
+    normalized === "tidak ada jadwal" ||
+    normalized === "tidak dijadwalkan" ||
+    normalized === "no schedule"
+  ) {
+    return "Tidak Ada Jadwal";
+  }
+
+  // Record baru / status kosong tidak otomatis dianggap hadir.
+  return "Tidak Ada Jadwal";
 }
 
 function normalizeText(value?: string | null) {
@@ -322,6 +336,10 @@ function isAlpa(status: string) {
   return status === "Alpa";
 }
 
+function isTidakAdaJadwal(status: string) {
+  return status === "Tidak Ada Jadwal";
+}
+
 function getSubjectLabel(subject?: SubjectRow | null) {
   if (!subject) return "-";
 
@@ -406,6 +424,8 @@ export default function TeacherAbsensiPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [selectedHistory, setSelectedHistory] =
+    useState<AttendanceHistoryGroup | null>(null);
+  const [editingHistory, setEditingHistory] =
     useState<AttendanceHistoryGroup | null>(null);
 
   const [search, setSearch] = useState("");
@@ -821,6 +841,11 @@ export default function TeacherAbsensiPage() {
         const alpa = rows.filter(
           (item) => normalizeAttendanceStatus(item.attendance_status) === "Alpa"
         ).length;
+        const tidakAdaJadwal = rows.filter(
+          (item) =>
+            normalizeAttendanceStatus(item.attendance_status) ===
+            "Tidak Ada Jadwal"
+        ).length;
 
         const classNames = Array.from(
           new Set(
@@ -873,6 +898,7 @@ export default function TeacherAbsensiPage() {
           hadir,
           izin,
           alpa,
+          tidakAdaJadwal,
         };
       })
       .sort((a, b) => {
@@ -978,17 +1004,23 @@ export default function TeacherAbsensiPage() {
         const existing =
           existingAttendanceByStudent.get(student.id);
 
+        const existingStatus = existing
+          ? normalizeAttendanceStatus(existing.attendance_status)
+          : "Tidak Ada Jadwal";
+
         return {
           ...student,
 
-          attendanceStatus: normalizeAttendanceStatus(
-            existing?.attendance_status
-          ),
+          attendanceStatus: existingStatus,
 
           understandingStatus:
-            existing?.understanding_status || "Paham",
+            existingStatus === "Hadir"
+              ? existing?.understanding_status || "Paham"
+              : "-",
 
-          note: getAttendanceNote(existing),
+          note: existing
+            ? getAttendanceNote(existing)
+            : "Tidak ada jadwal hari ini",
         };
       });
 
@@ -1037,6 +1069,14 @@ export default function TeacherAbsensiPage() {
           next.understandingStatus = "-";
         }
 
+        if (
+          field === "attendanceStatus" &&
+          value === "Tidak Ada Jadwal" &&
+          !next.note.trim()
+        ) {
+          next.note = "Tidak ada jadwal hari ini";
+        }
+
         return next;
       })
     );
@@ -1058,6 +1098,46 @@ export default function TeacherAbsensiPage() {
         note: "",
       }))
     );
+  }
+
+  function handleEditAttendance(history: AttendanceHistoryGroup) {
+    const firstStudent = history.rows
+      .map((row) =>
+        students.find((student) => student.id === row.student_id)
+      )
+      .find(Boolean);
+
+    const className = firstStudent
+      ? formatClass(firstStudent.level, firstStudent.grade)
+      : "";
+
+    setEditingHistory(history);
+    setSelectedHistory(null);
+    setSuccessMessage("");
+
+    setDateFilter(history.attendanceDate);
+    setSubjectId(history.subjectId);
+    setClassFilter(className === "-" ? "" : className);
+
+    setTeacherArrivalTime(history.teacherArrivalTime);
+    setTeacherDepartureTime(history.teacherDepartureTime);
+    setStudentStartTime(history.startTime);
+    setStudentEndTime(history.endTime);
+    setMaterialTopic(
+      history.materialTopic === "-" ? "" : history.materialTopic
+    );
+    setAttendanceNote("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  function cancelEditAttendance() {
+    setEditingHistory(null);
+    setSuccessMessage("");
+    setAttendanceStudents([]);
   }
 
   function validateBeforeSave() {
@@ -1154,14 +1234,23 @@ export default function TeacherAbsensiPage() {
       const now = new Date().toISOString();
       const dayName = getDayNameFromDate(dateFilter);
 
+      const deleteSubjectId =
+        editingHistory?.subjectId || subjectId;
+      const deleteDate =
+        editingHistory?.attendanceDate || dateFilter;
+      const deleteStartTime =
+        editingHistory?.startTime || studentStartTime;
+      const deleteEndTime =
+        editingHistory?.endTime || studentEndTime;
+
       const deleteQuery = supabase
         .from("attendance")
         .delete()
         .eq("teacher_id", teacher.id)
-        .eq("subject_id", subjectId)
-        .eq("attendance_date", dateFilter)
-        .eq("start_time", studentStartTime)
-        .eq("end_time", studentEndTime);
+        .eq("subject_id", deleteSubjectId)
+        .eq("attendance_date", deleteDate)
+        .eq("start_time", deleteStartTime)
+        .eq("end_time", deleteEndTime);
 
       const { error: deleteAttendanceError } =
         await deleteQuery;
@@ -1224,11 +1313,15 @@ export default function TeacherAbsensiPage() {
 
       await fetchData();
 
+      const wasEditing = Boolean(editingHistory);
+
       setSuccessMessage(
         `Absensi ${getSubjectLabel(selectedSubject)} tanggal ${formatDate(
           dateFilter
-        )} berhasil disimpan.`
+        )} berhasil ${wasEditing ? "diperbarui" : "disimpan"}.`
       );
+
+      setEditingHistory(null);
     } catch (error) {
       alert(
         `Gagal simpan absensi: ${
@@ -1278,6 +1371,28 @@ export default function TeacherAbsensiPage() {
           </div>
         ) : null}
 
+        {editingHistory ? (
+          <div className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-900 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="font-extrabold">
+                Mode Edit Absensi
+              </p>
+              <p className="mt-1 leading-6">
+                Kamu sedang mengedit absensi {editingHistory.subjectName} tanggal{" "}
+                {formatDate(editingHistory.attendanceDate)}. Setelah selesai,
+                klik Simpan Perubahan.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={cancelEditAttendance}
+              className="h-10 rounded-xl border border-amber-300 bg-white px-4 text-[13px] font-extrabold text-amber-900"
+            >
+              Batal Edit
+            </button>
+          </div>
+        ) : null}
 
         {!loading && teacher && students.length === 0 ? (
           <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4 text-[14px] leading-6 text-[#6F5549]">
@@ -1622,7 +1737,7 @@ export default function TeacherAbsensiPage() {
             ) : null}
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1320px] border-collapse">
+              <table className="w-full min-w-[1450px] border-collapse">
                 <thead>
                   <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                     <th
@@ -1683,6 +1798,13 @@ export default function TeacherAbsensiPage() {
 
                     <th
                       rowSpan={2}
+                      className="border-r border-[#EADACA] px-5 py-4 text-center"
+                    >
+                      Tidak Ada Jadwal
+                    </th>
+
+                    <th
+                      rowSpan={2}
                       className="px-5 py-4"
                     >
                       Keterangan
@@ -1720,7 +1842,7 @@ export default function TeacherAbsensiPage() {
                   {attendanceStudents.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={14}
+                        colSpan={15}
                         className="px-5 py-12 text-center text-[#6F5549]"
                       >
                         Pilih mapel, kelas, tanggal, dan jam KBM untuk
@@ -1845,6 +1967,21 @@ export default function TeacherAbsensiPage() {
                             />
                           </td>
 
+                          <td className="border-r border-[#F0E1D4] px-5 py-4 text-center">
+                            <ChecklistButton
+                              checked={isTidakAdaJadwal(
+                                attendanceStudent.attendanceStatus
+                              )}
+                              onClick={() =>
+                                updateStudentAttendance(
+                                  attendanceStudent.id,
+                                  "attendanceStatus",
+                                  "Tidak Ada Jadwal"
+                                )
+                              }
+                            />
+                          </td>
+
                           <td className="min-w-[260px] px-5 py-4">
                             <div className="space-y-2">
                               <select
@@ -1893,6 +2030,8 @@ export default function TeacherAbsensiPage() {
                                   attendanceStudent.attendanceStatus ===
                                   "Hadir"
                                     ? "Keterangan opsional"
+                                    : attendanceStudent.attendanceStatus === "Tidak Ada Jadwal"
+                                    ? "Contoh: Jadwal hari Selasa / belajar individu"
                                     : "Wajib isi alasan"
                                 }
                                 className="h-10 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-3 text-[13px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
@@ -1908,22 +2047,37 @@ export default function TeacherAbsensiPage() {
             </div>
 
             <div className="px-5 py-5">
-              <button
-                type="button"
-                onClick={() => void handleSaveAttendance()}
-                disabled={
-                  saving ||
-                  attendanceStudents.length === 0 ||
-                  !teacher
-                }
-                className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] text-[15px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Save className="h-4 w-4" />
+              <div className="flex flex-col gap-3 md:flex-row">
+                {editingHistory ? (
+                  <button
+                    type="button"
+                    onClick={cancelEditAttendance}
+                    disabled={saving}
+                    className="h-12 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+                  >
+                    Batal
+                  </button>
+                ) : null}
 
-                {saving
-                  ? "Menyimpan..."
-                  : "Simpan Absensi KBM"}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveAttendance()}
+                  disabled={
+                    saving ||
+                    attendanceStudents.length === 0 ||
+                    !teacher
+                  }
+                  className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] text-[15px] font-extrabold text-white shadow-sm transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Save className="h-4 w-4" />
+
+                  {saving
+                    ? "Menyimpan..."
+                    : editingHistory
+                      ? "Simpan Perubahan"
+                      : "Simpan Absensi KBM"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1958,6 +2112,7 @@ export default function TeacherAbsensiPage() {
                   <th className="px-5 py-4 text-center">Hadir</th>
                   <th className="px-5 py-4 text-center">Izin</th>
                   <th className="px-5 py-4 text-center">Alpa</th>
+                  <th className="px-5 py-4 text-center">Tidak Ada Jadwal</th>
                   <th className="px-5 py-4">Aksi</th>
                 </tr>
               </thead>
@@ -1965,13 +2120,13 @@ export default function TeacherAbsensiPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={11} className="px-5 py-10 text-center text-[#6F5549]">
+                    <td colSpan={12} className="px-5 py-10 text-center text-[#6F5549]">
                       Memuat riwayat absensi...
                     </td>
                   </tr>
                 ) : attendanceHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-5 py-10 text-center text-[#6F5549]">
+                    <td colSpan={12} className="px-5 py-10 text-center text-[#6F5549]">
                       Belum ada absensi yang tersimpan.
                     </td>
                   </tr>
@@ -2016,7 +2171,11 @@ export default function TeacherAbsensiPage() {
                       <td className="px-5 py-4 text-center font-extrabold text-red-700">
                         {history.alpa}
                       </td>
+                      <td className="px-5 py-4 text-center font-extrabold text-slate-600">
+                        {history.tidakAdaJadwal}
+                      </td>
                       <td className="px-5 py-4">
+                        <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => setSelectedHistory(history)}
@@ -2025,6 +2184,16 @@ export default function TeacherAbsensiPage() {
                           <Eye className="h-4 w-4" />
                           Lihat Detail
                         </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEditAttendance(history)}
+                          className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl bg-[#8C0F2D] px-3 text-[13px] font-extrabold text-white transition hover:bg-[#54131D]"
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit Absensi
+                        </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -2098,6 +2267,7 @@ export default function TeacherAbsensiPage() {
                         <th className="px-5 py-4 text-center">Hadir</th>
                         <th className="px-5 py-4 text-center">Izin</th>
                         <th className="px-5 py-4 text-center">Alpa</th>
+                        <th className="px-5 py-4 text-center">Tidak Ada Jadwal</th>
                         <th className="px-5 py-4">Pemahaman</th>
                         <th className="px-5 py-4">Keterangan</th>
                       </tr>
@@ -2138,6 +2308,11 @@ export default function TeacherAbsensiPage() {
                             <td className="px-5 py-4 text-center">
                               <HistoryCheck checked={status === "Alpa"} />
                             </td>
+                            <td className="px-5 py-4 text-center">
+                              <HistoryCheck
+                                checked={status === "Tidak Ada Jadwal"}
+                              />
+                            </td>
                             <td className="px-5 py-4 text-[#6F5549]">
                               {row.understanding_status || "-"}
                             </td>
@@ -2152,13 +2327,24 @@ export default function TeacherAbsensiPage() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedHistory(null)}
-                className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
-              >
-                Tutup Detail
-              </button>
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedHistory(null)}
+                  className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-white text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                >
+                  Tutup Detail
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleEditAttendance(selectedHistory)}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
+                >
+                  <Pencil className="h-4 w-4" />
+                  Edit Absensi
+                </button>
+              </div>
             </div>
           </div>
         </div>
