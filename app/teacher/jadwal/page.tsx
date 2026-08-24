@@ -18,6 +18,10 @@ const ACADEMIC_YEAR = "2026/2027";
 const ACADEMIC_YEAR_START = "2026-07-01";
 const ACADEMIC_YEAR_END = "2027-06-30";
 
+/* =========================================================
+   TYPES
+========================================================= */
+
 type TeacherRow = {
   id: string;
   full_name: string | null;
@@ -34,6 +38,9 @@ type StudentRow = {
   level: string | null;
   nis?: string | null;
   nisn?: string | null;
+
+  class_id?: string | null;
+  rombel_id?: string | null;
 };
 
 type SubjectRow = {
@@ -43,40 +50,79 @@ type SubjectRow = {
   grade?: string | null;
 };
 
+type ClassRow = {
+  id: string;
+  name: string;
+  grade_level: number;
+  academic_year: string;
+  is_active: boolean;
+};
+
+type RombelRow = {
+  id: string;
+  class_id: string;
+  name: string;
+  academic_year: string;
+  is_active: boolean;
+};
+
 type ScheduleRow = {
   id: string;
+
   student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
+
+  /*
+   * BARU
+   */
+  class_id?: string | null;
+  rombel_id?: string | null;
+
   day_name: string | null;
   schedule_date: string | null;
   start_time: string | null;
   end_time: string | null;
+
   duration_minutes: number | null;
+
   session_name: string | null;
   material_topic: string | null;
+
   notes: string | null;
+
   temporary_schedule_url: string | null;
+
   academic_year: string | null;
   semester: string | null;
+
   created_at?: string | null;
   updated_at?: string | null;
 };
 
 type AttendanceRow = {
   id: string;
+
   teacher_id: string | null;
   student_id: string | null;
   subject_id: string | null;
+
   attendance_date: string | null;
+
   day_name?: string | null;
+
   start_time?: string | null;
   end_time?: string | null;
+
   duration_minutes?: number | null;
+
   session_name?: string | null;
+
   attendance_status?: string | null;
   understanding_status?: string | null;
+
   material_topic?: string | null;
+
   note?: string | null;
   notes?: string | null;
 };
@@ -87,6 +133,20 @@ type EnrichedSchedule = ScheduleRow & {
   student_level: string;
   student_nipd: string;
   student_nisn: string;
+
+  /*
+   * KELAS UTAMA
+   */
+  effective_class_id: string;
+  class_name: string;
+  grade_level: number;
+
+  /*
+   * ROMBEL
+   */
+  effective_rombel_id: string;
+  rombel_name: string;
+
   subject_name: string;
   subject_level: string;
   subject_grade: string;
@@ -106,11 +166,19 @@ type ScheduleGroup = {
   subject_id: string;
   subject_name: string;
 
+  class_id: string;
+  class_name: string;
+  grade_level: number;
+
+  rombel_id: string;
+  rombel_name: string;
+
   schedule_date: string;
   day_name: string;
 
   start_time: string;
   end_time: string;
+
   duration_minutes: number | null;
 
   session_name: string;
@@ -125,8 +193,13 @@ type ScheduleGroup = {
   temporary_schedule_url: string;
 
   rows: EnrichedSchedule[];
+
   total_students: number;
 };
+
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
@@ -143,20 +216,50 @@ function normalizeLevel(level?: string | null) {
   return level || "-";
 }
 
-function formatClass(level?: string | null, grade?: string | null) {
+function getGradeNumber(value?: string | null) {
+  const match = (value || "").match(/\d+/);
+
+  return match ? Number(match[0]) : 999;
+}
+
+function getLevelFromGradeLevel(gradeLevel: number) {
+  if (gradeLevel >= 1 && gradeLevel <= 6) {
+    return "SD";
+  }
+
+  if (gradeLevel >= 7 && gradeLevel <= 9) {
+    return "SMP";
+  }
+
+  if (gradeLevel >= 10 && gradeLevel <= 12) {
+    return "SMA";
+  }
+
+  return "-";
+}
+
+function formatClass(
+  level?: string | null,
+  grade?: string | null,
+  gradeLevel?: number | null
+) {
   const cleanLevel = normalizeLevel(level);
-  const gradeNumber = getGradeNumber(grade);
 
-  if (gradeNumber >= 1 && gradeNumber <= 6) {
-    return `SD ${gradeNumber}`;
+  const detectedGrade =
+    gradeLevel && gradeLevel > 0 && gradeLevel < 99
+      ? gradeLevel
+      : getGradeNumber(grade);
+
+  if (detectedGrade >= 1 && detectedGrade <= 6) {
+    return `SD ${detectedGrade}`;
   }
 
-  if (gradeNumber >= 7 && gradeNumber <= 9) {
-    return `SMP ${gradeNumber}`;
+  if (detectedGrade >= 7 && detectedGrade <= 9) {
+    return `SMP ${detectedGrade}`;
   }
 
-  if (gradeNumber >= 10 && gradeNumber <= 12) {
-    return `SMA ${gradeNumber}`;
+  if (detectedGrade >= 10 && detectedGrade <= 12) {
+    return `SMA ${detectedGrade}`;
   }
 
   if (cleanLevel !== "-" && grade) {
@@ -164,9 +267,25 @@ function formatClass(level?: string | null, grade?: string | null) {
   }
 
   if (cleanLevel !== "-") return cleanLevel;
+
   if (grade) return grade;
 
   return "-";
+}
+
+function formatClassWithRombel(
+  level: string,
+  grade: string,
+  gradeLevel: number,
+  rombelName: string
+) {
+  const className = formatClass(level, grade, gradeLevel);
+
+  if (!rombelName) {
+    return className;
+  }
+
+  return `${className} • ${rombelName}`;
 }
 
 function formatTeacherSubject(subjects: TeacherRow["subjects"]) {
@@ -201,7 +320,9 @@ function formatTime(value?: string | null) {
 
 function toYMD(date: Date) {
   const year = date.getFullYear();
+
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
+
   const day = `${date.getDate()}`.padStart(2, "0");
 
   return `${year}-${month}-${day}`;
@@ -211,12 +332,6 @@ function todayYMD() {
   return toYMD(new Date());
 }
 
-function getGradeNumber(value?: string | null) {
-  const match = (value || "").match(/\d+/);
-
-  return match ? Number(match[0]) : 999;
-}
-
 function calculateDurationMinutes(
   startTime?: string | null,
   endTime?: string | null
@@ -224,6 +339,7 @@ function calculateDurationMinutes(
   if (!startTime || !endTime) return null;
 
   const [startHour, startMinute] = startTime.split(":").map(Number);
+
   const [endHour, endMinute] = endTime.split(":").map(Number);
 
   if (
@@ -236,7 +352,9 @@ function calculateDurationMinutes(
   }
 
   const startTotal = startHour * 60 + startMinute;
+
   const endTotal = endHour * 60 + endMinute;
+
   const duration = endTotal - startTotal;
 
   return duration > 0 ? duration : null;
@@ -253,6 +371,7 @@ function formatDuration(
   if (!duration) return "-";
 
   const hour = Math.floor(duration / 60);
+
   const minute = duration % 60;
 
   if (hour > 0 && minute > 0) {
@@ -272,6 +391,7 @@ function normalizeAttendanceStatus(status?: string | null) {
   if (safe === "hadir") return "Hadir";
   if (safe === "izin") return "Izin";
   if (safe === "sakit") return "Izin";
+
   if (safe === "alpa") return "Alpa";
   if (safe === "alpha") return "Alpa";
   if (safe === "tidak hadir") return "Alpa";
@@ -308,14 +428,31 @@ function getAttendanceKey({
   ].join("__");
 }
 
+/*
+ * PENTING:
+ *
+ * class_id sekarang masuk group key.
+ *
+ * Jadi jadwal kelas 8 dan kelas 9
+ * tidak lagi berpotensi dianggap satu rombel.
+ *
+ * rombel_id juga masuk group key.
+ */
 function getScheduleGroupKey(schedule: EnrichedSchedule) {
   return [
     schedule.teacher_id || "",
     schedule.subject_id || "",
+
+    schedule.effective_class_id || "",
+    schedule.effective_rombel_id || "",
+
     schedule.schedule_date || "",
+
     formatTime(schedule.start_time),
     formatTime(schedule.end_time),
+
     schedule.session_name || "",
+
     schedule.semester || "",
     schedule.academic_year || "",
   ].join("__");
@@ -329,29 +466,26 @@ function groupSchedules(
 
   schedules.forEach((schedule) => {
     const key = getScheduleGroupKey(schedule);
+
     const current = groupedMap.get(key) || [];
 
     current.push(schedule);
+
     groupedMap.set(key, current);
   });
 
   const groups: ScheduleGroup[] = Array.from(
     groupedMap.entries()
   ).map(([key, rows]) => {
-    const sortedRows = [...rows].sort((a, b) => {
-      const classA = getGradeNumber(a.student_grade);
-      const classB = getGradeNumber(b.student_grade);
-
-      if (classA !== classB) return classA - classB;
-
-      return a.student_name.localeCompare(b.student_name);
-    });
+    const sortedRows = [...rows].sort((a, b) =>
+      a.student_name.localeCompare(b.student_name)
+    );
 
     const first = sortedRows[0];
 
     const attendanceMaterial =
-      sortedRows.find((row) => row.attendance_material)?.attendance_material ||
-      "";
+      sortedRows.find((row) => row.attendance_material)
+        ?.attendance_material || "";
 
     const scheduleMaterial =
       sortedRows.find((row) => row.material_topic)?.material_topic || "";
@@ -365,35 +499,59 @@ function groupSchedules(
       subject_id: first.subject_id || "",
       subject_name: first.subject_name,
 
+      class_id: first.effective_class_id,
+      class_name: first.class_name,
+
+      grade_level: first.grade_level,
+
+      rombel_id: first.effective_rombel_id,
+      rombel_name: first.rombel_name,
+
       schedule_date: first.schedule_date || "",
       day_name: first.day_name || "-",
 
       start_time: first.start_time || "",
       end_time: first.end_time || "",
+
       duration_minutes:
         first.duration_minutes ||
-        calculateDurationMinutes(first.start_time, first.end_time),
+        calculateDurationMinutes(
+          first.start_time,
+          first.end_time
+        ),
 
       session_name: first.session_name || "-",
+
       semester: first.semester || "-",
-      academic_year: first.academic_year || ACADEMIC_YEAR,
+
+      academic_year:
+        first.academic_year || ACADEMIC_YEAR,
 
       schedule_material: scheduleMaterial,
+
       attendance_material: attendanceMaterial,
-      display_material: attendanceMaterial || scheduleMaterial,
+
+      display_material:
+        attendanceMaterial || scheduleMaterial,
 
       notes: first.notes || "",
-      temporary_schedule_url: first.temporary_schedule_url || "",
+
+      temporary_schedule_url:
+        first.temporary_schedule_url || "",
 
       rows: sortedRows,
+
       total_students: sortedRows.length,
     };
   });
 
   return groups.sort((a, b) => {
-    const dateCompare = a.schedule_date.localeCompare(b.schedule_date);
+    const dateCompare =
+      a.schedule_date.localeCompare(b.schedule_date);
 
-    if (dateCompare !== 0) return dateCompare;
+    if (dateCompare !== 0) {
+      return dateCompare;
+    }
 
     return a.start_time.localeCompare(b.start_time);
   });
@@ -427,20 +585,53 @@ function getInitials(name?: string | null) {
     .toUpperCase();
 }
 
+/* =========================================================
+   PAGE
+========================================================= */
+
 export default function TeacherJadwalPage() {
-  const [teacher, setTeacher] = useState<TeacherRow | null>(null);
-  const [schedules, setSchedules] = useState<EnrichedSchedule[]>([]);
+  const [teacher, setTeacher] =
+    useState<TeacherRow | null>(null);
+
+  const [schedules, setSchedules] =
+    useState<EnrichedSchedule[]>([]);
+
+  /*
+   * BARU
+   */
+  const [classes, setClasses] =
+    useState<ClassRow[]>([]);
+
+  const [rombels, setRombels] =
+    useState<RombelRow[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [savingMaterial, setSavingMaterial] = useState(false);
 
-  const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [savingMaterial, setSavingMaterial] =
+    useState(false);
+
+  /*
+   * BARU
+   */
+  const [savingRombel, setSavingRombel] =
+    useState(false);
+
+  const [errorMessage, setErrorMessage] =
+    useState("");
+
+  const [successMessage, setSuccessMessage] =
+    useState("");
 
   const [search, setSearch] = useState("");
-  const [classFilter, setClassFilter] = useState("Semua Kelas");
-  const [dayFilter, setDayFilter] = useState("Semua Hari");
-  const [subjectFilter, setSubjectFilter] = useState("Semua Mapel");
+
+  const [classFilter, setClassFilter] =
+    useState("Semua Kelas");
+
+  const [dayFilter, setDayFilter] =
+    useState("Semua Hari");
+
+  const [subjectFilter, setSubjectFilter] =
+    useState("Semua Mapel");
 
   const [selectedGroup, setSelectedGroup] =
     useState<ScheduleGroup | null>(null);
@@ -448,7 +639,21 @@ export default function TeacherJadwalPage() {
   const [editingGroup, setEditingGroup] =
     useState<ScheduleGroup | null>(null);
 
-  const [materialInput, setMaterialInput] = useState("");
+  const [materialInput, setMaterialInput] =
+    useState("");
+
+  /*
+   * ROMBEL MODAL
+   */
+  const [editingRombelGroup, setEditingRombelGroup] =
+    useState<ScheduleGroup | null>(null);
+
+  const [selectedRombelId, setSelectedRombelId] =
+    useState("");
+
+  /* =======================================================
+     GET TEACHER
+  ======================================================= */
 
   async function getCurrentTeacher() {
     const { data: authData, error: authError } =
@@ -513,64 +718,139 @@ export default function TeacherJadwalPage() {
     return null;
   }
 
+  /* =======================================================
+     FETCH DATA
+  ======================================================= */
+
   async function fetchData() {
     setLoading(true);
+
     setErrorMessage("");
 
     try {
-      const currentTeacher = await getCurrentTeacher();
+      const currentTeacher =
+        await getCurrentTeacher();
 
       setTeacher(currentTeacher);
 
       if (!currentTeacher?.id) {
         setSchedules([]);
+
         setErrorMessage(
           "Data guru belum terhubung dengan akun login ini. Hubungkan email guru di tabel teachers atau isi teacher_code."
         );
+
         return;
       }
 
       const [
         studentsResponse,
         subjectsResponse,
+        classesResponse,
+        rombelsResponse,
         schedulesResponse,
         attendanceResponse,
       ] = await Promise.all([
-        supabase.from("students").select("*").order("full_name"),
+        supabase
+          .from("students")
+          .select("*")
+          .order("full_name"),
 
-        supabase.from("subjects").select("*").order("name"),
+        supabase
+          .from("subjects")
+          .select("*")
+          .order("name"),
+
+        /*
+         * BARU
+         */
+        supabase
+          .from("classes")
+          .select("*")
+          .eq("is_active", true)
+          .order("grade_level", {
+            ascending: true,
+          }),
+
+        /*
+         * BARU
+         */
+        supabase
+          .from("rombels")
+          .select("*")
+          .eq("is_active", true)
+          .eq("academic_year", ACADEMIC_YEAR)
+          .order("name", {
+            ascending: true,
+          }),
 
         supabase
           .from("schedules")
           .select("*")
           .eq("teacher_id", currentTeacher.id)
-          .gte("schedule_date", ACADEMIC_YEAR_START)
-          .lte("schedule_date", ACADEMIC_YEAR_END)
-          .order("schedule_date", { ascending: true })
-          .order("start_time", { ascending: true }),
+          .gte(
+            "schedule_date",
+            ACADEMIC_YEAR_START
+          )
+          .lte(
+            "schedule_date",
+            ACADEMIC_YEAR_END
+          )
+          .order("schedule_date", {
+            ascending: true,
+          })
+          .order("start_time", {
+            ascending: true,
+          }),
 
         supabase
           .from("attendance")
           .select("*")
           .eq("teacher_id", currentTeacher.id)
-          .gte("attendance_date", ACADEMIC_YEAR_START)
-          .lte("attendance_date", ACADEMIC_YEAR_END),
+          .gte(
+            "attendance_date",
+            ACADEMIC_YEAR_START
+          )
+          .lte(
+            "attendance_date",
+            ACADEMIC_YEAR_END
+          ),
       ]);
 
       if (studentsResponse.error) {
-        throw new Error(studentsResponse.error.message);
+        throw new Error(
+          studentsResponse.error.message
+        );
       }
 
       if (subjectsResponse.error) {
-        throw new Error(subjectsResponse.error.message);
+        throw new Error(
+          subjectsResponse.error.message
+        );
+      }
+
+      if (classesResponse.error) {
+        throw new Error(
+          classesResponse.error.message
+        );
+      }
+
+      if (rombelsResponse.error) {
+        throw new Error(
+          rombelsResponse.error.message
+        );
       }
 
       if (schedulesResponse.error) {
-        throw new Error(schedulesResponse.error.message);
+        throw new Error(
+          schedulesResponse.error.message
+        );
       }
 
       if (attendanceResponse.error) {
-        throw new Error(attendanceResponse.error.message);
+        throw new Error(
+          attendanceResponse.error.message
+        );
       }
 
       const studentsData =
@@ -579,113 +859,290 @@ export default function TeacherJadwalPage() {
       const subjectsData =
         (subjectsResponse.data || []) as SubjectRow[];
 
+      const classesData =
+        (classesResponse.data || []) as ClassRow[];
+
+      const rombelsData =
+        (rombelsResponse.data || []) as RombelRow[];
+
       const schedulesData =
         (schedulesResponse.data || []) as ScheduleRow[];
 
       const attendanceData =
-        (attendanceResponse.data || []) as AttendanceRow[];
+        (attendanceResponse.data ||
+          []) as AttendanceRow[];
+
+      setClasses(classesData);
+
+      setRombels(rombelsData);
 
       const studentMap = new Map(
-        studentsData.map((student) => [student.id, student])
+        studentsData.map((student) => [
+          student.id,
+          student,
+        ])
       );
 
       const subjectMap = new Map(
-        subjectsData.map((subject) => [subject.id, subject])
+        subjectsData.map((subject) => [
+          subject.id,
+          subject,
+        ])
       );
 
-      const attendanceMap = new Map<string, AttendanceRow>();
+      const classMap = new Map(
+        classesData.map((classItem) => [
+          classItem.id,
+          classItem,
+        ])
+      );
 
-      attendanceData.forEach((attendance) => {
-        const key = getAttendanceKey({
-          teacherId: attendance.teacher_id,
-          studentId: attendance.student_id,
-          subjectId: attendance.subject_id,
-          date: attendance.attendance_date,
-          startTime: attendance.start_time,
-          endTime: attendance.end_time,
-        });
+      const rombelMap = new Map(
+        rombelsData.map((rombel) => [
+          rombel.id,
+          rombel,
+        ])
+      );
 
-        attendanceMap.set(key, attendance);
-      });
+      const attendanceMap =
+        new Map<string, AttendanceRow>();
 
-      const enrichedSchedules: EnrichedSchedule[] = schedulesData
-        .filter((schedule) => {
-          if (!schedule.schedule_date) return false;
+      attendanceData.forEach(
+        (attendance) => {
+          const key = getAttendanceKey({
+            teacherId:
+              attendance.teacher_id,
 
-          const correctDate =
-            schedule.schedule_date >= ACADEMIC_YEAR_START &&
-            schedule.schedule_date <= ACADEMIC_YEAR_END;
+            studentId:
+              attendance.student_id,
 
-          const correctAcademicYear =
-            !schedule.academic_year ||
-            schedule.academic_year === ACADEMIC_YEAR;
+            subjectId:
+              attendance.subject_id,
 
-          return correctDate && correctAcademicYear;
-        })
-        .map((schedule) => {
-          const student = schedule.student_id
-            ? studentMap.get(schedule.student_id)
-            : null;
+            date:
+              attendance.attendance_date,
 
-          const subject = schedule.subject_id
-            ? subjectMap.get(schedule.subject_id)
-            : null;
+            startTime:
+              attendance.start_time,
 
-          const attendanceKey = getAttendanceKey({
-            teacherId: schedule.teacher_id,
-            studentId: schedule.student_id,
-            subjectId: schedule.subject_id,
-            date: schedule.schedule_date,
-            startTime: schedule.start_time,
-            endTime: schedule.end_time,
+            endTime:
+              attendance.end_time,
           });
 
-          const attendance = attendanceMap.get(attendanceKey);
+          attendanceMap.set(
+            key,
+            attendance
+          );
+        }
+      );
 
-          return {
-            ...schedule,
+      const enrichedSchedules:
+        EnrichedSchedule[] =
+        schedulesData
+          .filter((schedule) => {
+            if (!schedule.schedule_date) {
+              return false;
+            }
 
-            student_name: student?.full_name || "-",
-            student_grade: student?.grade || "-",
-            student_level: student?.level || "-",
-            student_nipd: student?.nis || "-",
-            student_nisn: student?.nisn || "-",
+            const correctDate =
+              schedule.schedule_date >=
+                ACADEMIC_YEAR_START &&
+              schedule.schedule_date <=
+                ACADEMIC_YEAR_END;
 
-            subject_name: subject?.name || "-",
-            subject_level: subject?.level || "-",
-            subject_grade: subject?.grade || "-",
+            const correctAcademicYear =
+              !schedule.academic_year ||
+              schedule.academic_year ===
+                ACADEMIC_YEAR;
 
-            attendance_status: normalizeAttendanceStatus(
-              attendance?.attendance_status
-            ),
-            attendance_note: getAttendanceNote(attendance),
-            understanding_status:
-              attendance?.understanding_status || "-",
-            attendance_material:
-              attendance?.material_topic || "",
-          };
-        });
+            return (
+              correctDate &&
+              correctAcademicYear
+            );
+          })
+          .map((schedule) => {
+            const student =
+              schedule.student_id
+                ? studentMap.get(
+                    schedule.student_id
+                  )
+                : null;
 
-      setSchedules(enrichedSchedules);
+            const subject =
+              schedule.subject_id
+                ? subjectMap.get(
+                    schedule.subject_id
+                  )
+                : null;
+
+            /*
+             * CLASS:
+             *
+             * Prioritas:
+             * schedule.class_id
+             * lalu student.class_id
+             */
+            const effectiveClassId =
+              schedule.class_id ||
+              student?.class_id ||
+              "";
+
+            const classData =
+              effectiveClassId
+                ? classMap.get(
+                    effectiveClassId
+                  )
+                : null;
+
+            /*
+             * ROMBEL:
+             *
+             * Prioritas schedule.rombel_id.
+             *
+             * Kalau schedule belum punya,
+             * fallback student.rombel_id.
+             */
+            const effectiveRombelId =
+              schedule.rombel_id ||
+              student?.rombel_id ||
+              "";
+
+            const rombelData =
+              effectiveRombelId
+                ? rombelMap.get(
+                    effectiveRombelId
+                  )
+                : null;
+
+            const attendanceKey =
+              getAttendanceKey({
+                teacherId:
+                  schedule.teacher_id,
+
+                studentId:
+                  schedule.student_id,
+
+                subjectId:
+                  schedule.subject_id,
+
+                date:
+                  schedule.schedule_date,
+
+                startTime:
+                  schedule.start_time,
+
+                endTime:
+                  schedule.end_time,
+              });
+
+            const attendance =
+              attendanceMap.get(
+                attendanceKey
+              );
+
+            const detectedGrade =
+              classData?.grade_level ||
+              getGradeNumber(
+                student?.grade
+              );
+
+            return {
+              ...schedule,
+
+              student_name:
+                student?.full_name || "-",
+
+              student_grade:
+                student?.grade || "-",
+
+              student_level:
+                student?.level || "-",
+
+              student_nipd:
+                student?.nis || "-",
+
+              student_nisn:
+                student?.nisn || "-",
+
+              effective_class_id:
+                effectiveClassId,
+
+              class_name:
+                classData?.name ||
+                String(detectedGrade),
+
+              grade_level:
+                detectedGrade,
+
+              effective_rombel_id:
+                effectiveRombelId,
+
+              rombel_name:
+                rombelData?.name || "",
+
+              subject_name:
+                subject?.name || "-",
+
+              subject_level:
+                subject?.level || "-",
+
+              subject_grade:
+                subject?.grade || "-",
+
+              attendance_status:
+                normalizeAttendanceStatus(
+                  attendance?.attendance_status
+                ),
+
+              attendance_note:
+                getAttendanceNote(
+                  attendance
+                ),
+
+              understanding_status:
+                attendance?.understanding_status ||
+                "-",
+
+              attendance_material:
+                attendance?.material_topic ||
+                "",
+            };
+          });
+
+      setSchedules(
+        enrichedSchedules
+      );
     } catch (error) {
       if (error instanceof Error) {
-        setErrorMessage(error.message);
+        setErrorMessage(
+          error.message
+        );
       } else {
-        setErrorMessage("Gagal mengambil data jadwal mengajar.");
+        setErrorMessage(
+          "Gagal mengambil data jadwal mengajar."
+        );
       }
 
       setTeacher(null);
+
       setSchedules([]);
     } finally {
       setLoading(false);
     }
   }
 
+  /* =======================================================
+     REALTIME
+  ======================================================= */
+
   useEffect(() => {
     void fetchData();
 
     const channel = supabase
-      .channel("teacher-jadwal-excel-realtime")
+      .channel(
+        "teacher-jadwal-rombel-realtime"
+      )
+
       .on(
         "postgres_changes",
         {
@@ -695,6 +1152,7 @@ export default function TeacherJadwalPage() {
         },
         () => void fetchData()
       )
+
       .on(
         "postgres_changes",
         {
@@ -704,6 +1162,7 @@ export default function TeacherJadwalPage() {
         },
         () => void fetchData()
       )
+
       .on(
         "postgres_changes",
         {
@@ -713,6 +1172,33 @@ export default function TeacherJadwalPage() {
         },
         () => void fetchData()
       )
+
+      /*
+       * BARU
+       */
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "classes",
+        },
+        () => void fetchData()
+      )
+
+      /*
+       * BARU
+       */
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "rombels",
+        },
+        () => void fetchData()
+      )
+
       .on(
         "postgres_changes",
         {
@@ -722,6 +1208,7 @@ export default function TeacherJadwalPage() {
         },
         () => void fetchData()
       )
+
       .on(
         "postgres_changes",
         {
@@ -731,139 +1218,247 @@ export default function TeacherJadwalPage() {
         },
         () => void fetchData()
       )
+
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(channel);
+      void supabase.removeChannel(
+        channel
+      );
     };
   }, []);
 
-  const groupedSchedules = useMemo(() => {
-    return groupSchedules(
+  /* =======================================================
+     GROUP DATA
+  ======================================================= */
+
+  const groupedSchedules =
+    useMemo(() => {
+      return groupSchedules(
+        schedules,
+        teacher?.full_name || "Guru"
+      );
+    }, [
       schedules,
-      teacher?.full_name || "Guru"
-    );
-  }, [schedules, teacher?.full_name]);
+      teacher?.full_name,
+    ]);
 
-  const classOptions = useMemo(() => {
-    const allowedClasses = [
-      "SD 1",
-      "SD 2",
-      "SD 3",
-      "SD 4",
-      "SD 5",
-      "SD 6",
-      "SMP 7",
-      "SMP 8",
-      "SMP 9",
-      "SMA 10",
-      "SMA 11",
-      "SMA 12",
-    ];
+  /* =======================================================
+     CLASS FILTER
+  ======================================================= */
 
-    const availableClasses = new Set(
-      schedules
-        .map((schedule) =>
-          formatClass(
-            schedule.student_level,
-            schedule.student_grade
-          )
+  const classOptions =
+    useMemo(() => {
+      return Array.from(
+        new Set(
+          schedules
+            .map((schedule) =>
+              formatClass(
+                schedule.student_level,
+                schedule.student_grade,
+                schedule.grade_level
+              )
+            )
+            .filter(
+              (item) =>
+                item && item !== "-"
+            )
         )
-        .filter(Boolean)
-    );
+      ).sort((a, b) => {
+        return (
+          getGradeNumber(a) -
+          getGradeNumber(b)
+        );
+      });
+    }, [schedules]);
 
-    return allowedClasses.filter((className) =>
-      availableClasses.has(className)
-    );
-  }, [schedules]);
-
-  const subjectOptions = useMemo(() => {
-    return Array.from(
-      new Set(
-        schedules
-          .map((schedule) => schedule.subject_name)
-          .filter((subject) => subject && subject !== "-")
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [schedules]);
-
-  const filteredGroups = useMemo(() => {
-    const keyword = normalizeText(search);
-
-    return groupedSchedules.filter((group) => {
-      const groupClasses = group.rows.map((row) =>
-        formatClass(row.student_level, row.student_grade)
+  const subjectOptions =
+    useMemo(() => {
+      return Array.from(
+        new Set(
+          schedules
+            .map(
+              (schedule) =>
+                schedule.subject_name
+            )
+            .filter(
+              (subject) =>
+                subject &&
+                subject !== "-"
+            )
+        )
+      ).sort((a, b) =>
+        a.localeCompare(b)
       );
+    }, [schedules]);
 
-      const matchSearch =
-        !keyword ||
-        normalizeText(group.teacher_name).includes(keyword) ||
-        normalizeText(group.subject_name).includes(keyword) ||
-        normalizeText(group.display_material).includes(keyword) ||
-        normalizeText(group.notes).includes(keyword) ||
-        normalizeText(group.session_name).includes(keyword) ||
-        normalizeText(group.day_name).includes(keyword) ||
-        group.rows.some((row) => {
+  /* =======================================================
+     FILTER
+  ======================================================= */
+
+  const filteredGroups =
+    useMemo(() => {
+      const keyword =
+        normalizeText(search);
+
+      return groupedSchedules.filter(
+        (group) => {
+          const groupClass =
+            formatClass(
+              getLevelFromGradeLevel(
+                group.grade_level
+              ),
+              group.class_name,
+              group.grade_level
+            );
+
+          const matchSearch =
+            !keyword ||
+            normalizeText(
+              group.teacher_name
+            ).includes(keyword) ||
+            normalizeText(
+              group.subject_name
+            ).includes(keyword) ||
+            normalizeText(
+              group.rombel_name
+            ).includes(keyword) ||
+            normalizeText(
+              group.display_material
+            ).includes(keyword) ||
+            normalizeText(
+              group.notes
+            ).includes(keyword) ||
+            normalizeText(
+              group.session_name
+            ).includes(keyword) ||
+            normalizeText(
+              group.day_name
+            ).includes(keyword) ||
+            group.rows.some(
+              (row) =>
+                normalizeText(
+                  row.student_name
+                ).includes(keyword) ||
+                normalizeText(
+                  row.student_nipd
+                ).includes(keyword) ||
+                normalizeText(
+                  row.student_nisn
+                ).includes(keyword) ||
+                normalizeText(
+                  row.attendance_status
+                ).includes(keyword) ||
+                normalizeText(
+                  row.attendance_note
+                ).includes(keyword)
+            );
+
+          const matchClass =
+            classFilter ===
+              "Semua Kelas" ||
+            groupClass ===
+              classFilter;
+
+          const matchDay =
+            dayFilter ===
+              "Semua Hari" ||
+            group.day_name ===
+              dayFilter;
+
+          const matchSubject =
+            subjectFilter ===
+              "Semua Mapel" ||
+            group.subject_name ===
+              subjectFilter;
+
           return (
-            normalizeText(row.student_name).includes(keyword) ||
-            normalizeText(row.student_nipd).includes(keyword) ||
-            normalizeText(row.student_nisn).includes(keyword) ||
-            normalizeText(row.attendance_status).includes(keyword) ||
-            normalizeText(row.attendance_note).includes(keyword)
+            matchSearch &&
+            matchClass &&
+            matchDay &&
+            matchSubject
           );
-        });
-
-      const matchClass =
-        classFilter === "Semua Kelas" ||
-        groupClasses.includes(classFilter);
-
-      const matchDay =
-        dayFilter === "Semua Hari" ||
-        group.day_name === dayFilter;
-
-      const matchSubject =
-        subjectFilter === "Semua Mapel" ||
-        group.subject_name === subjectFilter;
-
-      return (
-        matchSearch &&
-        matchClass &&
-        matchDay &&
-        matchSubject
+        }
       );
-    });
-  }, [
-    groupedSchedules,
-    search,
-    classFilter,
-    dayFilter,
-    subjectFilter,
-  ]);
+    }, [
+      groupedSchedules,
+      search,
+      classFilter,
+      dayFilter,
+      subjectFilter,
+    ]);
 
-  const todayGroups = useMemo(() => {
-    return groupedSchedules.filter(
-      (group) => group.schedule_date === todayYMD()
-    );
-  }, [groupedSchedules]);
+  const todayGroups =
+    useMemo(() => {
+      return groupedSchedules.filter(
+        (group) =>
+          group.schedule_date ===
+          todayYMD()
+      );
+    }, [groupedSchedules]);
 
-  const totalStudents = useMemo(() => {
-    return new Set(
-      schedules
-        .map((schedule) => schedule.student_id)
-        .filter(Boolean)
-    ).size;
-  }, [schedules]);
+  const totalStudents =
+    useMemo(() => {
+      return new Set(
+        schedules
+          .map(
+            (schedule) =>
+              schedule.student_id
+          )
+          .filter(Boolean)
+      ).size;
+    }, [schedules]);
 
-  const completedAttendance = useMemo(() => {
-    return schedules.filter(
-      (schedule) => Boolean(schedule.attendance_status)
-    ).length;
-  }, [schedules]);
+  const completedAttendance =
+    useMemo(() => {
+      return schedules.filter(
+        (schedule) =>
+          Boolean(
+            schedule.attendance_status
+          )
+      ).length;
+    }, [schedules]);
 
-  function openMaterialModal(group: ScheduleGroup) {
+  /* =======================================================
+     ROMBEL OPTIONS
+  ======================================================= */
+
+  const availableRombelsForEditing =
+    useMemo(() => {
+      if (
+        !editingRombelGroup?.class_id
+      ) {
+        return [];
+      }
+
+      return rombels.filter(
+        (rombel) =>
+          rombel.class_id ===
+            editingRombelGroup.class_id &&
+          rombel.academic_year ===
+            ACADEMIC_YEAR &&
+          rombel.is_active
+      );
+    }, [
+      rombels,
+      editingRombelGroup,
+    ]);
+
+  /* =======================================================
+     MATERIAL
+  ======================================================= */
+
+  function openMaterialModal(
+    group: ScheduleGroup
+  ) {
     setEditingGroup(group);
-    setMaterialInput(group.display_material || "");
+
+    setMaterialInput(
+      group.display_material || ""
+    );
+
     setErrorMessage("");
+
     setSuccessMessage("");
   }
 
@@ -871,90 +1466,293 @@ export default function TeacherJadwalPage() {
     if (savingMaterial) return;
 
     setEditingGroup(null);
+
     setMaterialInput("");
   }
 
   async function handleSaveMaterial() {
     if (!teacher?.id) {
-      setErrorMessage("Data guru aktif tidak ditemukan.");
+      setErrorMessage(
+        "Data guru aktif tidak ditemukan."
+      );
+
       return;
     }
 
     if (!editingGroup) {
-      setErrorMessage("Data rombel tidak ditemukan.");
+      setErrorMessage(
+        "Data jadwal tidak ditemukan."
+      );
+
       return;
     }
 
     if (!materialInput.trim()) {
-      setErrorMessage("Materi pembelajaran wajib diisi.");
+      setErrorMessage(
+        "Materi pembelajaran wajib diisi."
+      );
+
       return;
     }
 
     setSavingMaterial(true);
+
     setErrorMessage("");
+
     setSuccessMessage("");
 
     try {
-      const scheduleIds = editingGroup.rows.map((row) => row.id);
-      const now = new Date().toISOString();
+      const scheduleIds =
+        editingGroup.rows.map(
+          (row) => row.id
+        );
 
-      const { error: scheduleError } = await supabase
-        .from("schedules")
-        .update({
-          material_topic: materialInput.trim(),
-          updated_at: now,
-        })
-        .in("id", scheduleIds)
-        .eq("teacher_id", teacher.id);
+      const now =
+        new Date().toISOString();
+
+      const { error: scheduleError } =
+        await supabase
+          .from("schedules")
+          .update({
+            material_topic:
+              materialInput.trim(),
+
+            updated_at: now,
+          })
+          .in("id", scheduleIds)
+          .eq(
+            "teacher_id",
+            teacher.id
+          );
 
       if (scheduleError) {
-        throw new Error(scheduleError.message);
+        throw new Error(
+          scheduleError.message
+        );
       }
 
-      /*
-       * Jika absensi rombel ini sudah pernah dibuat, materi pada attendance
-       * ikut diperbarui agar tampilan Jadwal Admin dan Absensi konsisten.
-       */
-      const { error: attendanceError } = await supabase
+      const {
+        error: attendanceError,
+      } = await supabase
         .from("attendance")
         .update({
-          material_topic: materialInput.trim(),
+          material_topic:
+            materialInput.trim(),
+
           updated_at: now,
         })
-        .eq("teacher_id", teacher.id)
-        .eq("subject_id", editingGroup.subject_id)
-        .eq("attendance_date", editingGroup.schedule_date)
-        .eq("start_time", editingGroup.start_time)
-        .eq("end_time", editingGroup.end_time);
+        .eq(
+          "teacher_id",
+          teacher.id
+        )
+        .eq(
+          "subject_id",
+          editingGroup.subject_id
+        )
+        .eq(
+          "attendance_date",
+          editingGroup.schedule_date
+        )
+        .eq(
+          "start_time",
+          editingGroup.start_time
+        )
+        .eq(
+          "end_time",
+          editingGroup.end_time
+        );
 
       if (attendanceError) {
-        throw new Error(attendanceError.message);
+        throw new Error(
+          attendanceError.message
+        );
       }
 
       setSuccessMessage(
-        `Materi "${materialInput.trim()}" berhasil disimpan untuk ${editingGroup.total_students} siswa dalam rombel.`
+        `Materi "${materialInput.trim()}" berhasil disimpan untuk ${editingGroup.total_students} siswa.`
       );
 
       setEditingGroup(null);
+
       setMaterialInput("");
 
       await fetchData();
     } catch (error) {
       if (error instanceof Error) {
-        setErrorMessage(error.message);
+        setErrorMessage(
+          error.message
+        );
       } else {
-        setErrorMessage("Gagal menyimpan materi pembelajaran.");
+        setErrorMessage(
+          "Gagal menyimpan materi pembelajaran."
+        );
       }
     } finally {
       setSavingMaterial(false);
     }
   }
 
+  /* =======================================================
+     EDIT ROMBEL
+  ======================================================= */
+
+  function openRombelModal(
+    group: ScheduleGroup
+  ) {
+    setEditingRombelGroup(group);
+
+    setSelectedRombelId(
+      group.rombel_id || ""
+    );
+
+    setErrorMessage("");
+
+    setSuccessMessage("");
+  }
+
+  function closeRombelModal() {
+    if (savingRombel) return;
+
+    setEditingRombelGroup(null);
+
+    setSelectedRombelId("");
+  }
+
+  async function handleSaveRombel() {
+    if (!teacher?.id) {
+      setErrorMessage(
+        "Data guru aktif tidak ditemukan."
+      );
+
+      return;
+    }
+
+    if (!editingRombelGroup) {
+      setErrorMessage(
+        "Data jadwal tidak ditemukan."
+      );
+
+      return;
+    }
+
+    /*
+     * Kalau kelas tersebut punya rombel,
+     * wajib pilih salah satu.
+     */
+    if (
+      availableRombelsForEditing.length >
+        0 &&
+      !selectedRombelId
+    ) {
+      setErrorMessage(
+        "Silakan pilih rombel terlebih dahulu."
+      );
+
+      return;
+    }
+
+    setSavingRombel(true);
+
+    setErrorMessage("");
+
+    setSuccessMessage("");
+
+    try {
+      const scheduleIds =
+        editingRombelGroup.rows.map(
+          (row) => row.id
+        );
+
+      const selectedRombel =
+        rombels.find(
+          (rombel) =>
+            rombel.id ===
+            selectedRombelId
+        );
+
+      const now =
+        new Date().toISOString();
+
+      /*
+       * Update SEMUA schedule dalam
+       * kelompok jadwal ini.
+       *
+       * Kelas utama tetap sama.
+       *
+       * Yang berubah hanya rombel_id.
+       */
+      const { error } = await supabase
+        .from("schedules")
+        .update({
+          class_id:
+            editingRombelGroup.class_id ||
+            null,
+
+          rombel_id:
+            selectedRombelId || null,
+
+          updated_at: now,
+        })
+        .in("id", scheduleIds)
+        .eq(
+          "teacher_id",
+          teacher.id
+        );
+
+      if (error) {
+        throw new Error(
+          error.message
+        );
+      }
+
+      setSuccessMessage(
+        selectedRombel
+          ? `Jadwal ${formatClass(
+              getLevelFromGradeLevel(
+                editingRombelGroup.grade_level
+              ),
+              editingRombelGroup.class_name,
+              editingRombelGroup.grade_level
+            )} berhasil diubah ke rombel ${selectedRombel.name}.`
+          : "Rombel jadwal berhasil diperbarui."
+      );
+
+      setEditingRombelGroup(null);
+
+      setSelectedRombelId("");
+
+      await fetchData();
+    } catch (error) {
+      if (error instanceof Error) {
+        setErrorMessage(
+          error.message
+        );
+      } else {
+        setErrorMessage(
+          "Gagal menyimpan perubahan rombel."
+        );
+      }
+    } finally {
+      setSavingRombel(false);
+    }
+  }
+
+  /* =======================================================
+     UI
+  ======================================================= */
+
   return (
     <TeacherLayout
-      activeMenu={"Jadwal Mengajar" as any}
-      teacherName={teacher?.full_name || "Guru"}
-      teacherSubject={formatTeacherSubject(teacher?.subjects)}
+      activeMenu={
+        "Jadwal Mengajar" as any
+      }
+      teacherName={
+        teacher?.full_name ||
+        "Guru"
+      }
+      teacherSubject={formatTeacherSubject(
+        teacher?.subjects
+      )}
       searchPlaceholder="Cari jadwal mengajar..."
     >
       <section className="space-y-7">
@@ -968,10 +1766,11 @@ export default function TeacherJadwalPage() {
           </h1>
 
           <p className="mt-2 max-w-[900px] text-[15px] leading-6 text-[#6F5549]">
-            Jadwal dasar dibuat oleh Admin/Kepala Sekolah. Guru dapat
-            mengisi materi untuk seluruh siswa dalam rombel yang sama.
-            Status Hadir, Izin, dan Alpa akan muncul setelah Absensi KBM
-            disimpan.
+            Jadwal dasar dibuat oleh
+            Admin/Kepala Sekolah. Guru
+            dapat menentukan rombel,
+            mengisi materi, dan melihat
+            status absensi siswa.
           </p>
         </div>
 
@@ -987,25 +1786,37 @@ export default function TeacherJadwalPage() {
           </div>
         ) : null}
 
+        {/* SUMMARY */}
+
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
-            icon={<CalendarDays className="h-5 w-5" />}
-            label="Total Rombel"
-            value={groupedSchedules.length}
+            icon={
+              <CalendarDays className="h-5 w-5" />
+            }
+            label="Total Jadwal"
+            value={
+              groupedSchedules.length
+            }
             info={ACADEMIC_YEAR}
             tone="pink"
           />
 
           <SummaryCard
-            icon={<Clock className="h-5 w-5" />}
+            icon={
+              <Clock className="h-5 w-5" />
+            }
             label="Jadwal Hari Ini"
             value={todayGroups.length}
-            info={formatDate(todayYMD())}
+            info={formatDate(
+              todayYMD()
+            )}
             tone="orange"
           />
 
           <SummaryCard
-            icon={<UsersRound className="h-5 w-5" />}
+            icon={
+              <UsersRound className="h-5 w-5" />
+            }
             label="Total Murid"
             value={totalStudents}
             info="Murid terjadwal"
@@ -1013,13 +1824,19 @@ export default function TeacherJadwalPage() {
           />
 
           <SummaryCard
-            icon={<CheckCircle2 className="h-5 w-5" />}
+            icon={
+              <CheckCircle2 className="h-5 w-5" />
+            }
             label="Sudah Diabsen"
-            value={completedAttendance}
+            value={
+              completedAttendance
+            }
             info={`${schedules.length} data jadwal`}
             tone="green"
           />
         </div>
+
+        {/* FILTER */}
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
           <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_1fr]">
@@ -1028,30 +1845,53 @@ export default function TeacherJadwalPage() {
 
               <input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari siswa, NIPD, NISN, mapel, materi, atau keterangan..."
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value
+                  )
+                }
+                placeholder="Cari siswa, NIPD, NISN, kelas, rombel, mapel atau materi..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
 
             <select
               value={classFilter}
-              onChange={(event) => setClassFilter(event.target.value)}
+              onChange={(event) =>
+                setClassFilter(
+                  event.target.value
+                )
+              }
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option>Semua Kelas</option>
+              <option>
+                Semua Kelas
+              </option>
 
-              {classOptions.map((className) => (
-                <option key={className}>{className}</option>
-              ))}
+              {classOptions.map(
+                (className) => (
+                  <option
+                    key={className}
+                  >
+                    {className}
+                  </option>
+                )
+              )}
             </select>
 
             <select
               value={dayFilter}
-              onChange={(event) => setDayFilter(event.target.value)}
+              onChange={(event) =>
+                setDayFilter(
+                  event.target.value
+                )
+              }
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option>Semua Hari</option>
+              <option>
+                Semua Hari
+              </option>
+
               <option>Senin</option>
               <option>Selasa</option>
               <option>Rabu</option>
@@ -1063,32 +1903,49 @@ export default function TeacherJadwalPage() {
 
             <select
               value={subjectFilter}
-              onChange={(event) => setSubjectFilter(event.target.value)}
+              onChange={(event) =>
+                setSubjectFilter(
+                  event.target.value
+                )
+              }
               className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option>Semua Mapel</option>
+              <option>
+                Semua Mapel
+              </option>
 
-              {subjectOptions.map((subject) => (
-                <option key={subject}>{subject}</option>
-              ))}
+              {subjectOptions.map(
+                (subject) => (
+                  <option
+                    key={subject}
+                  >
+                    {subject}
+                  </option>
+                )
+              )}
             </select>
           </div>
         </div>
 
+        {/* TABLE */}
+
         <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
           <div className="border-b border-[#EADACA] px-6 py-5">
             <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
-              Jadwal dan Absensi Guru & Siswa
+              Jadwal dan Absensi Guru &
+              Siswa
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Tampilan mengikuti format Excel sekolah. Satu rombel dapat
-              berisi beberapa siswa.
+              Guru dapat mengatur rombel
+              untuk kelas yang memiliki
+              lebih dari satu kelompok
+              belajar.
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1680px] border-collapse">
+            <table className="w-full min-w-[1750px] border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th
@@ -1134,10 +1991,11 @@ export default function TeacherJadwalPage() {
                   </th>
 
                   <th
-                    colSpan={6}
+                    colSpan={7}
                     className="border-r border-[#EADACA] px-4 py-4 text-center"
                   >
-                    Jadwal Kegiatan Belajar Mengajar
+                    Jadwal Kegiatan
+                    Belajar Mengajar
                   </th>
 
                   <th
@@ -1190,6 +2048,10 @@ export default function TeacherJadwalPage() {
                   </th>
 
                   <th className="border-r border-[#EADACA] px-4 py-3">
+                    Rombel
+                  </th>
+
+                  <th className="border-r border-[#EADACA] px-4 py-3">
                     Mapel
                   </th>
 
@@ -1207,249 +2069,581 @@ export default function TeacherJadwalPage() {
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={18}
+                      colSpan={19}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
-                      Memuat jadwal mengajar...
+                      Memuat jadwal
+                      mengajar...
                     </td>
                   </tr>
-                ) : filteredGroups.length === 0 ? (
+                ) : filteredGroups.length ===
+                  0 ? (
                   <tr>
                     <td
-                      colSpan={18}
+                      colSpan={19}
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
-                      Belum ada jadwal mengajar yang sesuai filter.
+                      Belum ada jadwal
+                      mengajar yang sesuai
+                      filter.
                     </td>
                   </tr>
                 ) : (
-                  filteredGroups.flatMap((group, groupIndex) => {
-                    return group.rows.map((row, rowIndex) => {
-                      const firstRow = rowIndex === 0;
-                      const rowSpan = group.rows.length;
+                  filteredGroups.flatMap(
+                    (
+                      group,
+                      groupIndex
+                    ) =>
+                      group.rows.map(
+                        (
+                          row,
+                          rowIndex
+                        ) => {
+                          const firstRow =
+                            rowIndex === 0;
 
-                      return (
-                        <tr
-                          key={row.id}
-                          className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18] hover:bg-[#FFFDFC]"
-                        >
-                          {firstRow ? (
-                            <>
-                              <td
-                                rowSpan={rowSpan}
-                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
-                              >
-                                {groupIndex + 1}
+                          const rowSpan =
+                            group.rows
+                              .length;
+
+                          return (
+                            <tr
+                              key={
+                                row.id
+                              }
+                              className="border-b border-[#F0E1D4] text-[14px] text-[#2B1B18] hover:bg-[#FFFDFC]"
+                            >
+                              {firstRow ? (
+                                <>
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
+                                  >
+                                    {groupIndex +
+                                      1}
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="border-r border-[#F0E1D4] px-4 py-4 align-top font-extrabold"
+                                  >
+                                    {
+                                      group.day_name
+                                    }
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {formatDate(
+                                      group.schedule_date
+                                    )}
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    <p className="font-extrabold">
+                                      {
+                                        group.teacher_name
+                                      }
+                                    </p>
+
+                                    <p className="mt-1 text-[12px] text-[#6F5549]">
+                                      {teacher?.teacher_code ||
+                                        "-"}
+                                    </p>
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {formatTime(
+                                      group.start_time
+                                    )}
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {formatTime(
+                                      group.end_time
+                                    )}
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {formatTime(
+                                      group.start_time
+                                    )}
+                                    -
+                                    {formatTime(
+                                      group.end_time
+                                    )}
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {
+                                      group.session_name
+                                    }
+                                  </td>
+                                </>
+                              ) : null}
+
+                              <td className="border-r border-[#F0E1D4] px-4 py-4">
+                                {formatClass(
+                                  row.student_level,
+                                  row.student_grade,
+                                  row.grade_level
+                                )}
                               </td>
 
-                              <td
-                                rowSpan={rowSpan}
-                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-extrabold"
-                              >
-                                {group.day_name}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {formatDate(group.schedule_date)}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                <p className="font-extrabold">
-                                  {group.teacher_name}
-                                </p>
-
-                                <p className="mt-1 text-[12px] text-[#6F5549]">
-                                  {teacher?.teacher_code || "-"}
-                                </p>
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {formatTime(group.start_time)}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {formatTime(group.end_time)}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="whitespace-nowrap border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {formatTime(group.start_time)}-
-                                {formatTime(group.end_time)}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {group.session_name}
-                              </td>
-                            </>
-                          ) : null}
-
-                          <td className="border-r border-[#F0E1D4] px-4 py-4">
-                            {formatClass(
-                              row.student_level,
-                              row.student_grade
-                            )}
-                          </td>
-
-                          {firstRow ? (
-                            <>
-                              <td
-                                rowSpan={rowSpan}
-                                className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
-                              >
-                                {group.subject_name}
-                              </td>
-
-                              <td
-                                rowSpan={rowSpan}
-                                className="min-w-[240px] border-r border-[#F0E1D4] px-4 py-4 align-top"
-                              >
-                                {group.display_material ? (
-                                  <p className="whitespace-pre-line font-bold leading-6">
-                                    {group.display_material}
-                                  </p>
+                              <td className="border-r border-[#F0E1D4] px-4 py-4">
+                                {row.rombel_name ? (
+                                  <span className="inline-flex rounded-full bg-[#F8E1E8] px-3 py-1 text-[11px] font-extrabold text-[#8C0F2D]">
+                                    {
+                                      row.rombel_name
+                                    }
+                                  </span>
                                 ) : (
-                                  <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-[11px] font-extrabold text-amber-700">
-                                    Belum diisi guru
+                                  <span className="text-[12px] text-[#8A6A5A]">
+                                    Belum
+                                    ditentukan
                                   </span>
                                 )}
                               </td>
-                            </>
-                          ) : null}
 
-                          <td className="min-w-[220px] border-r border-[#F0E1D4] px-4 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F8DFD0] text-[12px] font-extrabold text-[#8C0F2D]">
-                                {getInitials(row.student_name)}
-                              </div>
-
-                              <div>
-                                <p className="font-extrabold">
-                                  {row.student_name}
-                                </p>
-
-                                <p className="mt-1 text-[11px] text-[#6F5549]">
-                                  NIPD: {row.student_nipd}
-                                </p>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
-                            <AttendanceMark
-                              active={row.attendance_status === "Hadir"}
-                              label="✓"
-                              tone="present"
-                            />
-                          </td>
-
-                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
-                            <AttendanceMark
-                              active={row.attendance_status === "Izin"}
-                              label="✓"
-                              tone="permission"
-                            />
-                          </td>
-
-                          <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
-                            <AttendanceMark
-                              active={row.attendance_status === "Alpa"}
-                              label="✓"
-                              tone="absent"
-                            />
-                          </td>
-
-                          <td className="min-w-[230px] border-r border-[#F0E1D4] px-4 py-4">
-                            {row.attendance_status ? (
-                              <>
-                                <span
-                                  className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
-                                    row.attendance_status
-                                  )}`}
-                                >
-                                  {row.attendance_status}
-                                </span>
-
-                                <p className="mt-2 whitespace-pre-line text-[12px] leading-5 text-[#6F5549]">
-                                  {row.attendance_note ||
-                                    row.understanding_status ||
-                                    "-"}
-                                </p>
-                              </>
-                            ) : (
-                              <span className="text-[12px] text-[#8A6A5A]">
-                                Belum diabsen
-                              </span>
-                            )}
-                          </td>
-
-                          {firstRow ? (
-                            <td
-                              rowSpan={rowSpan}
-                              className="px-4 py-4 align-top"
-                            >
-                              <div className="flex min-w-[130px] flex-col gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openMaterialModal(group)
-                                  }
-                                  className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#8C0F2D] px-3 text-[12px] font-extrabold text-white transition hover:bg-[#54131D]"
-                                >
-                                  <Edit3 className="h-3.5 w-3.5" />
-                                  {group.display_material
-                                    ? "Edit Materi"
-                                    : "Isi Materi"}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedGroup(group)}
-                                  className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[12px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                                >
-                                  Detail Rombel
-                                </button>
-
-                                {group.temporary_schedule_url ? (
-                                  <a
-                                    href={group.temporary_schedule_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#BAE6FD] px-3 text-[12px] font-extrabold text-[#0369A1]"
+                              {firstRow ? (
+                                <>
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="border-r border-[#F0E1D4] px-4 py-4 align-top font-bold"
                                   >
-                                    <FileText className="h-3.5 w-3.5" />
-                                    File
-                                  </a>
-                                ) : null}
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      );
-                    });
-                  })
+                                    {
+                                      group.subject_name
+                                    }
+                                  </td>
+
+                                  <td
+                                    rowSpan={
+                                      rowSpan
+                                    }
+                                    className="min-w-[240px] border-r border-[#F0E1D4] px-4 py-4 align-top"
+                                  >
+                                    {group.display_material ? (
+                                      <p className="whitespace-pre-line font-bold leading-6">
+                                        {
+                                          group.display_material
+                                        }
+                                      </p>
+                                    ) : (
+                                      <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-[11px] font-extrabold text-amber-700">
+                                        Belum
+                                        diisi
+                                        guru
+                                      </span>
+                                    )}
+                                  </td>
+                                </>
+                              ) : null}
+
+                              <td className="min-w-[220px] border-r border-[#F0E1D4] px-4 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F8DFD0] text-[12px] font-extrabold text-[#8C0F2D]">
+                                    {getInitials(
+                                      row.student_name
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <p className="font-extrabold">
+                                      {
+                                        row.student_name
+                                      }
+                                    </p>
+
+                                    <p className="mt-1 text-[11px] text-[#6F5549]">
+                                      NIPD:{" "}
+                                      {
+                                        row.student_nipd
+                                      }
+                                    </p>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                                <AttendanceMark
+                                  active={
+                                    row.attendance_status ===
+                                    "Hadir"
+                                  }
+                                  label="✓"
+                                  tone="present"
+                                />
+                              </td>
+
+                              <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                                <AttendanceMark
+                                  active={
+                                    row.attendance_status ===
+                                    "Izin"
+                                  }
+                                  label="✓"
+                                  tone="permission"
+                                />
+                              </td>
+
+                              <td className="border-r border-[#F0E1D4] px-4 py-4 text-center">
+                                <AttendanceMark
+                                  active={
+                                    row.attendance_status ===
+                                    "Alpa"
+                                  }
+                                  label="✓"
+                                  tone="absent"
+                                />
+                              </td>
+
+                              <td className="min-w-[230px] border-r border-[#F0E1D4] px-4 py-4">
+                                {row.attendance_status ? (
+                                  <>
+                                    <span
+                                      className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
+                                        row.attendance_status
+                                      )}`}
+                                    >
+                                      {
+                                        row.attendance_status
+                                      }
+                                    </span>
+
+                                    <p className="mt-2 whitespace-pre-line text-[12px] leading-5 text-[#6F5549]">
+                                      {row.attendance_note ||
+                                        row.understanding_status ||
+                                        "-"}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <span className="text-[12px] text-[#8A6A5A]">
+                                    Belum
+                                    diabsen
+                                  </span>
+                                )}
+                              </td>
+
+                              {firstRow ? (
+                                <td
+                                  rowSpan={
+                                    rowSpan
+                                  }
+                                  className="px-4 py-4 align-top"
+                                >
+                                  <div className="flex min-w-[150px] flex-col gap-2">
+                                    {/* ROMBEL */}
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openRombelModal(
+                                          group
+                                        )
+                                      }
+                                      className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#8C0F2D] bg-white px-3 text-[12px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF3F5]"
+                                    >
+                                      <Edit3 className="h-3.5 w-3.5" />
+
+                                      {group.rombel_name
+                                        ? "Edit Rombel"
+                                        : "Pilih Rombel"}
+                                    </button>
+
+                                    {/* MATERIAL */}
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openMaterialModal(
+                                          group
+                                        )
+                                      }
+                                      className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#8C0F2D] px-3 text-[12px] font-extrabold text-white transition hover:bg-[#54131D]"
+                                    >
+                                      <Edit3 className="h-3.5 w-3.5" />
+
+                                      {group.display_material
+                                        ? "Edit Materi"
+                                        : "Isi Materi"}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedGroup(
+                                          group
+                                        )
+                                      }
+                                      className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[12px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                                    >
+                                      Detail
+                                      Rombel
+                                    </button>
+
+                                    {group.temporary_schedule_url ? (
+                                      <a
+                                        href={
+                                          group.temporary_schedule_url
+                                        }
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-[#BAE6FD] px-3 text-[12px] font-extrabold text-[#0369A1]"
+                                      >
+                                        <FileText className="h-3.5 w-3.5" />
+                                        File
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              ) : null}
+                            </tr>
+                          );
+                        }
+                      )
+                  )
                 )}
               </tbody>
             </table>
           </div>
         </div>
       </section>
+
+      {/* ===================================================
+          MODAL EDIT ROMBEL
+      =================================================== */}
+
+      {editingRombelGroup ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+          <div className="w-full max-w-[560px] overflow-hidden rounded-[22px] bg-[#FAF3EA] shadow-2xl">
+            <div className="flex items-start justify-between border-b border-[#E8D6C1] px-6 py-5">
+              <div>
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  Pilih / Edit Rombel
+                </h2>
+
+                <p className="mt-1 text-[14px] text-[#6B4A3A]">
+                  {formatClass(
+                    getLevelFromGradeLevel(
+                      editingRombelGroup.grade_level
+                    ),
+                    editingRombelGroup.class_name,
+                    editingRombelGroup.grade_level
+                  )}{" "}
+                  •{" "}
+                  {
+                    editingRombelGroup.subject_name
+                  }
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  savingRombel
+                }
+                onClick={
+                  closeRombelModal
+                }
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA] disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 rounded-2xl border border-[#E8D6C1] bg-white p-5 md:grid-cols-2">
+                <InfoItem
+                  label="Guru"
+                  value={
+                    editingRombelGroup.teacher_name
+                  }
+                />
+
+                <InfoItem
+                  label="Mapel"
+                  value={
+                    editingRombelGroup.subject_name
+                  }
+                />
+
+                <InfoItem
+                  label="Kelas"
+                  value={formatClass(
+                    getLevelFromGradeLevel(
+                      editingRombelGroup.grade_level
+                    ),
+                    editingRombelGroup.class_name,
+                    editingRombelGroup.grade_level
+                  )}
+                />
+
+                <InfoItem
+                  label="Rombel Saat Ini"
+                  value={
+                    editingRombelGroup.rombel_name ||
+                    "Belum ditentukan"
+                  }
+                />
+
+                <InfoItem
+                  label="Tanggal"
+                  value={formatDate(
+                    editingRombelGroup.schedule_date
+                  )}
+                />
+
+                <InfoItem
+                  label="Jam"
+                  value={`${formatTime(
+                    editingRombelGroup.start_time
+                  )}-${formatTime(
+                    editingRombelGroup.end_time
+                  )}`}
+                />
+              </div>
+
+              <div>
+                <label className="text-[14px] font-extrabold text-[#2B1B18]">
+                  Pilih Rombel
+                </label>
+
+                {availableRombelsForEditing.length >
+                0 ? (
+                  <>
+                    <select
+                      value={
+                        selectedRombelId
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setSelectedRombelId(
+                          event.target
+                            .value
+                        )
+                      }
+                      className="mt-2 h-12 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 text-[14px] outline-none focus:border-[#8C0F2D]"
+                    >
+                      <option value="">
+                        Pilih rombel
+                      </option>
+
+                      {availableRombelsForEditing.map(
+                        (rombel) => (
+                          <option
+                            key={
+                              rombel.id
+                            }
+                            value={
+                              rombel.id
+                            }
+                          >
+                            {
+                              rombel.name
+                            }
+                          </option>
+                        )
+                      )}
+                    </select>
+
+                    <p className="mt-2 text-[12px] leading-5 text-[#6B4A3A]">
+                      Pilihan diambil
+                      otomatis dari tabel{" "}
+                      <strong>
+                        rombels
+                      </strong>
+                      . Jika sekolah
+                      menambahkan 9.3,
+                      maka 9.3 otomatis
+                      muncul di sini.
+                    </p>
+                  </>
+                ) : (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-[13px] leading-6 text-amber-700">
+                    Kelas ini belum
+                    memiliki data rombel.
+                    Guru tetap bisa
+                    menggunakan kelas
+                    utama tanpa rombel.
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={
+                    savingRombel
+                  }
+                  onClick={
+                    closeRombelModal
+                  }
+                  className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-[14px] font-extrabold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
+                >
+                  Batal
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    savingRombel ||
+                    availableRombelsForEditing.length ===
+                      0
+                  }
+                  onClick={() =>
+                    void handleSaveRombel()
+                  }
+                  className="h-11 rounded-xl bg-[#7A1F2B] text-[14px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingRombel
+                    ? "Menyimpan..."
+                    : "Simpan Rombel"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ===================================================
+          MATERIAL MODAL
+      =================================================== */}
 
       {editingGroup ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
@@ -1463,15 +2657,24 @@ export default function TeacherJadwalPage() {
                 </h2>
 
                 <p className="mt-1 text-[14px] text-[#6B4A3A]">
-                  {editingGroup.subject_name} •{" "}
-                  {formatDate(editingGroup.schedule_date)}
+                  {
+                    editingGroup.subject_name
+                  }{" "}
+                  •{" "}
+                  {formatDate(
+                    editingGroup.schedule_date
+                  )}
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={closeMaterialModal}
-                disabled={savingMaterial}
+                onClick={
+                  closeMaterialModal
+                }
+                disabled={
+                  savingMaterial
+                }
                 className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA] disabled:opacity-50"
               >
                 <X className="h-5 w-5" />
@@ -1482,12 +2685,28 @@ export default function TeacherJadwalPage() {
               <div className="grid gap-4 rounded-2xl border border-[#E8D6C1] bg-white p-5 md:grid-cols-2">
                 <InfoItem
                   label="Guru"
-                  value={editingGroup.teacher_name}
+                  value={
+                    editingGroup.teacher_name
+                  }
                 />
 
                 <InfoItem
                   label="Mapel"
-                  value={editingGroup.subject_name}
+                  value={
+                    editingGroup.subject_name
+                  }
+                />
+
+                <InfoItem
+                  label="Kelas"
+                  value={formatClassWithRombel(
+                    getLevelFromGradeLevel(
+                      editingGroup.grade_level
+                    ),
+                    editingGroup.class_name,
+                    editingGroup.grade_level,
+                    editingGroup.rombel_name
+                  )}
                 />
 
                 <InfoItem
@@ -1501,12 +2720,9 @@ export default function TeacherJadwalPage() {
                   label="Jam"
                   value={`${formatTime(
                     editingGroup.start_time
-                  )}-${formatTime(editingGroup.end_time)}`}
-                />
-
-                <InfoItem
-                  label="Sesi"
-                  value={editingGroup.session_name}
+                  )}-${formatTime(
+                    editingGroup.end_time
+                  )}`}
                 />
 
                 <InfoItem
@@ -1521,9 +2737,13 @@ export default function TeacherJadwalPage() {
                 </span>
 
                 <textarea
-                  value={materialInput}
+                  value={
+                    materialInput
+                  }
                   onChange={(event) =>
-                    setMaterialInput(event.target.value)
+                    setMaterialInput(
+                      event.target.value
+                    )
                   }
                   rows={6}
                   autoFocus
@@ -1533,16 +2753,26 @@ export default function TeacherJadwalPage() {
               </label>
 
               <div className="rounded-xl border border-[#E8D6C1] bg-[#FFF8EF] px-4 py-3 text-[13px] leading-6 text-[#6B4A3A]">
-                Materi akan diterapkan ke seluruh{" "}
-                <strong>{editingGroup.total_students} siswa</strong> dalam
-                rombel ini.
+                Materi akan
+                diterapkan ke seluruh{" "}
+                <strong>
+                  {
+                    editingGroup.total_students
+                  }{" "}
+                  siswa
+                </strong>{" "}
+                dalam jadwal ini.
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
                 <button
                   type="button"
-                  onClick={closeMaterialModal}
-                  disabled={savingMaterial}
+                  onClick={
+                    closeMaterialModal
+                  }
+                  disabled={
+                    savingMaterial
+                  }
                   className="h-11 rounded-xl border border-[#E8D6C1] bg-white text-[14px] font-extrabold text-[#7A1F2B] transition hover:bg-[#FFF8EF] disabled:opacity-60"
                 >
                   Batal
@@ -1550,19 +2780,27 @@ export default function TeacherJadwalPage() {
 
                 <button
                   type="button"
-                  onClick={() => void handleSaveMaterial()}
-                  disabled={savingMaterial}
+                  onClick={() =>
+                    void handleSaveMaterial()
+                  }
+                  disabled={
+                    savingMaterial
+                  }
                   className="h-11 rounded-xl bg-[#7A1F2B] text-[14px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {savingMaterial
                     ? "Menyimpan..."
-                    : "Simpan Materi Rombel"}
+                    : "Simpan Materi"}
                 </button>
               </div>
             </div>
           </div>
         </div>
       ) : null}
+
+      {/* ===================================================
+          DETAIL
+      =================================================== */}
 
       {selectedGroup ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
@@ -1574,14 +2812,21 @@ export default function TeacherJadwalPage() {
                 </h2>
 
                 <p className="mt-1 text-[14px] text-[#6B4A3A]">
-                  {selectedGroup.subject_name} •{" "}
-                  {formatDate(selectedGroup.schedule_date)}
+                  {
+                    selectedGroup.subject_name
+                  }{" "}
+                  •{" "}
+                  {formatDate(
+                    selectedGroup.schedule_date
+                  )}
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => setSelectedGroup(null)}
+                onClick={() =>
+                  setSelectedGroup(null)
+                }
                 className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
               >
                 <X className="h-5 w-5" />
@@ -1592,29 +2837,58 @@ export default function TeacherJadwalPage() {
               <div className="grid gap-4 rounded-2xl border border-[#E8D6C1] bg-white p-5 md:grid-cols-3">
                 <InfoItem
                   label="Guru"
-                  value={selectedGroup.teacher_name}
+                  value={
+                    selectedGroup.teacher_name
+                  }
                 />
 
                 <InfoItem
                   label="Mapel"
-                  value={selectedGroup.subject_name}
+                  value={
+                    selectedGroup.subject_name
+                  }
+                />
+
+                <InfoItem
+                  label="Kelas"
+                  value={formatClass(
+                    getLevelFromGradeLevel(
+                      selectedGroup.grade_level
+                    ),
+                    selectedGroup.class_name,
+                    selectedGroup.grade_level
+                  )}
+                />
+
+                <InfoItem
+                  label="Rombel"
+                  value={
+                    selectedGroup.rombel_name ||
+                    "Belum ditentukan"
+                  }
                 />
 
                 <InfoItem
                   label="Hari"
-                  value={selectedGroup.day_name}
+                  value={
+                    selectedGroup.day_name
+                  }
                 />
 
                 <InfoItem
                   label="Tanggal"
-                  value={formatDate(selectedGroup.schedule_date)}
+                  value={formatDate(
+                    selectedGroup.schedule_date
+                  )}
                 />
 
                 <InfoItem
                   label="Jam"
                   value={`${formatTime(
                     selectedGroup.start_time
-                  )}-${formatTime(selectedGroup.end_time)}`}
+                  )}-${formatTime(
+                    selectedGroup.end_time
+                  )}`}
                 />
 
                 <InfoItem
@@ -1628,12 +2902,9 @@ export default function TeacherJadwalPage() {
 
                 <InfoItem
                   label="Sesi"
-                  value={selectedGroup.session_name}
-                />
-
-                <InfoItem
-                  label="Semester"
-                  value={selectedGroup.semester}
+                  value={
+                    selectedGroup.session_name
+                  }
                 />
 
                 <InfoItem
@@ -1656,61 +2927,105 @@ export default function TeacherJadwalPage() {
                   <table className="w-full min-w-[780px]">
                     <thead className="bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6B4A3A]">
                       <tr>
-                        <th className="px-5 py-4">No</th>
-                        <th className="px-5 py-4">Nama Siswa</th>
-                        <th className="px-5 py-4">Kelas</th>
-                        <th className="px-5 py-4">NIPD</th>
-                        <th className="px-5 py-4">Status</th>
-                        <th className="px-5 py-4">Keterangan</th>
+                        <th className="px-5 py-4">
+                          No
+                        </th>
+
+                        <th className="px-5 py-4">
+                          Nama Siswa
+                        </th>
+
+                        <th className="px-5 py-4">
+                          Kelas
+                        </th>
+
+                        <th className="px-5 py-4">
+                          Rombel
+                        </th>
+
+                        <th className="px-5 py-4">
+                          NIPD
+                        </th>
+
+                        <th className="px-5 py-4">
+                          Status
+                        </th>
+
+                        <th className="px-5 py-4">
+                          Keterangan
+                        </th>
                       </tr>
                     </thead>
 
                     <tbody className="divide-y divide-[#E8D6C1]">
-                      {selectedGroup.rows.map((row, index) => (
-                        <tr key={row.id}>
-                          <td className="px-5 py-4 font-bold">
-                            {index + 1}
-                          </td>
+                      {selectedGroup.rows.map(
+                        (
+                          row,
+                          index
+                        ) => (
+                          <tr
+                            key={
+                              row.id
+                            }
+                          >
+                            <td className="px-5 py-4 font-bold">
+                              {index +
+                                1}
+                            </td>
 
-                          <td className="px-5 py-4">
-                            <p className="font-extrabold">
-                              {row.student_name}
-                            </p>
+                            <td className="px-5 py-4">
+                              <p className="font-extrabold">
+                                {
+                                  row.student_name
+                                }
+                              </p>
 
-                            <p className="mt-1 text-[12px] text-[#6B4A3A]">
-                              NISN: {row.student_nisn}
-                            </p>
-                          </td>
+                              <p className="mt-1 text-[12px] text-[#6B4A3A]">
+                                NISN:{" "}
+                                {
+                                  row.student_nisn
+                                }
+                              </p>
+                            </td>
 
-                          <td className="px-5 py-4">
-                            {formatClass(
-                              row.student_level,
-                              row.student_grade
-                            )}
-                          </td>
+                            <td className="px-5 py-4">
+                              {formatClass(
+                                row.student_level,
+                                row.student_grade,
+                                row.grade_level
+                              )}
+                            </td>
 
-                          <td className="px-5 py-4">
-                            {row.student_nipd}
-                          </td>
+                            <td className="px-5 py-4">
+                              {row.rombel_name ||
+                                "-"}
+                            </td>
 
-                          <td className="px-5 py-4">
-                            <span
-                              className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
-                                row.attendance_status
-                              )}`}
-                            >
-                              {row.attendance_status ||
-                                "Belum diabsen"}
-                            </span>
-                          </td>
+                            <td className="px-5 py-4">
+                              {
+                                row.student_nipd
+                              }
+                            </td>
 
-                          <td className="px-5 py-4 text-[#6B4A3A]">
-                            {row.attendance_note ||
-                              row.understanding_status ||
-                              "-"}
-                          </td>
-                        </tr>
-                      ))}
+                            <td className="px-5 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-[11px] font-extrabold ${getStatusBadgeClass(
+                                  row.attendance_status
+                                )}`}
+                              >
+                                {row.attendance_status ||
+                                  "Belum diabsen"}
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-4 text-[#6B4A3A]">
+                              {row.attendance_note ||
+                                row.understanding_status ||
+                                "-"}
+                            </td>
+                          </tr>
+                        )
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1718,7 +3033,9 @@ export default function TeacherJadwalPage() {
 
               <button
                 type="button"
-                onClick={() => setSelectedGroup(null)}
+                onClick={() =>
+                  setSelectedGroup(null)
+                }
                 className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
               >
                 Tutup Detail
@@ -1731,6 +3048,10 @@ export default function TeacherJadwalPage() {
   );
 }
 
+/* =========================================================
+   ATTENDANCE MARK
+========================================================= */
+
 function AttendanceMark({
   active,
   label,
@@ -1738,12 +3059,20 @@ function AttendanceMark({
 }: {
   active: boolean;
   label: string;
-  tone: "present" | "permission" | "absent";
+  tone:
+    | "present"
+    | "permission"
+    | "absent";
 }) {
   const activeClass = {
-    present: "border-[#2F66C9] bg-[#3F73C8] text-white",
-    permission: "border-[#7C5CC4] bg-[#8B6CC7] text-white",
-    absent: "border-[#B93849] bg-[#C74758] text-white",
+    present:
+      "border-[#2F66C9] bg-[#3F73C8] text-white",
+
+    permission:
+      "border-[#7C5CC4] bg-[#8B6CC7] text-white",
+
+    absent:
+      "border-[#B93849] bg-[#C74758] text-white",
   }[tone];
 
   return (
@@ -1759,6 +3088,10 @@ function AttendanceMark({
   );
 }
 
+/* =========================================================
+   SUMMARY CARD
+========================================================= */
+
 function SummaryCard({
   icon,
   label,
@@ -1770,13 +3103,24 @@ function SummaryCard({
   label: string;
   value: number | string;
   info: string;
-  tone: "pink" | "orange" | "blue" | "green";
+  tone:
+    | "pink"
+    | "orange"
+    | "blue"
+    | "green";
 }) {
   const toneClass = {
-    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
-    orange: "bg-[#F4DFD5] text-[#B85C38]",
-    blue: "bg-[#D7ECFA] text-[#1779B8]",
-    green: "bg-[#C7F0DA] text-[#158A58]",
+    pink:
+      "bg-[#F8E1E8] text-[#8C0F2D]",
+
+    orange:
+      "bg-[#F4DFD5] text-[#B85C38]",
+
+    blue:
+      "bg-[#D7ECFA] text-[#1779B8]",
+
+    green:
+      "bg-[#C7F0DA] text-[#158A58]",
   }[tone];
 
   return (
@@ -1803,6 +3147,10 @@ function SummaryCard({
     </div>
   );
 }
+
+/* =========================================================
+   INFO
+========================================================= */
 
 function InfoItem({
   label,

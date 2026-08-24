@@ -24,6 +24,7 @@ type SubjectRow = {
   name: string | null;
   level: string | null;
   grade: string | null;
+  rombel: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -33,6 +34,7 @@ type SubjectForm = {
   name: string;
   level: string;
   grade: string;
+  rombel: string;
 };
 
 const INITIAL_FORM: SubjectForm = {
@@ -40,6 +42,7 @@ const INITIAL_FORM: SubjectForm = {
   name: "",
   level: "",
   grade: "",
+  rombel: "",
 };
 
 const LEVEL_OPTIONS = ["SD", "SMP", "SMA"];
@@ -102,6 +105,10 @@ function normalizeGrade(grade?: string | null) {
   return gradeNumber ? String(gradeNumber) : "";
 }
 
+function normalizeRombel(rombel?: string | null) {
+  return (rombel || "").trim();
+}
+
 function getValidLevelByGrade(grade?: string | null) {
   const gradeNumber = getGradeNumber(grade);
 
@@ -124,9 +131,14 @@ function getSubjectLabel(subject: SubjectRow) {
   const name = subject.name || "-";
   const level = normalizeLevel(subject.level);
   const grade = normalizeGrade(subject.grade);
+  const rombel = normalizeRombel(subject.rombel);
+
+  if (level !== "-" && grade && rombel) {
+    return `${name} — ${level} Kelas ${grade} • Rombel ${rombel}`;
+  }
 
   if (level !== "-" && grade) {
-    return `${name} — ${level} ${grade}`;
+    return `${name} — ${level} Kelas ${grade}`;
   }
 
   if (level !== "-") {
@@ -187,6 +199,7 @@ export default function KepalaSekolahSubjectsPage() {
   const [search, setSearch] = useState("");
   const [levelFilter, setLevelFilter] = useState("Semua Level");
   const [gradeFilter, setGradeFilter] = useState("Semua Kelas");
+  const [rombelFilter, setRombelFilter] = useState("Semua Rombel");
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<SubjectForm>(INITIAL_FORM);
@@ -198,10 +211,13 @@ export default function KepalaSekolahSubjectsPage() {
     try {
       const { data, error } = await supabase
         .from("subjects")
-        .select("id, name, level, grade, created_at, updated_at")
+        .select(
+          "id, name, level, grade, rombel, created_at, updated_at"
+        )
         .order("name", { ascending: true })
         .order("level", { ascending: true })
-        .order("grade", { ascending: true });
+        .order("grade", { ascending: true })
+        .order("rombel", { ascending: true });
 
       if (error) {
         throw new Error(error.message);
@@ -273,18 +289,60 @@ export default function KepalaSekolahSubjectsPage() {
     }
   }, [availableGradeOptions, gradeFilter]);
 
+  const availableRombelOptions = useMemo(() => {
+    const rows = subjects.filter((subject) => {
+      const normalizedLevel = normalizeLevel(subject.level);
+      const normalizedGrade = normalizeGrade(subject.grade);
+
+      const matchLevel =
+        levelFilter === "Semua Level" ||
+        normalizedLevel === levelFilter;
+
+      const matchGrade =
+        gradeFilter === "Semua Kelas" ||
+        normalizedGrade === gradeFilter;
+
+      return matchLevel && matchGrade;
+    });
+
+    const unique = Array.from(
+      new Set(
+        rows
+          .map((subject) => normalizeRombel(subject.rombel))
+          .filter(Boolean)
+      )
+    );
+
+    return unique.sort((a, b) =>
+      a.localeCompare(b, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+  }, [subjects, levelFilter, gradeFilter]);
+
+  useEffect(() => {
+    if (rombelFilter === "Semua Rombel") return;
+
+    if (!availableRombelOptions.includes(rombelFilter)) {
+      setRombelFilter("Semua Rombel");
+    }
+  }, [availableRombelOptions, rombelFilter]);
+
   const filteredSubjects = useMemo(() => {
     const keyword = normalizeText(search);
 
     return subjects.filter((subject) => {
       const normalizedLevel = normalizeLevel(subject.level);
       const normalizedGrade = normalizeGrade(subject.grade);
+      const normalizedRombel = normalizeRombel(subject.rombel);
 
       const matchSearch =
         !keyword ||
         normalizeText(subject.name).includes(keyword) ||
         normalizeText(normalizedLevel).includes(keyword) ||
         normalizeText(normalizedGrade).includes(keyword) ||
+        normalizeText(normalizedRombel).includes(keyword) ||
         normalizeText(getSubjectLabel(subject)).includes(keyword);
 
       const matchLevel =
@@ -295,9 +353,19 @@ export default function KepalaSekolahSubjectsPage() {
         gradeFilter === "Semua Kelas" ||
         normalizedGrade === gradeFilter;
 
-      return matchSearch && matchLevel && matchGrade;
+      const matchRombel =
+        rombelFilter === "Semua Rombel" ||
+        normalizedRombel === rombelFilter;
+
+      return matchSearch && matchLevel && matchGrade && matchRombel;
     });
-  }, [subjects, search, levelFilter, gradeFilter]);
+  }, [
+    subjects,
+    search,
+    levelFilter,
+    gradeFilter,
+    rombelFilter,
+  ]);
 
   const summary = useMemo(() => {
     return {
@@ -361,6 +429,7 @@ export default function KepalaSekolahSubjectsPage() {
         validLevelFromGrade ||
         (LEVEL_OPTIONS.includes(levelFromData) ? levelFromData : ""),
       grade,
+      rombel: subject.rombel || "",
     });
 
     setErrorMessage("");
@@ -385,6 +454,20 @@ export default function KepalaSekolahSubjectsPage() {
       grade: allowedGrades.includes(previous.grade)
         ? previous.grade
         : "",
+      rombel: allowedGrades.includes(previous.grade)
+        ? previous.rombel
+        : "",
+    }));
+  }
+
+  function handleGradeChange(grade: string) {
+    setForm((previous) => ({
+      ...previous,
+      grade,
+      rombel:
+        previous.grade === grade
+          ? previous.rombel
+          : "",
     }));
   }
 
@@ -413,6 +496,11 @@ export default function KepalaSekolahSubjectsPage() {
       return false;
     }
 
+    if (!form.rombel.trim()) {
+      setErrorMessage("Rombel wajib diisi.");
+      return false;
+    }
+
     const duplicate = subjects.some((subject) => {
       if (form.id && subject.id === form.id) {
         return false;
@@ -421,13 +509,14 @@ export default function KepalaSekolahSubjectsPage() {
       return (
         normalizeText(subject.name) === normalizeText(form.name) &&
         normalizeLevel(subject.level) === form.level &&
-        normalizeGrade(subject.grade) === form.grade
+        normalizeGrade(subject.grade) === form.grade &&
+        normalizeText(subject.rombel) === normalizeText(form.rombel)
       );
     });
 
     if (duplicate) {
       setErrorMessage(
-        `${form.name.trim()} untuk ${form.level} kelas ${form.grade} sudah tersedia.`
+        `${form.name.trim()} untuk ${form.level} kelas ${form.grade} rombel ${form.rombel.trim()} sudah tersedia.`
       );
       return false;
     }
@@ -451,6 +540,7 @@ export default function KepalaSekolahSubjectsPage() {
         name: form.name.trim(),
         level: form.level,
         grade: form.grade,
+        rombel: form.rombel.trim(),
         updated_at: now,
       };
 
@@ -474,7 +564,7 @@ export default function KepalaSekolahSubjectsPage() {
         if (error) {
           if (error.code === "23505") {
             throw new Error(
-              "Mata pelajaran dengan level dan kelas tersebut sudah tersedia."
+              "Mata pelajaran dengan level, kelas, dan rombel tersebut sudah tersedia."
             );
           }
 
@@ -559,9 +649,9 @@ export default function KepalaSekolahSubjectsPage() {
             </h1>
 
             <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
-              Kelola daftar mata pelajaran berdasarkan level dan kelas. Data
-              ini digunakan untuk assignment guru, jadwal, absensi, RPP,
-              laporan KBM, dan laporan akademik.
+              Kelola daftar mata pelajaran berdasarkan level, kelas, dan
+              rombel. Data ini digunakan untuk assignment guru, jadwal,
+              absensi, RPP, laporan KBM, dan laporan akademik.
             </p>
           </div>
 
@@ -622,14 +712,14 @@ export default function KepalaSekolahSubjectsPage() {
         </div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-[1.6fr_1fr_1fr]">
+          <div className="grid gap-3 xl:grid-cols-[1.5fr_0.8fr_0.8fr_0.8fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
 
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari nama mapel, level, atau kelas..."
+                placeholder="Cari nama mapel, level, kelas, atau rombel..."
                 className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
@@ -655,6 +745,20 @@ export default function KepalaSekolahSubjectsPage() {
               {availableGradeOptions.map((grade) => (
                 <option key={grade} value={grade}>
                   Kelas {grade}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={rombelFilter}
+              onChange={(event) => setRombelFilter(event.target.value)}
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option>Semua Rombel</option>
+
+              {availableRombelOptions.map((rombel) => (
+                <option key={rombel} value={rombel}>
+                  {rombel}
                 </option>
               ))}
             </select>
@@ -700,7 +804,7 @@ export default function KepalaSekolahSubjectsPage() {
                         </h3>
 
                         <p className="mt-1 text-[13px] text-[#6F5549]">
-                          {group.rows.length} kombinasi level dan kelas
+                          {group.rows.length} kombinasi level, kelas, dan rombel
                         </p>
 
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -719,6 +823,10 @@ export default function KepalaSekolahSubjectsPage() {
 
                               <span className="text-[12px] font-bold text-[#2B1B18]">
                                 Kelas {normalizeGrade(subject.grade) || "-"}
+                              </span>
+
+                              <span className="rounded-full bg-[#F8EBDD] px-2.5 py-1 text-[11px] font-extrabold text-[#8C0F2D]">
+                                Rombel {normalizeRombel(subject.rombel) || "-"}
                               </span>
 
                               <button
@@ -766,23 +874,23 @@ export default function KepalaSekolahSubjectsPage() {
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
           <h2 className="text-[16px] font-extrabold text-[#2B1B18]">
-            Aturan Level dan Kelas
+            Aturan Level, Kelas, dan Rombel
           </h2>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <RuleCard
               title="SD"
-              description="Kelas 1, 2, 3, 4, 5, dan 6"
+              description="Kelas 1–6. Contoh rombel: 1.1, 1.2, 6.1."
             />
 
             <RuleCard
               title="SMP"
-              description="Kelas 7, 8, dan 9"
+              description="Kelas 7–9. Contoh rombel: 7.1, 8.2, 9.1, 9.2."
             />
 
             <RuleCard
               title="SMA"
-              description="Kelas 10, 11, dan 12"
+              description="Kelas 10–12. Contoh rombel: 10.1, 11.2, 12.1."
             />
           </div>
         </div>
@@ -798,7 +906,7 @@ export default function KepalaSekolahSubjectsPage() {
                 </h2>
 
                 <p className="mt-1 text-[14px] text-[#6F5549]">
-                  Isi nama mapel, level, dan kelas yang sesuai.
+                  Isi nama mapel, level, kelas, dan rombel yang sesuai.
                 </p>
               </div>
 
@@ -858,10 +966,7 @@ export default function KepalaSekolahSubjectsPage() {
                   <select
                     value={form.grade}
                     onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        grade: event.target.value,
-                      }))
+                      handleGradeChange(event.target.value)
                     }
                     disabled={!form.level}
                     className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
@@ -879,6 +984,32 @@ export default function KepalaSekolahSubjectsPage() {
                 </FormGroup>
               </div>
 
+              <FormGroup label="Rombel">
+                <input
+                  type="text"
+                  value={form.rombel}
+                  onChange={(event) =>
+                    setForm((previous) => ({
+                      ...previous,
+                      rombel: event.target.value,
+                    }))
+                  }
+                  disabled={!form.grade}
+                  placeholder={
+                    form.grade
+                      ? `Contoh: ${form.grade}.1, ${form.grade}.2`
+                      : "Pilih kelas terlebih dahulu"
+                  }
+                  maxLength={20}
+                  className="h-12 w-full rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] outline-none focus:border-[#9C0824] disabled:cursor-not-allowed disabled:bg-[#F4E5DA] disabled:opacity-70"
+                />
+
+                <p className="mt-2 text-[12px] leading-5 text-[#8A6A5C]">
+                  Contoh: Kelas 9 dapat memiliki rombel 9.1, 9.2, dan
+                  seterusnya.
+                </p>
+              </FormGroup>
+
               {form.level && form.grade ? (
                 <div className="rounded-2xl border border-[#E8D6C1] bg-white px-5 py-4">
                   <p className="text-[13px] font-bold text-[#6F5549]">
@@ -888,6 +1019,9 @@ export default function KepalaSekolahSubjectsPage() {
                   <p className="mt-2 text-[16px] font-extrabold text-[#2B1B18]">
                     {form.name.trim() || "Nama Mapel"} — {form.level} Kelas{" "}
                     {form.grade}
+                    {form.rombel.trim()
+                      ? ` • Rombel ${form.rombel.trim()}`
+                      : ""}
                   </p>
                 </div>
               ) : null}
