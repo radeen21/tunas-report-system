@@ -923,24 +923,39 @@ export default function KepalaSekolahStudentsPage() {
     >
       <section className="w-full max-w-full space-y-7 overflow-hidden">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[28px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-              Student Management
-            </h1>
-            <p className="mt-1 text-[15px] text-[#6F5549]">
-              Kelola data murid Homeschooling HSTKB
-            </p>
-          </div>
+  <div>
+    <h1 className="text-[28px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
+      Student Management
+    </h1>
 
-          <button
-            onClick={openAddModal}
-            className="flex h-[46px] items-center gap-3 rounded-2xl bg-[#9C0824] px-6 text-[15px] font-bold text-white shadow-sm transition hover:brightness-105"
-            type="button"
-          >
-            <Plus className="h-4 w-4" />
-            Add Student
-          </button>
-        </div>
+    <p className="mt-1 text-[15px] text-[#6F5549]">
+      Kelola data murid Homeschooling HSTKB
+    </p>
+  </div>
+
+  <div className="flex items-center gap-3">
+    {/* Tombol Akun Siswa */}
+    <button
+      onClick={() =>
+        router.push("/kepalaSekolah/students/akun")
+      }
+      className="flex h-[46px] items-center gap-3 rounded-2xl border border-[#9C0824] bg-white px-6 text-[15px] font-bold text-[#9C0824] shadow-sm transition hover:bg-[#FFF5F6]"
+      type="button"
+    >
+      Akun Siswa
+    </button>
+
+    {/* Tombol Add Student */}
+    <button
+      onClick={openAddModal}
+      className="flex h-[46px] items-center gap-3 rounded-2xl bg-[#9C0824] px-6 text-[15px] font-bold text-white shadow-sm transition hover:brightness-105"
+      type="button"
+    >
+      <Plus className="h-4 w-4" />
+      Add Student
+    </button>
+  </div>
+</div>
 
         <div className="rounded-[22px] border border-[#E1CFBE] bg-white/60 p-4 shadow-[0_4px_14px_rgba(77,31,9,0.05)]">
           <div className="relative max-w-[400px]">
