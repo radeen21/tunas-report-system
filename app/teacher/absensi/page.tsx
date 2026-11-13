@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from "react";
+import * as XLSX from "xlsx";
 import {
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
   Eye,
+  FileSpreadsheet,
   Pencil,
+  Printer,
   Save,
   Search,
   Users,
@@ -413,6 +416,7 @@ export default function TeacherAbsensiPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -1393,6 +1397,284 @@ export default function TeacherAbsensiPage() {
     }
   }
 
+  function excelDateToYMD(value: unknown): string {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      const year = value.getFullYear();
+      const month = String(value.getMonth() + 1).padStart(2, "0");
+      const day = String(value.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const parsed = XLSX.SSF.parse_date_code(value);
+      if (parsed) {
+        return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+      }
+    }
+
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+    const match = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    if (match) {
+      // Format tanggal Indonesia: DD/MM/YYYY.
+      return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+    }
+
+    const parsedDate = new Date(raw);
+    if (!Number.isNaN(parsedDate.getTime())) {
+      return `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`;
+    }
+    return "";
+  }
+
+  function normalizeImportTime(value: unknown): string | null {
+    if (value === null || value === undefined || value === "") return null;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const totalMinutes = Math.round(value * 24 * 60);
+      const hours = Math.floor(totalMinutes / 60) % 24;
+      const minutes = totalMinutes % 60;
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+    }
+    const raw = String(value).trim();
+    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return null;
+    return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
+  }
+
+  async function handleImportTeacherAttendance(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (!teacher?.id || !teacher.teacher_code?.trim()) {
+      alert("Kode Guru pada akun ini belum tersedia. Hubungi admin untuk melengkapi teacher_code.");
+      return;
+    }
+
+    setImporting(true);
+    setSuccessMessage("");
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("File Excel tidak memiliki sheet.");
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true });
+      if (records.length === 0) throw new Error("Tidak ada data pada sheet pertama.");
+
+      const normalizeHeader = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+      const firstRecord = records[0];
+      const headerMap = new Map(Object.keys(firstRecord).map((key) => [normalizeHeader(key), key]));
+      const findColumn = (...names: string[]) => {
+        for (const name of names) {
+          const found = headerMap.get(normalizeHeader(name));
+          if (found) return found;
+        }
+        return undefined;
+      };
+
+      const codeColumn = findColumn("Kode Guru", "KodeGuru", "teacher_code");
+      const dateColumn = findColumn("Tanggal", "Tanggal Absensi", "attendance_date");
+      const arrivalColumn = findColumn("Jam Datang", "Jam Masuk", "Waktu Datang", "arrival_time");
+      const departureColumn = findColumn("Jam Pulang", "Waktu Pulang", "departure_time");
+      const statusColumn = findColumn("Status", "Kehadiran", "status");
+      const notesColumn = findColumn("Keterangan", "Catatan", "notes");
+
+      if (!codeColumn || !dateColumn || !arrivalColumn || !departureColumn) {
+        throw new Error('Header wajib: "Kode Guru", "Tanggal", "Jam Datang", dan "Jam Pulang". Header opsional: "Status" dan "Keterangan".');
+      }
+
+      const expectedCode = teacher.teacher_code.trim().toLowerCase();
+      const validRows: Array<{ attendance_date: string; arrival_time: string | null; departure_time: string | null; status: string; notes: string | null }> = [];
+      const errors: string[] = [];
+      const seenDates = new Set<string>();
+
+      records.forEach((record, index) => {
+        const rowNumber = index + 2;
+        const rowCode = String(record[codeColumn] ?? "").trim().toLowerCase();
+        if (!rowCode) {
+          errors.push(`Baris ${rowNumber}: Kode Guru kosong.`);
+          return;
+        }
+        if (rowCode !== expectedCode) {
+          errors.push(`Baris ${rowNumber}: Kode Guru tidak sesuai dengan akun Anda.`);
+          return;
+        }
+
+        const attendanceDate = excelDateToYMD(record[dateColumn]);
+        const arrivalTime = normalizeImportTime(record[arrivalColumn]);
+        const departureTime = normalizeImportTime(record[departureColumn]);
+        if (!attendanceDate) {
+          errors.push(`Baris ${rowNumber}: format Tanggal tidak valid.`);
+          return;
+        }
+        if (!arrivalTime || !departureTime) {
+          errors.push(`Baris ${rowNumber}: Jam Datang atau Jam Pulang tidak valid.`);
+          return;
+        }
+        if (seenDates.has(attendanceDate)) {
+          errors.push(`Baris ${rowNumber}: tanggal ${attendanceDate} tercatat lebih dari satu kali.`);
+          return;
+        }
+        seenDates.add(attendanceDate);
+
+        const rawStatus = String(statusColumn ? record[statusColumn] : "Hadir").trim().toLowerCase();
+        const status = rawStatus === "izin" ? "Izin" : rawStatus === "sakit" ? "Sakit" : rawStatus === "alpa" || rawStatus === "tidak hadir" ? "Alpa" : rawStatus === "hadir" || !rawStatus ? "Hadir" : String(statusColumn ? record[statusColumn] : "Hadir").trim();
+        validRows.push({
+          attendance_date: attendanceDate,
+          arrival_time: arrivalTime,
+          departure_time: departureTime,
+          status,
+          notes: notesColumn ? String(record[notesColumn] ?? "").trim() || null : null,
+        });
+      });
+
+      if (validRows.length === 0) {
+        throw new Error(errors.length ? errors.slice(0, 8).join("\n") : "Tidak ada baris yang dapat diimpor.");
+      }
+
+      let inserted = 0;
+      let updated = 0;
+      for (const row of validRows) {
+        const { data: existing, error: findError } = await supabase
+          .from("teacher_attendance")
+          .select("id")
+          .eq("teacher_id", teacher.id)
+          .eq("attendance_date", row.attendance_date)
+          .maybeSingle();
+        if (findError) throw new Error(`Gagal memeriksa tanggal ${row.attendance_date}: ${findError.message}`);
+
+        const payload = {
+          teacher_id: teacher.id,
+          attendance_date: row.attendance_date,
+          arrival_time: row.arrival_time,
+          departure_time: row.departure_time,
+          status: row.status,
+          notes: row.notes,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (existing?.id) {
+          const { error } = await supabase.from("teacher_attendance").update(payload).eq("id", existing.id);
+          if (error) throw new Error(`Gagal memperbarui ${row.attendance_date}: ${error.message}`);
+          updated++;
+        } else {
+          const { error } = await supabase.from("teacher_attendance").insert({ ...payload, created_at: new Date().toISOString() });
+          if (error) throw new Error(`Gagal menyimpan ${row.attendance_date}: ${error.message}`);
+          inserted++;
+        }
+      }
+
+      setSuccessMessage(`Import selesai: ${inserted} data baru dan ${updated} data diperbarui untuk Kode Guru ${teacher.teacher_code}.`);
+      if (errors.length) alert(`Sebagian baris dilewati:\n${errors.slice(0, 10).join("\n")}${errors.length > 10 ? `\n...dan ${errors.length - 10} baris lainnya.` : ""}`);
+    } catch (error) {
+      alert(`Import gagal: ${error instanceof Error ? error.message : "Terjadi kesalahan saat membaca file."}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function downloadTeacherAttendanceTemplate() {
+    const rows = [
+      ["Kode Guru", "Tanggal", "Jam Datang", "Jam Pulang", "Status", "Keterangan"],
+      [teacher?.teacher_code || "ISI_KODE_GURU", todayYMD(), "07:30", "15:00", "Hadir", ""],
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Guru");
+    XLSX.writeFile(workbook, "Template_Import_Absensi_Guru.xlsx");
+  }
+
+  function exportAttendanceToExcel() {
+    if (attendanceHistory.length === 0) {
+      alert("Belum ada riwayat absensi yang dapat diekspor.");
+      return;
+    }
+
+    const studentMap = new Map(
+      students.map((student) => [student.id, student])
+    );
+
+    const headers = [
+      "No",
+      "Nama Guru",
+      "Hari",
+      "Tanggal",
+      "Mata Pelajaran / Kelas",
+      "Jam Datang Guru",
+      "Jam Pulang Guru",
+      "Jam Mulai KBM",
+      "Jam Selesai KBM",
+      "Sesi",
+      "Materi",
+      "Nama Siswa",
+      "Kelas Siswa",
+      "Status Kehadiran",
+      "Pemahaman",
+      "Catatan",
+    ];
+
+    const escapeCell = (value: unknown) => {
+      const text = String(value ?? "").replace(/\r?\n/g, " ");
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+
+    const rows: string[][] = [];
+    let number = 1;
+
+    attendanceHistory.forEach((group) => {
+      group.rows.forEach((row) => {
+        const student = row.student_id
+          ? studentMap.get(row.student_id)
+          : null;
+
+        rows.push([
+          String(number++),
+          teacher?.full_name || "Guru",
+          group.dayName,
+          group.attendanceDate,
+          group.subjectName,
+          group.teacherArrivalTime || "-",
+          group.teacherDepartureTime || "-",
+          group.startTime || "-",
+          group.endTime || "-",
+          group.sessionName || "-",
+          group.materialTopic || "-",
+          student?.full_name || "Nama siswa tidak ditemukan",
+          student ? formatClass(student.level, student.grade) : "-",
+          normalizeAttendanceStatus(row.attendance_status),
+          row.understanding_status || "-",
+          row.note || row.notes || "-",
+        ]);
+      });
+    });
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map(escapeCell).join(";"))
+      .join("\r\n");
+    const blob = new Blob(["\uFEFF", csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeTeacherName = (teacher?.full_name || "guru")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    link.href = url;
+    link.download = `absensi-${safeTeacherName || "guru"}-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <TeacherLayout
       activeMenu="Absensi KBM"
@@ -2216,11 +2498,66 @@ export default function TeacherAbsensiPage() {
                 Menampilkan absensi yang sudah
                 disimpan oleh guru yang sedang login.
               </p>
+              {teacher?.teacher_code ? (
+                <p className="mt-1 text-[12px] font-bold text-[#8C0F2D]">
+                  Kode Guru: {teacher.teacher_code} · Import hanya menerima data dengan kode ini.
+                </p>
+              ) : null}
             </div>
 
-            <span className="inline-flex w-fit rounded-full bg-[#E8F5EE] px-3 py-1 text-[12px] font-extrabold text-[#158A58]">
-              {attendanceHistory.length} sesi tersimpan
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex w-fit rounded-full bg-[#E8F5EE] px-3 py-1 text-[12px] font-extrabold text-[#158A58]">
+                {attendanceHistory.length} sesi tersimpan
+              </span>
+
+              <button
+                type="button"
+                onClick={downloadTeacherAttendanceTemplate}
+                disabled={!teacher?.teacher_code}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[13px] font-extrabold text-[#6F5549] transition hover:bg-[#FFF8EF] disabled:opacity-50"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                Template Import
+              </button>
+
+              <label className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-4 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] ${importing || !teacher?.teacher_code ? "pointer-events-none opacity-50" : ""}`}>
+                <FileSpreadsheet className="h-4 w-4" />
+                {importing ? "Mengimpor..." : "Import Excel"}
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  disabled={importing || !teacher?.teacher_code}
+                  onChange={(event) => void handleImportTeacherAttendance(event)}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={exportAttendanceToExcel}
+                disabled={loading || attendanceHistory.length === 0}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#158A58] bg-white px-4 text-[13px] font-extrabold text-[#158A58] transition hover:bg-[#E8F5EE] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                Export Excel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (attendanceHistory.length === 0) {
+                    alert("Belum ada riwayat absensi yang dapat dicetak.");
+                    return;
+                  }
+                  window.print();
+                }}
+                disabled={loading || attendanceHistory.length === 0}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-4 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Printer className="h-4 w-4" />
+                Cetak Absensi Saya
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -2389,6 +2726,142 @@ export default function TeacherAbsensiPage() {
             </table>
           </div>
         </div>
+
+        {/* Area khusus cetak: hanya menampilkan riwayat milik guru yang sedang login. */}
+        <div id="teacher-attendance-print" className="hidden print:block">
+          <div className="mb-6 border-b-2 border-black pb-4 text-center">
+            <h1 className="text-xl font-bold uppercase">
+              LAPORAN ABSENSI GURU
+            </h1>
+            <p className="mt-1 text-sm">Homeschooling Tunas Karya Bangsa</p>
+            <p className="mt-3 text-left text-sm">
+              <strong>Nama Guru:</strong> {teacher?.full_name || "-"}
+            </p>
+            <p className="text-left text-sm">
+              <strong>Periode:</strong> Seluruh riwayat absensi tersimpan
+            </p>
+            <p className="text-left text-sm">
+              <strong>Tanggal Cetak:</strong> {formatDate(todayYMD())}
+            </p>
+          </div>
+
+          {attendanceHistory.length === 0 ? (
+            <p className="text-sm">Belum ada data absensi.</p>
+          ) : (
+            attendanceHistory.map((history, historyIndex) => (
+              <div
+                key={`print-${history.key}`}
+                className="mb-6 break-inside-avoid"
+              >
+                <div className="mb-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <p><strong>{historyIndex + 1}. Hari/Tanggal:</strong> {history.dayName}, {formatDate(history.attendanceDate)}</p>
+                  <p><strong>Mapel/Kelas:</strong> {history.subjectName}</p>
+                  <p><strong>Datang:</strong> {formatTime(history.teacherArrivalTime)}</p>
+                  <p><strong>Pulang:</strong> {formatTime(history.teacherDepartureTime)}</p>
+                  <p><strong>Jam KBM:</strong> {formatTime(history.startTime)} - {formatTime(history.endTime)}</p>
+                  <p><strong>Sesi:</strong> {history.sessionName}</p>
+                  <p className="col-span-2"><strong>Materi:</strong> {history.materialTopic}</p>
+                </div>
+
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr>
+                      <th className="border border-black p-2">No</th>
+                      <th className="border border-black p-2 text-left">Nama Siswa</th>
+                      <th className="border border-black p-2">Kelas</th>
+                      <th className="border border-black p-2">Status</th>
+                      <th className="border border-black p-2">Pemahaman</th>
+                      <th className="border border-black p-2 text-left">Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.rows.map((row, rowIndex) => {
+                      const student = students.find(
+                        (item) => item.id === row.student_id
+                      );
+                      return (
+                        <tr key={`print-${row.id}`}>
+                          <td className="border border-black p-2 text-center">{rowIndex + 1}</td>
+                          <td className="border border-black p-2">{student?.full_name || "-"}</td>
+                          <td className="border border-black p-2 text-center">
+                            {formatClass(student?.level, student?.grade)}
+                          </td>
+                          <td className="border border-black p-2 text-center">
+                            {normalizeAttendanceStatus(row.attendance_status)}
+                          </td>
+                          <td className="border border-black p-2 text-center">
+                            {row.understanding_status || "-"}
+                          </td>
+                          <td className="border border-black p-2">
+                            {getAttendanceNote(row) || "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <p className="mt-2 text-right text-xs">
+                  Total: {history.totalStudents} siswa | Hadir: {history.hadir} | Izin: {history.izin} | Alpa: {history.alpa} | Tidak ada jadwal: {history.tidakAdaJadwal}
+                </p>
+              </div>
+            ))
+          )}
+
+          <div className="mt-12 grid grid-cols-2 gap-10 text-center text-sm">
+            <div>
+              <p>Mengetahui,</p>
+              <p className="mt-20 border-t border-black pt-2">Kepala Sekolah</p>
+            </div>
+            <div>
+              <p>Guru yang bersangkutan,</p>
+              <p className="mt-20 border-t border-black pt-2">{teacher?.full_name || "Guru"}</p>
+            </div>
+          </div>
+        </div>
+
+        <style jsx global>{`
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 12mm;
+            }
+
+            body * {
+              visibility: hidden !important;
+            }
+
+            #teacher-attendance-print,
+            #teacher-attendance-print * {
+              visibility: visible !important;
+            }
+
+            #teacher-attendance-print {
+              display: block !important;
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              color: #000 !important;
+              background: #fff !important;
+              font-family: Arial, sans-serif !important;
+            }
+
+            #teacher-attendance-print table {
+              page-break-inside: auto;
+            }
+
+            #teacher-attendance-print tr {
+              page-break-inside: avoid;
+              page-break-after: auto;
+            }
+
+            #teacher-attendance-print th {
+              background: #f1f1f1 !important;
+              font-weight: 700 !important;
+            }
+          }
+        `}</style>
       </section>
 
       {selectedHistory ? (
