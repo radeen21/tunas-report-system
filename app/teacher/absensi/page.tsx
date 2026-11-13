@@ -72,6 +72,12 @@ type AttendanceRow = {
   attendance_status?: string | null;
   understanding_status?: string | null;
   material_topic?: string | null;
+  attendance_score?: number | null;
+  is_online?: boolean | null;
+  is_offline?: boolean | null;
+  problem?: string | null;
+  consequence?: string | null;
+  solution?: string | null;
 
   note?: string | null;
   notes?: string | null;
@@ -1416,10 +1422,11 @@ export default function TeacherAbsensiPage() {
     if (!raw) return "";
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
 
-    const match = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+    const match = raw.match(/^(?:.*?,\s*)?(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
     if (match) {
       // Format tanggal Indonesia: DD/MM/YYYY.
-      return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+      const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+      return `${year}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
     }
 
     const parsedDate = new Date(raw);
@@ -1438,9 +1445,36 @@ export default function TeacherAbsensiPage() {
       return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
     }
     const raw = String(value).trim();
-    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    const match = raw.match(/^(\d{1,2})[:.](\d{2})(?::(\d{2}))?$/);
     if (!match) return null;
     return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
+  }
+
+  function normalizeImportHeader(value: unknown) {
+    return String(value ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  function findImportColumn(headers: string[], aliases: string[]) {
+    return headers.findIndex((header) =>
+      aliases.some((alias) => header === alias || header.includes(alias))
+    );
+  }
+
+  function isMarked(value: unknown) {
+    const text = String(value ?? "").trim().toLowerCase();
+    return ["v", "✓", "✔", "1", "ya", "yes", "online", "offline"].includes(text);
+  }
+
+  function parseImportScore(value: unknown): number | null {
+    if (value === null || value === undefined || String(value).trim() === "") return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const parsed = Number(String(value).replace(",", ".").replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   async function handleImportTeacherAttendance(event: ChangeEvent<HTMLInputElement>) {
@@ -1448,13 +1482,15 @@ export default function TeacherAbsensiPage() {
     event.target.value = "";
     if (!file) return;
 
-    if (!teacher?.id || !teacher.teacher_code?.trim()) {
-      alert("Kode Guru pada akun ini belum tersedia. Hubungi admin untuk melengkapi teacher_code.");
+    if (!teacher?.id) {
+      alert("Data guru pada akun yang sedang login tidak ditemukan.");
       return;
     }
 
     setImporting(true);
     setSuccessMessage("");
+    setErrorMessage("");
+
     try {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
@@ -1462,116 +1498,183 @@ export default function TeacherAbsensiPage() {
       if (!firstSheetName) throw new Error("File Excel tidak memiliki sheet.");
 
       const sheet = workbook.Sheets[firstSheetName];
-      const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true });
-      if (records.length === 0) throw new Error("Tidak ada data pada sheet pertama.");
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+        header: 1,
+        defval: "",
+        raw: true,
+        blankrows: false,
+      });
+      if (matrix.length < 2) throw new Error("Sheet belum berisi header dan data KBM.");
 
-      const normalizeHeader = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
-      const firstRecord = records[0];
-      const headerMap = new Map(Object.keys(firstRecord).map((key) => [normalizeHeader(key), key]));
-      const findColumn = (...names: string[]) => {
-        for (const name of names) {
-          const found = headerMap.get(normalizeHeader(name));
-          if (found) return found;
-        }
-        return undefined;
-      };
-
-      const codeColumn = findColumn("Kode Guru", "KodeGuru", "teacher_code");
-      const dateColumn = findColumn("Tanggal", "Tanggal Absensi", "attendance_date");
-      const arrivalColumn = findColumn("Jam Datang", "Jam Masuk", "Waktu Datang", "arrival_time");
-      const departureColumn = findColumn("Jam Pulang", "Waktu Pulang", "departure_time");
-      const statusColumn = findColumn("Status", "Kehadiran", "status");
-      const notesColumn = findColumn("Keterangan", "Catatan", "notes");
-
-      if (!codeColumn || !dateColumn || !arrivalColumn || !departureColumn) {
-        throw new Error('Header wajib: "Kode Guru", "Tanggal", "Jam Datang", dan "Jam Pulang". Header opsional: "Status" dan "Keterangan".');
+      // Template memiliki header bertingkat: Jadwal > masuk/selesai dan Sesi > Hadir/Tidak hadir/Online/Offline.
+      const headerIndex = matrix.findIndex((row) => {
+        const joined = row.map(normalizeImportHeader).join(" ");
+        return joined.includes("hari tanggal") && joined.includes("nama siswa");
+      });
+      if (headerIndex < 0) {
+        throw new Error('Header tidak dikenali. Pastikan terdapat kolom "Hari/Tanggal" dan "Nama Siswa" seperti template KBM.');
       }
 
-      const expectedCode = teacher.teacher_code.trim().toLowerCase();
-      const validRows: Array<{ attendance_date: string; arrival_time: string | null; departure_time: string | null; status: string; notes: string | null }> = [];
-      const errors: string[] = [];
-      const seenDates = new Set<string>();
+      const headerRow1 = matrix[headerIndex] || [];
+      const headerRow2 = matrix[headerIndex + 1] || [];
+      const columnCount = Math.max(headerRow1.length, headerRow2.length);
+      const headers = Array.from({ length: columnCount }, (_, index) =>
+        `${normalizeImportHeader(headerRow1[index])} ${normalizeImportHeader(headerRow2[index])}`.trim()
+      );
 
-      records.forEach((record, index) => {
-        const rowNumber = index + 2;
-        const rowCode = String(record[codeColumn] ?? "").trim().toLowerCase();
-        if (!rowCode) {
-          errors.push(`Baris ${rowNumber}: Kode Guru kosong.`);
-          return;
-        }
-        if (rowCode !== expectedCode) {
-          errors.push(`Baris ${rowNumber}: Kode Guru tidak sesuai dengan akun Anda.`);
-          return;
-        }
+      const columns = {
+        date: findImportColumn(headers, ["hari tanggal", "tanggal"]),
+        className: findImportColumn(headers, ["kelas"]),
+        student: findImportColumn(headers, ["nama siswa"]),
+        start: findImportColumn(headers, ["jadwal masuk", "jam masuk", "masuk"]),
+        end: findImportColumn(headers, ["jadwal selesai", "jam selesai", "selesai"]),
+        subject: findImportColumn(headers, ["mapel", "mata pelajaran"]),
+        material: findImportColumn(headers, ["materi yang diajarkan", "materi"]),
+        present: findImportColumn(headers, ["sesi hadir", "hadir"]),
+        absent: findImportColumn(headers, ["sesi tidak hadir", "tidak hadir"]),
+        online: findImportColumn(headers, ["sesi online", "online"]),
+        offline: findImportColumn(headers, ["sesi offline", "offline"]),
+        problem: findImportColumn(headers, ["permasalahan", "masalah"]),
+        consequence: findImportColumn(headers, ["akibat"]),
+        solution: findImportColumn(headers, ["solusi"]),
+      };
 
-        const attendanceDate = excelDateToYMD(record[dateColumn]);
-        const arrivalTime = normalizeImportTime(record[arrivalColumn]);
-        const departureTime = normalizeImportTime(record[departureColumn]);
-        if (!attendanceDate) {
-          errors.push(`Baris ${rowNumber}: format Tanggal tidak valid.`);
-          return;
-        }
-        if (!arrivalTime || !departureTime) {
-          errors.push(`Baris ${rowNumber}: Jam Datang atau Jam Pulang tidak valid.`);
-          return;
-        }
-        if (seenDates.has(attendanceDate)) {
-          errors.push(`Baris ${rowNumber}: tanggal ${attendanceDate} tercatat lebih dari satu kali.`);
-          return;
-        }
-        seenDates.add(attendanceDate);
+      const required = ["date", "className", "student", "start", "end", "subject", "material"] as const;
+      const missing = required.filter((key) => columns[key] < 0);
+      if (missing.length) {
+        throw new Error(`Kolom wajib belum ditemukan: ${missing.join(", ")}. Periksa kembali format header Excel.`);
+      }
 
-        const rawStatus = String(statusColumn ? record[statusColumn] : "Hadir").trim().toLowerCase();
-        const status = rawStatus === "izin" ? "Izin" : rawStatus === "sakit" ? "Sakit" : rawStatus === "alpa" || rawStatus === "tidak hadir" ? "Alpa" : rawStatus === "hadir" || !rawStatus ? "Hadir" : String(statusColumn ? record[statusColumn] : "Hadir").trim();
-        validRows.push({
-          attendance_date: attendanceDate,
-          arrival_time: arrivalTime,
-          departure_time: departureTime,
-          status,
-          notes: notesColumn ? String(record[notesColumn] ?? "").trim() || null : null,
-        });
+      const studentByName = new Map<string, StudentRow[]>();
+      students.forEach((student) => {
+        const key = normalizeText(student.full_name);
+        if (!key) return;
+        studentByName.set(key, [...(studentByName.get(key) || []), student]);
+      });
+      const subjectByName = new Map<string, SubjectRow[]>();
+      subjects.forEach((subject) => {
+        const key = normalizeText(subject.name);
+        if (!key) return;
+        subjectByName.set(key, [...(subjectByName.get(key) || []), subject]);
       });
 
-      if (validRows.length === 0) {
-        throw new Error(errors.length ? errors.slice(0, 8).join("\n") : "Tidak ada baris yang dapat diimpor.");
+      const errors: string[] = [];
+      const payloadByKey = new Map<string, Record<string, unknown>>();
+      const dataStartIndex = headerIndex + 2;
+      let lastAttendanceDate = "";
+
+      for (let index = dataStartIndex; index < matrix.length; index++) {
+        const row = matrix[index] || [];
+        if (row.every((cell) => String(cell ?? "").trim() === "")) continue;
+        const rowNumber = index + 1;
+        const cell = (column: number) => column >= 0 ? row[column] : "";
+
+        const parsedAttendanceDate = excelDateToYMD(cell(columns.date));
+        if (parsedAttendanceDate) lastAttendanceDate = parsedAttendanceDate;
+        const attendanceDate = parsedAttendanceDate || lastAttendanceDate;
+        const classInput = String(cell(columns.className) ?? "").trim();
+        const studentName = String(cell(columns.student) ?? "").trim();
+        const startTime = normalizeImportTime(cell(columns.start));
+        const endTime = normalizeImportTime(cell(columns.end));
+        const subjectName = String(cell(columns.subject) ?? "").trim();
+        const material = String(cell(columns.material) ?? "").trim();
+
+        if (!attendanceDate && !studentName && !subjectName) continue;
+        if (!attendanceDate || !studentName || !classInput || !startTime || !endTime || !subjectName || !material) {
+          errors.push(`Baris ${rowNumber}: tanggal, kelas, nama siswa, jadwal, mapel, atau materi belum lengkap.`);
+          continue;
+        }
+
+        const matchedStudents = studentByName.get(normalizeText(studentName)) || [];
+        const matchedStudent = matchedStudents.find((student) => matchesClassInput(student, classInput));
+        if (!matchedStudent) {
+          errors.push(`Baris ${rowNumber}: siswa "${studentName}" kelas "${classInput}" tidak ditemukan pada daftar siswa yang terhubung ke akun guru ini.`);
+          continue;
+        }
+
+        const matchedSubjects = subjectByName.get(normalizeText(subjectName)) || [];
+        const matchedSubject = matchedSubjects.find((subject) =>
+          studentTeachers.some((relation) => relation.student_id === matchedStudent.id && relation.subject_id === subject.id && relation.teacher_id === teacher.id)
+        );
+        if (!matchedSubject) {
+          errors.push(`Baris ${rowNumber}: mapel "${subjectName}" tidak ditemukan/ tidak terhubung dengan siswa ${studentName}.`);
+          continue;
+        }
+
+        const presentRaw = cell(columns.present);
+        const absentRaw = cell(columns.absent);
+        const score = parseImportScore(presentRaw);
+        const absentText = String(absentRaw ?? "").trim();
+        const presentMarked = score !== null ? score > 0 : isMarked(presentRaw);
+        const attendanceStatus = presentMarked ? "Hadir" : absentText ? "Alpa" : "Tidak Ada Jadwal";
+        const durationMinutes = calculateDurationMinutes(startTime, endTime);
+        const online = isMarked(cell(columns.online));
+        const offline = isMarked(cell(columns.offline));
+        const problem = String(cell(columns.problem) ?? "").trim() || null;
+        const consequence = String(cell(columns.consequence) ?? "").trim() || null;
+        const solution = String(cell(columns.solution) ?? "").trim() || null;
+        const dayName = getDayNameFromDate(attendanceDate);
+
+        const key = [attendanceDate, matchedStudent.id, matchedSubject.id, startTime, endTime, material].join("__");
+        payloadByKey.set(key, {
+          teacher_id: teacher.id,
+          student_id: matchedStudent.id,
+          subject_id: matchedSubject.id,
+          attendance_date: attendanceDate,
+          day_name: dayName,
+          start_time: startTime,
+          end_time: endTime,
+          duration_minutes: durationMinutes,
+          session_name: durationMinutes ? formatSessionValue(durationMinutes, startTime, endTime) : null,
+          attendance_status: attendanceStatus,
+          understanding_status: presentMarked ? "Paham" : "-",
+          material_topic: material,
+          attendance_score: score,
+          is_online: online,
+          is_offline: offline,
+          problem,
+          consequence,
+          solution,
+          note: [problem, consequence, solution].filter(Boolean).join(" | ") || null,
+          notes: [problem, consequence, solution].filter(Boolean).join(" | ") || null,
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      const importRows = Array.from(payloadByKey.values());
+      if (!importRows.length) {
+        throw new Error(errors.length ? errors.slice(0, 10).join("\n") : "Tidak ada baris valid untuk diimpor.");
       }
 
       let inserted = 0;
       let updated = 0;
-      for (const row of validRows) {
-        const { data: existing, error: findError } = await supabase
-          .from("teacher_attendance")
-          .select("id")
+      for (const payload of importRows) {
+        let query = supabase.from("attendance").select("id")
           .eq("teacher_id", teacher.id)
-          .eq("attendance_date", row.attendance_date)
-          .maybeSingle();
-        if (findError) throw new Error(`Gagal memeriksa tanggal ${row.attendance_date}: ${findError.message}`);
-
-        const payload = {
-          teacher_id: teacher.id,
-          attendance_date: row.attendance_date,
-          arrival_time: row.arrival_time,
-          departure_time: row.departure_time,
-          status: row.status,
-          notes: row.notes,
-          updated_at: new Date().toISOString(),
-        };
+          .eq("student_id", String(payload.student_id))
+          .eq("subject_id", String(payload.subject_id))
+          .eq("attendance_date", String(payload.attendance_date))
+          .eq("start_time", String(payload.start_time))
+          .eq("end_time", String(payload.end_time));
+        const { data: existing, error: findError } = await query.maybeSingle();
+        if (findError) throw new Error(`Gagal memeriksa data tanggal ${payload.attendance_date}: ${findError.message}`);
 
         if (existing?.id) {
-          const { error } = await supabase.from("teacher_attendance").update(payload).eq("id", existing.id);
-          if (error) throw new Error(`Gagal memperbarui ${row.attendance_date}: ${error.message}`);
+          const { error } = await supabase.from("attendance").update(payload).eq("id", existing.id);
+          if (error) throw new Error(`Gagal memperbarui data KBM: ${error.message}`);
           updated++;
         } else {
-          const { error } = await supabase.from("teacher_attendance").insert({ ...payload, created_at: new Date().toISOString() });
-          if (error) throw new Error(`Gagal menyimpan ${row.attendance_date}: ${error.message}`);
+          const { error } = await supabase.from("attendance").insert({ ...payload, created_at: new Date().toISOString() });
+          if (error) throw new Error(`Gagal menyimpan data KBM: ${error.message}`);
           inserted++;
         }
       }
 
-      setSuccessMessage(`Import selesai: ${inserted} data baru dan ${updated} data diperbarui untuk Kode Guru ${teacher.teacher_code}.`);
-      if (errors.length) alert(`Sebagian baris dilewati:\n${errors.slice(0, 10).join("\n")}${errors.length > 10 ? `\n...dan ${errors.length - 10} baris lainnya.` : ""}`);
+      await fetchData();
+      setSuccessMessage(`Import KBM selesai: ${inserted} data baru dan ${updated} data diperbarui. Data yang diproses milik akun ${teacher.full_name || "guru"}.`);
+      if (errors.length) alert(`Sebagian baris dilewati:\n${errors.slice(0, 12).join("\n")}${errors.length > 12 ? `\n...dan ${errors.length - 12} baris lainnya.` : ""}`);
     } catch (error) {
-      alert(`Import gagal: ${error instanceof Error ? error.message : "Terjadi kesalahan saat membaca file."}`);
+      alert(`Import KBM gagal: ${error instanceof Error ? error.message : "Terjadi kesalahan saat membaca file."}`);
     } finally {
       setImporting(false);
     }
@@ -1579,13 +1682,18 @@ export default function TeacherAbsensiPage() {
 
   function downloadTeacherAttendanceTemplate() {
     const rows = [
-      ["Kode Guru", "Tanggal", "Jam Datang", "Jam Pulang", "Status", "Keterangan"],
-      [teacher?.teacher_code || "ISI_KODE_GURU", todayYMD(), "07:30", "15:00", "Hadir", ""],
+      ["Hari/Tanggal", "Kelas", "Nama Siswa", "Jadwal Masuk", "Jadwal Selesai", "MAPEL", "Materi yang diajarkan", "Hadir", "Tidak hadir", "Online", "Offline", "Permasalahan", "Akibat", "Solusi"],
+      ["Senin, 13/11/2026", "4", "Nama Siswa", "07:30", "09:00", "IPAS", "Materi pembelajaran", "1", "", "", "V", "", "", ""],
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 22 }, { wch: 12 }, { wch: 24 }, { wch: 15 }, { wch: 15 },
+      { wch: 18 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 10 },
+      { wch: 10 }, { wch: 28 }, { wch: 24 }, { wch: 24 },
+    ];
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Guru");
-    XLSX.writeFile(workbook, "Template_Import_Absensi_Guru.xlsx");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan KBM Siswa");
+    XLSX.writeFile(workbook, "Template_Import_Laporan_KBM.xlsx");
   }
 
   function exportAttendanceToExcel() {
@@ -1597,13 +1705,18 @@ export default function TeacherAbsensiPage() {
     const studentMap = new Map(
       students.map((student) => [student.id, student])
     );
+    const subjectMap = new Map(
+      subjects.map((subject) => [subject.id, subject])
+    );
 
+    // Mata pelajaran dan kelas dibuat terpisah agar mudah difilter di Excel.
     const headers = [
       "No",
       "Nama Guru",
       "Hari",
       "Tanggal",
-      "Mata Pelajaran / Kelas",
+      "Mata Pelajaran",
+      "Kelas",
       "Jam Datang Guru",
       "Jam Pulang Guru",
       "Jam Mulai KBM",
@@ -1611,7 +1724,6 @@ export default function TeacherAbsensiPage() {
       "Sesi",
       "Materi",
       "Nama Siswa",
-      "Kelas Siswa",
       "Status Kehadiran",
       "Pemahaman",
       "Catatan",
@@ -1631,12 +1743,17 @@ export default function TeacherAbsensiPage() {
           ? studentMap.get(row.student_id)
           : null;
 
+        const subject = group.subjectId
+          ? subjectMap.get(group.subjectId)
+          : null;
+
         rows.push([
           String(number++),
           teacher?.full_name || "Guru",
           group.dayName,
           group.attendanceDate,
-          group.subjectName,
+          subject?.name || group.subjectName || "-",
+          student ? formatClass(student.level, student.grade) : "-",
           group.teacherArrivalTime || "-",
           group.teacherDepartureTime || "-",
           group.startTime || "-",
@@ -1644,7 +1761,6 @@ export default function TeacherAbsensiPage() {
           group.sessionName || "-",
           group.materialTopic || "-",
           student?.full_name || "Nama siswa tidak ditemukan",
-          student ? formatClass(student.level, student.grade) : "-",
           normalizeAttendanceStatus(row.attendance_status),
           row.understanding_status || "-",
           row.note || row.notes || "-",
@@ -2498,9 +2614,9 @@ export default function TeacherAbsensiPage() {
                 Menampilkan absensi yang sudah
                 disimpan oleh guru yang sedang login.
               </p>
-              {teacher?.teacher_code ? (
+              {teacher?.id ? (
                 <p className="mt-1 text-[12px] font-bold text-[#8C0F2D]">
-                  Kode Guru: {teacher.teacher_code} · Import hanya menerima data dengan kode ini.
+                  Import KBM akan otomatis dikaitkan dengan akun guru yang sedang login.
                 </p>
               ) : null}
             </div>
@@ -2513,21 +2629,21 @@ export default function TeacherAbsensiPage() {
               <button
                 type="button"
                 onClick={downloadTeacherAttendanceTemplate}
-                disabled={!teacher?.teacher_code}
+                disabled={!teacher?.id}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[13px] font-extrabold text-[#6F5549] transition hover:bg-[#FFF8EF] disabled:opacity-50"
               >
                 <FileSpreadsheet className="h-4 w-4" />
                 Template Import
               </button>
 
-              <label className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-4 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] ${importing || !teacher?.teacher_code ? "pointer-events-none opacity-50" : ""}`}>
+              <label className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-4 text-[13px] font-extrabold text-white transition hover:bg-[#54131D] ${importing || !teacher?.id ? "pointer-events-none opacity-50" : ""}`}>
                 <FileSpreadsheet className="h-4 w-4" />
                 {importing ? "Mengimpor..." : "Import Excel"}
                 <input
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   className="hidden"
-                  disabled={importing || !teacher?.teacher_code}
+                  disabled={importing || !teacher?.id}
                   onChange={(event) => void handleImportTeacherAttendance(event)}
                 />
               </label>
