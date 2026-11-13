@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CalendarCheck,
   Download,
+  Printer,
   Eye,
   Search,
   UserCheck,
@@ -70,6 +71,17 @@ type AttendanceRow = {
 
   note?: string | null;
   notes?: string | null;
+};
+
+type TeacherAttendanceRow = {
+  id: string;
+  teacher_id: string;
+  attendance_date: string;
+  arrival_time: string | null;
+  departure_time: string | null;
+  status: string;
+  notes: string | null;
+  created_at?: string;
 };
 
 type EnrichedAttendance = AttendanceRow & {
@@ -769,6 +781,12 @@ export default function KepalaSekolahAbsensiPage() {
   const [students, setStudents] =
     useState<StudentRow[]>([]);
 
+  const [teacherAttendance, setTeacherAttendance] =
+    useState<TeacherAttendanceRow[]>([]);
+
+  const [printTeacherId, setPrintTeacherId] =
+    useState("");
+
   const [attendance, setAttendance] =
     useState<
       EnrichedAttendance[]
@@ -854,6 +872,7 @@ export default function KepalaSekolahAbsensiPage() {
         studentsRes,
         subjectsRes,
         attendanceRes,
+        teacherAttendanceRes,
       ] =
         await Promise.all([
           supabase
@@ -888,6 +907,10 @@ export default function KepalaSekolahAbsensiPage() {
                   true,
               }
             ),
+          supabase
+            .from("teacher_attendance")
+            .select("*")
+            .order("attendance_date", { ascending: false }),
         ]);
 
       if (
@@ -922,6 +945,12 @@ export default function KepalaSekolahAbsensiPage() {
         );
       }
 
+      if (teacherAttendanceRes.error) {
+        throw new Error(
+          `Gagal mengambil absensi guru: ${teacherAttendanceRes.error.message}`
+        );
+      }
+
       const teachersData =
         (
           teachersRes.data ||
@@ -945,6 +974,11 @@ export default function KepalaSekolahAbsensiPage() {
           attendanceRes.data ||
           []
         ) as AttendanceRow[];
+
+      const teacherAttendanceData =
+        (teacherAttendanceRes.data || []) as TeacherAttendanceRow[];
+
+      setTeacherAttendance(teacherAttendanceData);
 
       setTeachers(
         teachersData
@@ -1062,6 +1096,7 @@ export default function KepalaSekolahAbsensiPage() {
       setTeachers([]);
       setStudents([]);
       setAttendance([]);
+      setTeacherAttendance([]);
     } finally {
       setLoading(false);
     }
@@ -1118,6 +1153,17 @@ export default function KepalaSekolahAbsensiPage() {
             event: "*",
             schema: "public",
             table: "subjects",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "teacher_attendance",
           },
           () => {
             void fetchData();
@@ -1824,6 +1870,176 @@ export default function KepalaSekolahAbsensiPage() {
   }
 
   /* =========================================================
+     EXPORT & PRINT ABSENSI GURU
+  ========================================================= */
+
+  function getTeacherAttendanceForPeriod() {
+    const monthNumber = Number(exportMonth);
+    const yearNumber = Number(exportYear);
+
+    if (!monthNumber || !yearNumber) {
+      alert("Pilih bulan dan tahun terlebih dahulu.");
+      return null;
+    }
+
+    const { start, end } = getCutoffRange(monthNumber, yearNumber);
+    const rows = teacherAttendance.filter((item) =>
+      isDateInRange(item.attendance_date, start, end)
+    );
+
+    return { start, end, rows, monthNumber, yearNumber };
+  }
+
+  function handleExportTeacherExcel() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    const { start, end, rows, monthNumber, yearNumber } = period;
+    const teacherMap = new Map(teachers.map((teacher) => [teacher.id, teacher]));
+    const sortedRows = [...rows].sort((a, b) => {
+      const nameA = teacherMap.get(a.teacher_id)?.full_name || "";
+      const nameB = teacherMap.get(b.teacher_id)?.full_name || "";
+      return nameA.localeCompare(nameB) ||
+        a.attendance_date.localeCompare(b.attendance_date);
+    });
+
+    const data = sortedRows.map((item, index) => ({
+      No: index + 1,
+      "Nama Guru": teacherMap.get(item.teacher_id)?.full_name || "Guru tidak ditemukan",
+      "Kode Guru": teacherMap.get(item.teacher_id)?.teacher_code || "-",
+      Tanggal: item.attendance_date,
+      "Jam Datang": item.arrival_time || "-",
+      "Jam Pulang": item.departure_time || "-",
+      Status: item.status || "-",
+      Keterangan: item.notes || "-",
+    }));
+
+    const summaryRows = teachers.map((teacher) => {
+      const teacherRows = rows.filter((item) => item.teacher_id === teacher.id);
+      const count = (status: string) =>
+        teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+
+      return {
+        "Nama Guru": teacher.full_name || "-",
+        "Total Hadir": count("Hadir"),
+        "Total Izin": count("Izin"),
+        "Total Sakit": count("Sakit"),
+        "Total Alpa": count("Alpa"),
+        "Total Tercatat": teacherRows.length,
+      };
+    });
+
+    const detailSheet = XLSX.utils.json_to_sheet(data);
+    detailSheet["!cols"] = [
+      { wch: 6 }, { wch: 28 }, { wch: 15 }, { wch: 14 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 35 },
+    ];
+
+    const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+    summarySheet["!cols"] = [
+      { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+      { wch: 14 }, { wch: 18 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, detailSheet, "Detail Absensi");
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Rekap Per Guru");
+
+    XLSX.writeFile(
+      workbook,
+      `Rekap_Absensi_Guru_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`
+    );
+  }
+
+  function handlePrintTeacherAttendance() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    if (!printTeacherId) {
+      alert("Pilih guru yang ingin dicetak.");
+      return;
+    }
+
+    const { start, end, rows, monthNumber, yearNumber } = period;
+    const teacher = teachers.find((item) => item.id === printTeacherId);
+    if (!teacher) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
+
+    const dates = getDatesBetween(start, end);
+    const teacherRows = rows
+      .filter((item) => item.teacher_id === printTeacherId)
+      .sort((a, b) => a.attendance_date.localeCompare(b.attendance_date));
+
+    const rowByDate = new Map(teacherRows.map((item) => [item.attendance_date, item]));
+    const count = (status: string) =>
+      teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+
+    const tableRows = dates.map((date, index) => {
+      const item = rowByDate.get(date);
+      const displayDate = new Date(`${date}T00:00:00`).toLocaleDateString("id-ID", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric",
+      });
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${displayDate}</td>
+        <td>${item?.arrival_time || "-"}</td>
+        <td>${item?.departure_time || "-"}</td>
+        <td>${item?.status || "-"}</td>
+        <td>${item?.notes || "-"}</td>
+      </tr>`;
+    }).join("");
+
+    const safeName = (teacher.full_name || "Guru").replace(/[<>&"]/g, "");
+    const printWindow = window.open("", "_blank", "width=1100,height=800");
+    if (!printWindow) {
+      alert("Pop-up diblokir browser. Izinkan pop-up untuk mencetak.");
+      return;
+    }
+
+    printWindow.document.write(`<!DOCTYPE html>
+      <html lang="id"><head><meta charset="UTF-8" />
+      <title>Absensi Guru - ${safeName}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; color: #222; padding: 24px; }
+        h1 { text-align: center; font-size: 20px; margin: 0 0 6px; }
+        .subtitle { text-align: center; margin: 0 0 22px; font-size: 12px; }
+        .identity { margin-bottom: 14px; font-size: 13px; line-height: 1.8; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th, td { border: 1px solid #555; padding: 7px; text-align: left; }
+        th { background: #f1f1f1; }
+        .summary { margin: 14px 0; display: flex; gap: 18px; font-size: 12px; }
+        .sign { display: flex; justify-content: space-between; margin-top: 48px; text-align: center; font-size: 12px; }
+        .sign div { width: 220px; }
+        @page { size: A4 landscape; margin: 12mm; }
+        @media print { body { padding: 0; } }
+      </style></head><body>
+      <h1>REKAP ABSENSI GURU</h1>
+      <p class="subtitle">Periode ${start} s/d ${end} | ${monthOptions[monthNumber]} ${yearNumber}</p>
+      <div class="identity">
+        <strong>Nama Guru:</strong> ${safeName}<br/>
+        <strong>Kode Guru:</strong> ${teacher.teacher_code || "-"}
+      </div>
+      <div class="summary">
+        <span>Hadir: <strong>${count("Hadir")}</strong></span>
+        <span>Izin: <strong>${count("Izin")}</strong></span>
+        <span>Sakit: <strong>${count("Sakit")}</strong></span>
+        <span>Alpa: <strong>${count("Alpa")}</strong></span>
+      </div>
+      <table><thead><tr><th>No</th><th>Tanggal</th><th>Jam Datang</th><th>Jam Pulang</th><th>Status</th><th>Keterangan</th></tr></thead>
+      <tbody>${tableRows}</tbody></table>
+      <div class="sign">
+        <div>Mengetahui,<br/>Kepala Sekolah<br/><br/><br/><br/>(____________________)</div>
+        <div>Guru yang bersangkutan<br/><br/><br/><br/><br/>(____________________)</div>
+      </div>
+      <script>window.onload = () => { window.print(); };</script>
+      </body></html>`);
+    printWindow.document.close();
+  }
+
+  /* =========================================================
      UI
   ========================================================= */
 
@@ -1906,6 +2122,52 @@ export default function KepalaSekolahAbsensiPage() {
 
               Export Excel
             </button>
+          </div>
+        </div>
+
+        {/* EXPORT DAN CETAK ABSENSI GURU */}
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+              Absensi Kehadiran Guru
+            </h2>
+            <p className="mt-1 text-[13px] text-[#6F5549]">
+              Rekap diambil dari tabel teacher_attendance, terpisah dari absensi siswa.
+              Periode mengikuti tanggal 21 bulan sebelumnya sampai tanggal 20 bulan pilihan.
+            </p>
+          </div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <select
+              value={printTeacherId}
+              onChange={(event) => setPrintTeacherId(event.target.value)}
+              className="h-11 min-w-[240px] rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option value="">Pilih guru untuk dicetak</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.full_name || "Tanpa nama"}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleExportTeacherExcel}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#720B24]"
+            >
+              <Download className="h-4 w-4" />
+              Export Absensi Guru
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintTeacherAttendance}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+            >
+              <Printer className="h-4 w-4" />
+              Cetak Absensi Per Guru
+            </button>
+            <span className="text-[12px] text-[#8A5A48]">
+              {teacherAttendance.length} data absensi guru tersimpan
+            </span>
           </div>
         </div>
 

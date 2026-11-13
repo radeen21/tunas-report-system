@@ -1313,6 +1313,58 @@ export default function TeacherAbsensiPage() {
         throw new Error(insertAttendanceError.message);
       }
 
+      // Simpan satu rekap kehadiran guru per tanggal.
+      // Data jam datang/pulang tetap diambil dari form absensi KBM yang sudah digunakan guru.
+      const { data: existingTeacherAttendance, error: findTeacherAttendanceError } =
+        await supabase
+          .from("teacher_attendance")
+          .select("id")
+          .eq("teacher_id", teacher.id)
+          .eq("attendance_date", dateFilter)
+          .maybeSingle();
+
+      if (findTeacherAttendanceError) {
+        throw new Error(
+          `Absensi KBM siswa tersimpan, tetapi gagal memeriksa absensi guru: ${findTeacherAttendanceError.message}`
+        );
+      }
+
+      const teacherAttendancePayload = {
+        teacher_id: teacher.id,
+        attendance_date: dateFilter,
+        arrival_time: teacherArrivalTime,
+        departure_time: teacherDepartureTime,
+        status: "Hadir",
+        notes: attendanceNote.trim() || null,
+        updated_at: now,
+      };
+
+      if (existingTeacherAttendance?.id) {
+        const { error: updateTeacherAttendanceError } = await supabase
+          .from("teacher_attendance")
+          .update(teacherAttendancePayload)
+          .eq("id", existingTeacherAttendance.id);
+
+        if (updateTeacherAttendanceError) {
+          throw new Error(
+            `Absensi KBM siswa tersimpan, tetapi gagal memperbarui absensi guru: ${updateTeacherAttendanceError.message}`
+          );
+        }
+      } else {
+        const { error: insertTeacherAttendanceError } = await supabase
+          .from("teacher_attendance")
+          .insert({
+            ...teacherAttendancePayload,
+            created_at: now,
+          });
+
+        if (insertTeacherAttendanceError) {
+          throw new Error(
+            `Absensi KBM siswa tersimpan, tetapi gagal menyimpan absensi guru: ${insertTeacherAttendanceError.message}`
+          );
+        }
+      }
+
       await fetchData();
 
       const wasEditing = Boolean(editingHistory);

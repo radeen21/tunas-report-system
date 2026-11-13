@@ -1,33 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import * as XLSX from "xlsx";
 import {
   AlertCircle,
-  CalendarDays,
-  Clock,
-  FileText,
-  Plus,
+  CalendarCheck,
+  Download,
   Printer,
+  Eye,
   Search,
-  Trash2,
-  UploadCloud,
-  UserRound,
+  UserCheck,
+  UserX,
   UsersRound,
   X,
 } from "lucide-react";
+
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
 
-const SCHEDULE_DOCUMENT_BUCKET = "schedule-documents";
-const ACADEMIC_YEAR = "2026/2027";
-const ALL = "Semua";
+/* =========================================================
+   TYPES
+========================================================= */
 
 type TeacherRow = {
   id: string;
   full_name: string | null;
   email: string | null;
   teacher_code?: string | null;
-  subjects?: string[] | string | null;
 };
 
 type StudentRow = {
@@ -46,126 +45,123 @@ type SubjectRow = {
   grade?: string | null;
 };
 
-type StudentTeacherRow = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  academic_year: string | null;
-};
-
-type ScheduleRow = {
-  id: string;
-  student_id: string | null;
-  teacher_id: string | null;
-  subject_id: string | null;
-  day_name: string | null;
-  schedule_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  duration_minutes?: number | null;
-  session_name: string | null;
-  material_topic: string | null;
-  semester: string | null;
-  notes?: string | null;
-  temporary_schedule_url?: string | null;
-  academic_year?: string | null;
-};
-
 type AttendanceRow = {
   id: string;
+
   student_id: string | null;
   teacher_id: string | null;
   subject_id: string | null;
+
   attendance_date: string | null;
-  day_name?: string | null;
+  day_name: string | null;
+
   teacher_arrival_time?: string | null;
   teacher_departure_time?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
+
+  start_time: string | null;
+  end_time: string | null;
+
   duration_minutes?: number | null;
   session_name?: string | null;
-  attendance_status?: string | null;
-  material_topic?: string | null;
+
+  attendance_status: string | null;
+  understanding_status: string | null;
+
+  material_topic: string | null;
+
   note?: string | null;
   notes?: string | null;
 };
 
-type EnrichedSchedule = ScheduleRow & {
-  data_source: "schedule" | "attendance";
-  source_attendance_id?: string | null;
+type TeacherAttendanceRow = {
+  id: string;
+  teacher_id: string;
+  attendance_date: string;
+  arrival_time: string | null;
+  departure_time: string | null;
+  status: string;
+  notes: string | null;
+  created_at?: string;
+};
+
+type EnrichedAttendance = AttendanceRow & {
   student_name: string;
   student_grade: string;
   student_level: string;
-  student_nipd: string;
+  student_nis: string;
   student_nisn: string;
+
   teacher_name: string;
   subject_name: string;
-  teacher_arrival_time: string | null;
-  teacher_departure_time: string | null;
-  attendance_status: string | null;
-  attendance_note: string | null;
-  attendance_material: string | null;
 };
 
-type ScheduleGroup = {
+type RombelGroup = {
   key: string;
-  schedule_date: string | null;
+
+  attendance_date: string | null;
   day_name: string | null;
+
   teacher_arrival_time: string | null;
   teacher_departure_time: string | null;
+
   start_time: string | null;
   end_time: string | null;
+
   duration_minutes: number | null;
+  session_name: string | null;
+
   teacher_id: string | null;
   teacher_name: string;
+
   subject_id: string | null;
   subject_name: string;
-  session_name: string | null;
+
   material_topic: string | null;
-  semester: string | null;
-  notes: string | null;
-  temporary_schedule_url: string | null;
-  academic_year: string | null;
-  students: EnrichedSchedule[];
-  total_students: number;
+
+  students: EnrichedAttendance[];
+
+  total: number;
+  hadir: number;
+  izin: number;
+  alpa: number;
+  sakit: number;
+
+  paham: number;
+  cukupPaham: number;
+  belumPaham: number;
 };
 
-type ScheduleForm = {
-  teacher_id: string;
-  subject_id: string;
-  schedule_date: string;
-  day_name: string;
-  start_time: string;
-  end_time: string;
-  semester: string;
-  notes: string;
-  temporary_schedule_url: string;
-};
+/* =========================================================
+   OPTIONS
+========================================================= */
 
-const dayOptions = [
-  "Senin",
-  "Selasa",
-  "Rabu",
-  "Kamis",
-  "Jumat",
-  "Sabtu",
-  "Minggu",
+const statusOptions = [
+  "Semua Status",
+  "Hadir",
+  "Izin",
+  "Alpa",
+  "Sakit",
 ];
 
-const semesterOptions = ["Ganjil", "Genap"];
+const monthOptions = [
+  "Semua Bulan",
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
 
-const initialForm: ScheduleForm = {
-  teacher_id: "",
-  subject_id: "",
-  schedule_date: "",
-  day_name: "Senin",
-  start_time: "",
-  end_time: "",
-  semester: "Ganjil",
-  notes: "",
-  temporary_schedule_url: "",
-};
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function normalizeText(value?: string | null) {
   return (value || "").trim().toLowerCase();
@@ -174,68 +170,37 @@ function normalizeText(value?: string | null) {
 function normalizeLevel(level?: string | null) {
   const safe = normalizeText(level);
 
-  if (safe.includes("primary") || safe === "sd") return "SD";
-  if (safe.includes("secondary") || safe === "smp") return "SMP";
-  if (safe.includes("high") || safe === "sma") return "SMA";
-  if (safe.includes("early")) return "Bimbel/Kursus";
+  if (safe.includes("primary") || safe === "sd") {
+    return "SD";
+  }
+
+  if (safe.includes("secondary") || safe === "smp") {
+    return "SMP";
+  }
+
+  if (safe.includes("high") || safe === "sma") {
+    return "SMA";
+  }
+
+  if (safe.includes("early")) {
+    return "Bimbel/Kursus";
+  }
 
   return level || "-";
 }
 
-function getGradeNumber(value?: string | null) {
-  const match = (value || "").match(/\d+/);
-
-  return match ? Number(match[0]) : null;
-}
-
-function isAllGrade(value?: string | null) {
-  const safe = normalizeText(value);
-
-  return (
-    !safe ||
-    safe === "all" ||
-    safe === "all grade" ||
-    safe === "semua" ||
-    safe === "semua kelas"
-  );
-}
-
-function isMathSubject(subject?: SubjectRow | null) {
-  const name = normalizeText(subject?.name);
-
-  return name.includes("math") || name.includes("matematika");
-}
-
-function getSubjectLabel(subject: SubjectRow) {
-  const level = normalizeLevel(subject.level);
-  const grade = subject.grade || "All Grade";
-
-  return `${subject.name || "-"} — ${level} ${grade}`;
-}
-
-function formatClass(level?: string | null, grade?: string | null) {
-  const gradeNumber = getGradeNumber(grade);
-
-  if (gradeNumber && gradeNumber >= 1 && gradeNumber <= 6) {
-    return `SD ${gradeNumber}`;
-  }
-
-  if (gradeNumber && gradeNumber >= 7 && gradeNumber <= 9) {
-    return `SMP ${gradeNumber}`;
-  }
-
-  if (gradeNumber && gradeNumber >= 10 && gradeNumber <= 12) {
-    return `SMA ${gradeNumber}`;
-  }
-
+function formatClass(
+  level?: string | null,
+  grade?: string | null
+) {
   const cleanLevel = normalizeLevel(level);
   const cleanGrade = grade || "";
 
-  if (cleanLevel !== "-" && cleanGrade) {
+  if (cleanLevel && cleanGrade) {
     return `${cleanLevel} ${cleanGrade}`;
   }
 
-  if (cleanLevel !== "-") return cleanLevel;
+  if (cleanLevel) return cleanLevel;
   if (cleanGrade) return cleanGrade;
 
   return "-";
@@ -246,12 +211,29 @@ function formatDate(value?: string | null) {
 
   const date = new Date(`${value}T00:00:00`);
 
-  if (Number.isNaN(date.getTime())) return "-";
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
 
   return new Intl.DateTimeFormat("id-ID", {
     day: "2-digit",
     month: "short",
     year: "numeric",
+  }).format(date);
+}
+
+function formatExcelDate(value?: string | null) {
+  if (!value) return "-";
+
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
   }).format(date);
 }
 
@@ -261,19 +243,103 @@ function formatTime(value?: string | null) {
   return value.slice(0, 5);
 }
 
-function getDayName(dateString: string) {
-  if (!dateString) return "Senin";
+function calculateDurationMinutes(
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  if (!startTime || !endTime) {
+    return null;
+  }
 
-  const date = new Date(`${dateString}T00:00:00`);
+  const [startHour, startMinute] = startTime
+    .split(":")
+    .map(Number);
 
-  if (Number.isNaN(date.getTime())) return "Senin";
+  const [endHour, endMinute] = endTime
+    .split(":")
+    .map(Number);
 
-  return new Intl.DateTimeFormat("id-ID", {
-    weekday: "long",
-  }).format(date);
+  if (
+    Number.isNaN(startHour) ||
+    Number.isNaN(startMinute) ||
+    Number.isNaN(endHour) ||
+    Number.isNaN(endMinute)
+  ) {
+    return null;
+  }
+
+  const startTotal =
+    startHour * 60 + startMinute;
+
+  const endTotal =
+    endHour * 60 + endMinute;
+
+  const duration =
+    endTotal - startTotal;
+
+  return duration > 0
+    ? duration
+    : null;
 }
 
-function getInitials(name?: string | null) {
+function formatSessionValue(
+  sessionName?: string | null,
+  durationMinutes?: number | null,
+  startTime?: string | null,
+  endTime?: string | null
+) {
+  const duration =
+    durationMinutes ||
+    calculateDurationMinutes(
+      startTime,
+      endTime
+    );
+
+  let sessionValue:
+    | number
+    | null = null;
+
+  if (duration) {
+    if (duration === 60) {
+      sessionValue = 0.75;
+    } else if (duration === 90) {
+      sessionValue = 1;
+    } else {
+      sessionValue =
+        duration / 90;
+    }
+  } else {
+    const savedSession = (
+      sessionName || ""
+    )
+      .trim()
+      .replace(",", ".");
+
+    const parsedSession =
+      Number(savedSession);
+
+    if (!Number.isNaN(parsedSession)) {
+      sessionValue =
+        parsedSession;
+    }
+  }
+
+  if (sessionValue === null) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat(
+    "id-ID",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }
+  ).format(sessionValue);
+}
+
+function getInitials(
+  name?: string | null
+) {
   if (!name) return "-";
 
   return name
@@ -285,238 +351,516 @@ function getInitials(name?: string | null) {
     .toUpperCase();
 }
 
-function calculateDurationMinutes(
-  startTime?: string | null,
-  endTime?: string | null
+function getMonthName(
+  dateString?: string | null
 ) {
-  if (!startTime || !endTime) return null;
+  if (!dateString) return "";
 
-  const [startHour, startMinute] = startTime.split(":").map(Number);
-  const [endHour, endMinute] = endTime.split(":").map(Number);
+  const date = new Date(
+    `${dateString}T00:00:00`
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(
+    "id-ID",
+    {
+      month: "long",
+    }
+  ).format(date);
+}
+
+function getAttendanceNote(
+  item: AttendanceRow
+) {
+  return (
+    item.note ||
+    item.notes ||
+    "-"
+  );
+}
+
+function normalizeAttendanceStatus(
+  status?: string | null
+) {
+  const safeStatus =
+    normalizeText(status);
 
   if (
-    Number.isNaN(startHour) ||
-    Number.isNaN(startMinute) ||
-    Number.isNaN(endHour) ||
-    Number.isNaN(endMinute)
+    safeStatus === "hadir" ||
+    safeStatus === "present"
   ) {
-    return null;
+    return "Hadir";
   }
 
-  const startTotal = startHour * 60 + startMinute;
-  const endTotal = endHour * 60 + endMinute;
-  const duration = endTotal - startTotal;
-
-  return duration > 0 ? duration : null;
-}
-
-function formatSessionValue(
-  minutes?: number | null,
-  startTime?: string | null,
-  endTime?: string | null
-) {
-  const duration =
-    minutes || calculateDurationMinutes(startTime, endTime);
-
-  if (!duration) return "-";
-
-  let sessionValue: number;
-
-  if (duration === 60) {
-    sessionValue = 0.75;
-  } else if (duration === 90) {
-    sessionValue = 1;
-  } else {
-    sessionValue = duration / 90;
+  if (safeStatus === "izin") {
+    return "Izin";
   }
 
-  return new Intl.NumberFormat("id-ID", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(sessionValue);
-}
-
-function cleanFileName(fileName: string) {
-  return fileName
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._-]/g, "");
-}
-
-async function uploadScheduleDocument(file: File) {
-  const safeFileName = cleanFileName(file.name);
-  const filePath = `temporary-schedules/${Date.now()}-${safeFileName}`;
-
-  const { error } = await supabase.storage
-    .from(SCHEDULE_DOCUMENT_BUCKET)
-    .upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: true,
-    });
-
-  if (error) {
-    throw new Error(error.message);
+  if (safeStatus === "sakit") {
+    return "Sakit";
   }
-
-  const { data } = supabase.storage
-    .from(SCHEDULE_DOCUMENT_BUCKET)
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
-
-function normalizeAttendanceStatus(status?: string | null) {
-  const safe = normalizeText(status);
-
-  if (safe === "hadir" || safe === "present") return "Hadir";
-  if (safe === "izin") return "Izin";
-  if (safe === "sakit") return "Izin";
 
   if (
-    safe === "alpa" ||
-    safe === "alpha" ||
-    safe === "tidak hadir" ||
-    safe === "absent"
+    safeStatus === "alpa" ||
+    safeStatus === "alpha" ||
+    safeStatus === "tidak hadir" ||
+    safeStatus === "absent"
   ) {
     return "Alpa";
+  }
+
+  return status || "-";
+}
+
+function getAttendanceCode(
+  status?: string | null
+) {
+  const normalized =
+    normalizeAttendanceStatus(
+      status
+    );
+
+  if (normalized === "Hadir") {
+    return "H";
+  }
+
+  if (normalized === "Izin") {
+    return "I";
+  }
+
+  if (normalized === "Alpa") {
+    return "A";
+  }
+
+  if (normalized === "Sakit") {
+    return "S";
   }
 
   return "";
 }
 
-function getAttendanceKey(item: {
-  student_id?: string | null;
-  teacher_id?: string | null;
-  subject_id?: string | null;
-  attendance_date?: string | null;
-  schedule_date?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-}) {
+function isHadir(
+  status?: string | null
+) {
+  return (
+    normalizeAttendanceStatus(
+      status
+    ) === "Hadir"
+  );
+}
+
+function isIzin(
+  status?: string | null
+) {
+  return (
+    normalizeAttendanceStatus(
+      status
+    ) === "Izin"
+  );
+}
+
+function isAlpa(
+  status?: string | null
+) {
+  return (
+    normalizeAttendanceStatus(
+      status
+    ) === "Alpa"
+  );
+}
+
+function isSakit(
+  status?: string | null
+) {
+  return (
+    normalizeAttendanceStatus(
+      status
+    ) === "Sakit"
+  );
+}
+
+function getRombelKey(
+  item: EnrichedAttendance
+) {
   return [
-    item.student_id || "",
     item.teacher_id || "",
     item.subject_id || "",
-    item.attendance_date || item.schedule_date || "",
-    formatTime(item.start_time),
-    formatTime(item.end_time),
+    item.attendance_date || "",
+    item.start_time || "",
+    item.end_time || "",
+    normalizeText(
+      item.material_topic
+    ),
   ].join("__");
 }
 
-function getScheduleGroupKey(schedule: EnrichedSchedule) {
-  return [
-    schedule.teacher_id || "",
-    schedule.subject_id || "",
-    schedule.schedule_date || "",
-    formatTime(schedule.start_time),
-    formatTime(schedule.end_time),
-  ].join("__");
-}
+function groupAttendanceByRombel(
+  attendance:
+    EnrichedAttendance[]
+) {
+  const map = new Map<
+    string,
+    EnrichedAttendance[]
+  >();
 
-function groupSchedules(schedules: EnrichedSchedule[]) {
-  const map = new Map<string, EnrichedSchedule[]>();
+  attendance.forEach((item) => {
+    const key =
+      getRombelKey(item);
 
-  schedules.forEach((schedule) => {
-    const key = getScheduleGroupKey(schedule);
-    const current = map.get(key) || [];
+    const current =
+      map.get(key) || [];
 
-    current.push(schedule);
-    map.set(key, current);
+    current.push(item);
+
+    map.set(
+      key,
+      current
+    );
   });
 
-  const groups: ScheduleGroup[] = Array.from(map.entries()).map(
-    ([key, rows]) => {
-      const first = rows[0];
+  const groups:
+    RombelGroup[] =
+    Array.from(
+      map.entries()
+    ).map(([key, rows]) => {
+      const first =
+        rows[0];
 
-      const sortedStudents = [...rows].sort((a, b) => {
-        const gradeA = getGradeNumber(a.student_grade) || 999;
-        const gradeB = getGradeNumber(b.student_grade) || 999;
+      const hadir =
+        rows.filter((item) =>
+          isHadir(
+            item.attendance_status
+          )
+        ).length;
 
-        if (gradeA !== gradeB) return gradeA - gradeB;
+      const izin =
+        rows.filter((item) =>
+          isIzin(
+            item.attendance_status
+          )
+        ).length;
 
-        return a.student_name.localeCompare(b.student_name);
-      });
+      const alpa =
+        rows.filter((item) =>
+          isAlpa(
+            item.attendance_status
+          )
+        ).length;
 
-      const durationMinutes =
-        first.duration_minutes ||
-        calculateDurationMinutes(first.start_time, first.end_time);
+      const sakit =
+        rows.filter((item) =>
+          isSakit(
+            item.attendance_status
+          )
+        ).length;
+
+      const paham =
+        rows.filter(
+          (item) =>
+            item.understanding_status ===
+            "Paham"
+        ).length;
+
+      const cukupPaham =
+        rows.filter(
+          (item) =>
+            item.understanding_status ===
+            "Cukup Paham"
+        ).length;
+
+      const belumPaham =
+        rows.filter(
+          (item) =>
+            item.understanding_status ===
+            "Belum Paham"
+        ).length;
 
       return {
         key,
-        schedule_date: first.schedule_date,
-        day_name: first.day_name,
+
+        attendance_date:
+          first.attendance_date,
+
+        day_name:
+          first.day_name,
+
         teacher_arrival_time:
-          rows.find((row) => row.teacher_arrival_time)
-            ?.teacher_arrival_time || null,
+          first.teacher_arrival_time ||
+          null,
+
         teacher_departure_time:
-          rows.find((row) => row.teacher_departure_time)
-            ?.teacher_departure_time || null,
-        start_time: first.start_time,
-        end_time: first.end_time,
-        duration_minutes: durationMinutes,
-        teacher_id: first.teacher_id,
-        teacher_name: first.teacher_name,
-        subject_id: first.subject_id,
-        subject_name: first.subject_name,
-        session_name: formatSessionValue(
-          durationMinutes,
+          first.teacher_departure_time ||
+          null,
+
+        start_time:
           first.start_time,
-          first.end_time
-        ),
+
+        end_time:
+          first.end_time,
+
+        duration_minutes:
+          first.duration_minutes ||
+          calculateDurationMinutes(
+            first.start_time,
+            first.end_time
+          ),
+
+        session_name:
+          formatSessionValue(
+            first.session_name,
+            first.duration_minutes,
+            first.start_time,
+            first.end_time
+          ),
+
+        teacher_id:
+          first.teacher_id,
+
+        teacher_name:
+          first.teacher_name,
+
+        subject_id:
+          first.subject_id,
+
+        subject_name:
+          first.subject_name,
+
         material_topic:
-          rows.find((row) => row.attendance_material)?.attendance_material ||
           first.material_topic,
-        semester: first.semester,
-        notes: first.notes || null,
-        temporary_schedule_url: first.temporary_schedule_url || null,
-        academic_year: first.academic_year || null,
-        students: sortedStudents,
-        total_students: sortedStudents.length,
+
+        students: [...rows].sort(
+          (a, b) =>
+            a.student_name.localeCompare(
+              b.student_name
+            )
+        ),
+
+        total:
+          rows.length,
+
+        hadir,
+        izin,
+        alpa,
+        sakit,
+
+        paham,
+        cukupPaham,
+        belumPaham,
       };
+    });
+
+  return groups.sort(
+    (a, b) => {
+      const dateA =
+        a.attendance_date || "";
+
+      const dateB =
+        b.attendance_date || "";
+
+      if (dateA !== dateB) {
+        return dateB.localeCompare(
+          dateA
+        );
+      }
+
+      return (
+        a.start_time || ""
+      ).localeCompare(
+        b.start_time || ""
+      );
     }
   );
-
-  return groups.sort((a, b) => {
-    const dateA = a.schedule_date || "";
-    const dateB = b.schedule_date || "";
-
-    if (dateA !== dateB) {
-      return dateB.localeCompare(dateA);
-    }
-
-    return (a.start_time || "").localeCompare(b.start_time || "");
-  });
 }
 
-export default function KepalaSekolahJadwalPage() {
-  const [teachers, setTeachers] = useState<TeacherRow[]>([]);
-  const [students, setStudents] = useState<StudentRow[]>([]);
-  const [subjects, setSubjects] = useState<SubjectRow[]>([]);
-  const [studentTeachers, setStudentTeachers] = useState<StudentTeacherRow[]>(
-    []
+function toYMD(date: Date) {
+  const year =
+    date.getFullYear();
+
+  const month = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
+
+  const day = String(
+    date.getDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getCutoffRange(
+  month: number,
+  year: number
+) {
+  /*
+    Contoh:
+    pilih Agustus 2026
+
+    start = 21 Juli 2026
+    end   = 20 Agustus 2026
+  */
+
+  const startDate =
+    new Date(
+      year,
+      month - 2,
+      21
+    );
+
+  const endDate =
+    new Date(
+      year,
+      month - 1,
+      20
+    );
+
+  return {
+    start:
+      toYMD(startDate),
+
+    end:
+      toYMD(endDate),
+  };
+}
+
+function isDateInRange(
+  dateValue: string | null,
+  start: string,
+  end: string
+) {
+  if (!dateValue) {
+    return false;
+  }
+
+  return (
+    dateValue >= start &&
+    dateValue <= end
   );
-  const [schedules, setSchedules] = useState<EnrichedSchedule[]>([]);
+}
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+function getDatesBetween(
+  start: string,
+  end: string
+) {
+  const dates:
+    string[] = [];
 
-  const [errorMessage, setErrorMessage] = useState("");
+  const current =
+    new Date(
+      `${start}T00:00:00`
+    );
 
-  const [showModal, setShowModal] = useState(false);
-  const [selectedGroup, setSelectedGroup] =
-    useState<ScheduleGroup | null>(null);
+  const finish =
+    new Date(
+      `${end}T00:00:00`
+    );
 
-  const [search, setSearch] = useState("");
-  const [teacherFilter, setTeacherFilter] = useState(ALL);
-  const [dayFilter, setDayFilter] = useState(ALL);
-  const [subjectFilter, setSubjectFilter] = useState(ALL);
+  while (current <= finish) {
+    dates.push(
+      toYMD(current)
+    );
 
-  const [form, setForm] = useState<ScheduleForm>(initialForm);
-  const [temporaryScheduleFile, setTemporaryScheduleFile] =
-    useState<File | null>(null);
+    current.setDate(
+      current.getDate() + 1
+    );
+  }
 
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-  const [studentSearch, setStudentSearch] = useState("");
+  return dates;
+}
+
+/* =========================================================
+   PAGE
+========================================================= */
+
+export default function KepalaSekolahAbsensiPage() {
+  const [teachers, setTeachers] =
+    useState<TeacherRow[]>([]);
+
+  const [students, setStudents] =
+    useState<StudentRow[]>([]);
+
+  const [teacherAttendance, setTeacherAttendance] =
+    useState<TeacherAttendanceRow[]>([]);
+
+  const [printTeacherId, setPrintTeacherId] =
+    useState("");
+
+  const [attendance, setAttendance] =
+    useState<
+      EnrichedAttendance[]
+    >([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [
+    errorMessage,
+    setErrorMessage,
+  ] = useState("");
+
+  const [search, setSearch] =
+    useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] = useState(
+    "Semua Status"
+  );
+
+  const [
+    monthFilter,
+    setMonthFilter,
+  ] = useState(
+    "Semua Bulan"
+  );
+
+  const [
+    teacherFilter,
+    setTeacherFilter,
+  ] = useState(
+    "Semua Guru"
+  );
+
+  const [
+    dateFilter,
+    setDateFilter,
+  ] = useState("");
+
+  const currentDate =
+    new Date();
+
+  const [
+    exportMonth,
+    setExportMonth,
+  ] = useState(
+    String(
+      currentDate.getMonth() + 1
+    )
+  );
+
+  const [
+    exportYear,
+    setExportYear,
+  ] = useState(
+    String(
+      currentDate.getFullYear()
+    )
+  );
+
+  const [
+    selectedRombel,
+    setSelectedRombel,
+  ] =
+    useState<RombelGroup | null>(
+      null
+    );
+
+  /* =========================================================
+     FETCH
+  ========================================================= */
 
   async function fetchData() {
     setLoading(true);
@@ -527,1102 +871,1578 @@ export default function KepalaSekolahJadwalPage() {
         teachersRes,
         studentsRes,
         subjectsRes,
-        studentTeachersRes,
-        schedulesRes,
         attendanceRes,
-      ] = await Promise.all([
-        supabase.from("teachers").select("*").order("full_name"),
-        supabase.from("students").select("*").order("full_name"),
-        supabase.from("subjects").select("*").order("name"),
-        supabase
-          .from("student_teachers")
-          .select(
-            "id, student_id, teacher_id, subject_id, academic_year"
+        teacherAttendanceRes,
+      ] =
+        await Promise.all([
+          supabase
+            .from("teachers")
+            .select("*")
+            .order("full_name"),
+
+          supabase
+            .from("students")
+            .select("*")
+            .order("full_name"),
+
+          supabase
+            .from("subjects")
+            .select("*")
+            .order("name"),
+
+          supabase
+            .from("attendance")
+            .select("*")
+            .order(
+              "attendance_date",
+              {
+                ascending:
+                  false,
+              }
+            )
+            .order(
+              "start_time",
+              {
+                ascending:
+                  true,
+              }
+            ),
+          supabase
+            .from("teacher_attendance")
+            .select("*")
+            .order("attendance_date", { ascending: false }),
+        ]);
+
+      if (
+        teachersRes.error
+      ) {
+        throw new Error(
+          teachersRes.error.message
+        );
+      }
+
+      if (
+        studentsRes.error
+      ) {
+        throw new Error(
+          studentsRes.error.message
+        );
+      }
+
+      if (
+        subjectsRes.error
+      ) {
+        throw new Error(
+          subjectsRes.error.message
+        );
+      }
+
+      if (
+        attendanceRes.error
+      ) {
+        throw new Error(
+          attendanceRes.error.message
+        );
+      }
+
+      if (teacherAttendanceRes.error) {
+        throw new Error(
+          `Gagal mengambil absensi guru: ${teacherAttendanceRes.error.message}`
+        );
+      }
+
+      const teachersData =
+        (
+          teachersRes.data ||
+          []
+        ) as TeacherRow[];
+
+      const studentsData =
+        (
+          studentsRes.data ||
+          []
+        ) as StudentRow[];
+
+      const subjectsData =
+        (
+          subjectsRes.data ||
+          []
+        ) as SubjectRow[];
+
+      const attendanceData =
+        (
+          attendanceRes.data ||
+          []
+        ) as AttendanceRow[];
+
+      const teacherAttendanceData =
+        (teacherAttendanceRes.data || []) as TeacherAttendanceRow[];
+
+      setTeacherAttendance(teacherAttendanceData);
+
+      setTeachers(
+        teachersData
+      );
+
+      setStudents(
+        studentsData
+      );
+
+      const teacherMap =
+        new Map(
+          teachersData.map(
+            (teacher) => [
+              teacher.id,
+              teacher,
+            ]
           )
-          .eq("academic_year", ACADEMIC_YEAR),
-        supabase
-          .from("schedules")
-          .select("*")
-          .order("schedule_date", { ascending: false })
-          .order("start_time", { ascending: true }),
-        supabase
-          .from("attendance")
-          .select("*")
-          .order("attendance_date", { ascending: false }),
-      ]);
+        );
 
-      if (teachersRes.error) {
-        throw new Error(teachersRes.error.message);
-      }
+      const studentMap =
+        new Map(
+          studentsData.map(
+            (student) => [
+              student.id,
+              student,
+            ]
+          )
+        );
 
-      if (studentsRes.error) {
-        throw new Error(studentsRes.error.message);
-      }
+      const subjectMap =
+        new Map(
+          subjectsData.map(
+            (subject) => [
+              subject.id,
+              subject,
+            ]
+          )
+        );
 
-      if (subjectsRes.error) {
-        throw new Error(subjectsRes.error.message);
-      }
+      const enriched:
+        EnrichedAttendance[] =
+        attendanceData.map(
+          (item) => {
+            const teacher =
+              item.teacher_id
+                ? teacherMap.get(
+                    item.teacher_id
+                  )
+                : null;
 
-      if (studentTeachersRes.error) {
-        throw new Error(studentTeachersRes.error.message);
-      }
+            const student =
+              item.student_id
+                ? studentMap.get(
+                    item.student_id
+                  )
+                : null;
 
-      if (schedulesRes.error) {
-        throw new Error(schedulesRes.error.message);
-      }
-
-      if (attendanceRes.error) {
-        throw new Error(attendanceRes.error.message);
-      }
-
-      const teachersData = (teachersRes.data || []) as TeacherRow[];
-      const studentsData = (studentsRes.data || []) as StudentRow[];
-      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
-      const studentTeachersData = (studentTeachersRes.data ||
-        []) as StudentTeacherRow[];
-      const schedulesData = (schedulesRes.data || []) as ScheduleRow[];
-      const attendanceData = (attendanceRes.data || []) as AttendanceRow[];
-
-      const teacherMap = new Map(
-        teachersData.map((teacher) => [teacher.id, teacher])
-      );
-
-      const studentMap = new Map(
-        studentsData.map((student) => [student.id, student])
-      );
-
-      const subjectMap = new Map(
-        subjectsData.map((subject) => [subject.id, subject])
-      );
-
-      const attendanceMap = new Map(
-        attendanceData.map((attendance) => [
-          getAttendanceKey(attendance),
-          attendance,
-        ])
-      );
-
-      const matchedAttendanceKeys = new Set<string>();
-
-      const enrichedFromSchedules: EnrichedSchedule[] = schedulesData.map(
-        (schedule) => {
-          const teacher = schedule.teacher_id
-            ? teacherMap.get(schedule.teacher_id)
-            : null;
-
-          const student = schedule.student_id
-            ? studentMap.get(schedule.student_id)
-            : null;
-
-          const subject = schedule.subject_id
-            ? subjectMap.get(schedule.subject_id)
-            : null;
-
-          const attendanceKey = getAttendanceKey({
-            student_id: schedule.student_id,
-            teacher_id: schedule.teacher_id,
-            subject_id: schedule.subject_id,
-            schedule_date: schedule.schedule_date,
-            start_time: schedule.start_time,
-            end_time: schedule.end_time,
-          });
-
-          const attendance = attendanceMap.get(attendanceKey);
-
-          if (attendance) {
-            matchedAttendanceKeys.add(attendanceKey);
-          }
-
-          return {
-            ...schedule,
-            data_source: "schedule",
-            source_attendance_id: attendance?.id || null,
-            teacher_name: teacher?.full_name || "-",
-            student_name: student?.full_name || "-",
-            student_grade: student?.grade || "-",
-            student_level: student?.level || "-",
-            student_nipd: student?.nis || "-",
-            student_nisn: student?.nisn || "-",
-            subject_name: subject ? getSubjectLabel(subject) : "-",
-            teacher_arrival_time:
-              attendance?.teacher_arrival_time || null,
-            teacher_departure_time:
-              attendance?.teacher_departure_time || null,
-            attendance_status:
-              normalizeAttendanceStatus(attendance?.attendance_status) || null,
-            attendance_note:
-              attendance?.note || attendance?.notes || null,
-            attendance_material: attendance?.material_topic || null,
-          };
-        }
-      );
-
-      const enrichedFromUnmatchedAttendance: EnrichedSchedule[] =
-        attendanceData
-          .filter((attendance) => {
-            const key = getAttendanceKey(attendance);
-            return !matchedAttendanceKeys.has(key);
-          })
-          .map((attendance) => {
-            const teacher = attendance.teacher_id
-              ? teacherMap.get(attendance.teacher_id)
-              : null;
-
-            const student = attendance.student_id
-              ? studentMap.get(attendance.student_id)
-              : null;
-
-            const subject = attendance.subject_id
-              ? subjectMap.get(attendance.subject_id)
-              : null;
-
-            const durationMinutes =
-              attendance.duration_minutes ||
-              calculateDurationMinutes(
-                attendance.start_time,
-                attendance.end_time
-              );
+            const subject =
+              item.subject_id
+                ? subjectMap.get(
+                    item.subject_id
+                  )
+                : null;
 
             return {
-              id: `attendance-${attendance.id}`,
-              data_source: "attendance",
-              source_attendance_id: attendance.id,
-              student_id: attendance.student_id,
-              teacher_id: attendance.teacher_id,
-              subject_id: attendance.subject_id,
-              day_name:
-                attendance.day_name ||
-                getDayName(attendance.attendance_date || ""),
-              schedule_date: attendance.attendance_date,
-              start_time: attendance.start_time || null,
-              end_time: attendance.end_time || null,
-              duration_minutes: durationMinutes,
-              session_name:
-                attendance.session_name ||
-                formatSessionValue(
-                  durationMinutes,
-                  attendance.start_time,
-                  attendance.end_time
-                ),
-              material_topic: attendance.material_topic || null,
-              semester: null,
-              notes: attendance.note || attendance.notes || null,
-              temporary_schedule_url: null,
-              academic_year: ACADEMIC_YEAR,
-              teacher_name: teacher?.full_name || "-",
-              student_name: student?.full_name || "-",
-              student_grade: student?.grade || "-",
-              student_level: student?.level || "-",
-              student_nipd: student?.nis || "-",
-              student_nisn: student?.nisn || "-",
-              subject_name: subject ? getSubjectLabel(subject) : "-",
-              teacher_arrival_time:
-                attendance.teacher_arrival_time || null,
-              teacher_departure_time:
-                attendance.teacher_departure_time || null,
-              attendance_status:
-                normalizeAttendanceStatus(attendance.attendance_status) || null,
-              attendance_note:
-                attendance.note || attendance.notes || null,
-              attendance_material: attendance.material_topic || null,
+              ...item,
+
+              teacher_name:
+                teacher?.full_name ||
+                "-",
+
+              student_name:
+                student?.full_name ||
+                "-",
+
+              student_grade:
+                student?.grade ||
+                "-",
+
+              student_level:
+                student?.level ||
+                "-",
+
+              student_nis:
+                student?.nis ||
+                "-",
+
+              student_nisn:
+                student?.nisn ||
+                "-",
+
+              subject_name:
+                subject?.name ||
+                "-",
             };
-          });
+          }
+        );
 
-      const merged = [
-        ...enrichedFromSchedules,
-        ...enrichedFromUnmatchedAttendance,
-      ];
-
-      setTeachers(teachersData);
-      setStudents(studentsData);
-      setSubjects(subjectsData);
-      setStudentTeachers(studentTeachersData);
-      setSchedules(merged);
+      setAttendance(
+        enriched
+      );
     } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
+      if (
+        error instanceof Error
+      ) {
+        setErrorMessage(
+          error.message
+        );
       } else {
-        setErrorMessage("Gagal mengambil data jadwal.");
+        setErrorMessage(
+          "Gagal mengambil data absensi."
+        );
       }
 
       setTeachers([]);
       setStudents([]);
-      setSubjects([]);
-      setStudentTeachers([]);
-      setSchedules([]);
+      setAttendance([]);
+      setTeacherAttendance([]);
     } finally {
       setLoading(false);
     }
   }
 
+  /* =========================================================
+     REALTIME
+  ========================================================= */
+
   useEffect(() => {
     void fetchData();
 
-    const channel = supabase
-      .channel("kepala-jadwal-rombel-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "schedules" },
-        () => void fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "students" },
-        () => void fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "teachers" },
-        () => void fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "subjects" },
-        () => void fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "student_teachers" },
-        () => void fetchData()
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "attendance" },
-        () => void fetchData()
-      )
-      .subscribe();
+    const channel =
+      supabase
+        .channel(
+          "kepala-absensi-rombel-realtime"
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "attendance",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "students",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "teachers",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "subjects",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "teacher_attendance",
+          },
+          () => {
+            void fetchData();
+          }
+        )
+        .subscribe();
 
     return () => {
-      void supabase.removeChannel(channel);
+      void supabase.removeChannel(
+        channel
+      );
     };
   }, []);
 
-  const selectedTeacherRelations = useMemo(() => {
-    if (!form.teacher_id) return [];
+  /* =========================================================
+     FILTER
+  ========================================================= */
 
-    return studentTeachers.filter(
-      (relation) =>
-        relation.teacher_id === form.teacher_id &&
-        (!relation.academic_year ||
-          relation.academic_year === ACADEMIC_YEAR)
-    );
-  }, [studentTeachers, form.teacher_id]);
+  const rombelGroups =
+    useMemo(() => {
+      const q =
+        normalizeText(
+          search
+        );
 
-  const allowedStudentIdsForTeacher = useMemo(() => {
-    return new Set(
-      selectedTeacherRelations
-        .map((relation) => relation.student_id)
-        .filter(Boolean) as string[]
-    );
-  }, [selectedTeacherRelations]);
+      const grouped =
+        groupAttendanceByRombel(
+          attendance
+        );
 
-  const selectedStudentsForForm = useMemo(() => {
-    return students.filter((student) =>
-      selectedStudentIds.includes(student.id)
-    );
-  }, [students, selectedStudentIds]);
+      return grouped.filter(
+        (group) => {
+          const matchSearch =
+            !q ||
+            normalizeText(
+              group.teacher_name
+            ).includes(q) ||
+            normalizeText(
+              group.subject_name
+            ).includes(q) ||
+            normalizeText(
+              group.material_topic
+            ).includes(q) ||
+            group.students.some(
+              (student) =>
+                normalizeText(
+                  student.student_name
+                ).includes(q) ||
+                normalizeText(
+                  student.student_grade
+                ).includes(q) ||
+                normalizeText(
+                  student.student_level
+                ).includes(q) ||
+                normalizeText(
+                  student.student_nis
+                ).includes(q) ||
+                normalizeText(
+                  student.student_nisn
+                ).includes(q) ||
+                normalizeText(
+                  getAttendanceNote(
+                    student
+                  )
+                ).includes(q)
+            );
 
-  const selectedStudentGradeNumbers = useMemo(() => {
-    return Array.from(
-      new Set(
-        selectedStudentsForForm
-          .map((student) => getGradeNumber(student.grade))
-          .filter((grade): grade is number => Boolean(grade))
-      )
-    );
-  }, [selectedStudentsForForm]);
+          const matchStatus =
+            statusFilter ===
+              "Semua Status" ||
+            group.students.some(
+              (student) =>
+                normalizeAttendanceStatus(
+                  student.attendance_status
+                ) ===
+                statusFilter
+            );
 
-  const teacherSubjectIds = useMemo(() => {
-    return new Set(
-      selectedTeacherRelations
-        .map((relation) => relation.subject_id)
-        .filter(Boolean) as string[]
-    );
-  }, [selectedTeacherRelations]);
+          const matchMonth =
+            monthFilter ===
+              "Semua Bulan" ||
+            getMonthName(
+              group.attendance_date
+            ) ===
+              monthFilter;
 
-  const selectedStudentSubjectIds = useMemo(() => {
-    if (selectedStudentIds.length === 0) {
-      return teacherSubjectIds;
-    }
+          const matchTeacher =
+            teacherFilter ===
+              "Semua Guru" ||
+            group.teacher_id ===
+              teacherFilter;
 
-    return new Set(
-      selectedTeacherRelations
-        .filter(
-          (relation) =>
-            relation.student_id &&
-            selectedStudentIds.includes(relation.student_id)
-        )
-        .map((relation) => relation.subject_id)
-        .filter(Boolean) as string[]
-    );
-  }, [
-    selectedTeacherRelations,
-    selectedStudentIds,
-    teacherSubjectIds,
-  ]);
+          const matchDate =
+            !dateFilter ||
+            group.attendance_date ===
+              dateFilter;
 
-  const subjectOptionsForSchedule = useMemo(() => {
-    if (!form.teacher_id) return [];
-
-    return subjects.filter((subject) => {
-      const subjectGradeNumber = getGradeNumber(subject.grade);
-      const isConnectedToTeacher =
-        selectedStudentSubjectIds.has(subject.id);
-
-      if (!isConnectedToTeacher) return false;
-
-      if (isMathSubject(subject) && isAllGrade(subject.grade)) {
-        return false;
-      }
-
-      if (selectedStudentGradeNumbers.length === 0) {
-        return true;
-      }
-
-      if (!subjectGradeNumber) {
-        return true;
-      }
-
-      return selectedStudentGradeNumbers.includes(subjectGradeNumber);
-    });
-  }, [
-    subjects,
-    form.teacher_id,
-    selectedStudentSubjectIds,
-    selectedStudentGradeNumbers,
-  ]);
-
-  useEffect(() => {
-    if (!form.subject_id) return;
-
-    const stillAllowed = subjectOptionsForSchedule.some(
-      (subject) => subject.id === form.subject_id
-    );
-
-    if (!stillAllowed) {
-      setForm((previous) => ({
-        ...previous,
-        subject_id: "",
-      }));
-    }
-  }, [form.subject_id, subjectOptionsForSchedule]);
-
-  const groupedSchedules = useMemo(() => {
-    const q = normalizeText(search);
-    const groups = groupSchedules(schedules);
-
-    return groups.filter((group) => {
-      const matchSearch =
-        !q ||
-        normalizeText(group.teacher_name).includes(q) ||
-        normalizeText(group.subject_name).includes(q) ||
-        normalizeText(group.material_topic).includes(q) ||
-        normalizeText(group.session_name).includes(q) ||
-        normalizeText(group.notes).includes(q) ||
-        group.students.some((student) => {
           return (
-            normalizeText(student.student_name).includes(q) ||
-            normalizeText(student.student_grade).includes(q) ||
-            normalizeText(student.student_level).includes(q) ||
-            normalizeText(student.student_nipd).includes(q) ||
-            normalizeText(student.student_nisn).includes(q)
+            matchSearch &&
+            matchStatus &&
+            matchMonth &&
+            matchTeacher &&
+            matchDate
           );
-        });
-
-      const matchTeacher =
-        teacherFilter === ALL || group.teacher_id === teacherFilter;
-
-      const matchDay =
-        dayFilter === ALL || group.day_name === dayFilter;
-
-      const matchSubject =
-        subjectFilter === ALL || group.subject_id === subjectFilter;
-
-      return matchSearch && matchTeacher && matchDay && matchSubject;
-    });
-  }, [
-    schedules,
-    search,
-    teacherFilter,
-    dayFilter,
-    subjectFilter,
-  ]);
-
-  const filteredStudents = useMemo(() => {
-    const q = normalizeText(studentSearch);
-
-    return students.filter((student) => {
-      const matchTeacher =
-        !form.teacher_id ||
-        allowedStudentIdsForTeacher.has(student.id);
-
-      const matchSearch =
-        !q ||
-        normalizeText(student.full_name).includes(q) ||
-        normalizeText(student.grade).includes(q) ||
-        normalizeText(student.level).includes(q) ||
-        normalizeText(student.nis).includes(q) ||
-        normalizeText(student.nisn).includes(q);
-
-      return matchTeacher && matchSearch;
-    });
-  }, [
-    students,
-    studentSearch,
-    form.teacher_id,
-    allowedStudentIdsForTeacher,
-  ]);
-
-  const summary = useMemo(() => {
-    const groups = groupSchedules(schedules);
-
-    const activeTeachers = new Set(
-      schedules.map((item) => item.teacher_id).filter(Boolean)
-    ).size;
-
-    const uniqueStudents = new Set(
-      schedules.map((item) => item.student_id).filter(Boolean)
-    ).size;
-
-    return {
-      totalSchedules: schedules.length,
-      totalRombel: groups.length,
-      totalStudentsScheduled: uniqueStudents,
-      activeTeachers,
-    };
-  }, [schedules]);
-
-  function resetForm() {
-    setForm(initialForm);
-    setTemporaryScheduleFile(null);
-    setSelectedStudentIds([]);
-    setStudentSearch("");
-  }
-
-  function openModal() {
-    resetForm();
-    setShowModal(true);
-  }
-
-  function toggleStudent(studentId: string) {
-    setSelectedStudentIds((previous) => {
-      if (previous.includes(studentId)) {
-        return previous.filter((id) => id !== studentId);
-      }
-
-      return [...previous, studentId];
-    });
-  }
-
-  function selectAllFilteredStudents() {
-    const ids = filteredStudents.map((student) => student.id);
-
-    setSelectedStudentIds((previous) => {
-      const merged = new Set([...previous, ...ids]);
-
-      return Array.from(merged);
-    });
-  }
-
-  function clearSelectedStudents() {
-    setSelectedStudentIds([]);
-  }
-
-  function handlePrintSchedule() {
-    window.print();
-  }
-
-  async function handleSaveSchedule() {
-    if (!form.teacher_id) {
-      alert("Pilih guru terlebih dahulu.");
-      return;
-    }
-
-    if (!form.subject_id) {
-      alert("Pilih mata pelajaran terlebih dahulu.");
-      return;
-    }
-
-    const subjectConnectedToTeacher =
-      selectedTeacherRelations.some(
-        (relation) =>
-          relation.subject_id === form.subject_id &&
-          relation.teacher_id === form.teacher_id
+        }
       );
+    }, [
+      attendance,
+      search,
+      statusFilter,
+      monthFilter,
+      teacherFilter,
+      dateFilter,
+    ]);
 
-    if (!subjectConnectedToTeacher) {
+  const visibleAttendanceRows =
+    useMemo(() => {
+      return rombelGroups.flatMap(
+        (group) =>
+          group.students.map(
+            (
+              student,
+              index
+            ) => ({
+              group,
+              student,
+              isFirstInGroup:
+                index === 0,
+            })
+          )
+      );
+    }, [rombelGroups]);
+
+  const filteredAttendance =
+    useMemo(() => {
+      return rombelGroups.flatMap(
+        (group) =>
+          group.students
+      );
+    }, [rombelGroups]);
+
+  /* =========================================================
+     SUMMARY
+  ========================================================= */
+
+  const summary =
+    useMemo(() => {
+      const totalRombel =
+        rombelGroups.length;
+
+      const totalAttendanceRows =
+        filteredAttendance.length;
+
+      const totalHadir =
+        filteredAttendance.filter(
+          (item) =>
+            isHadir(
+              item.attendance_status
+            )
+        ).length;
+
+      const totalIzin =
+        filteredAttendance.filter(
+          (item) =>
+            isIzin(
+              item.attendance_status
+            )
+        ).length;
+
+      const totalAlpa =
+        filteredAttendance.filter(
+          (item) =>
+            isAlpa(
+              item.attendance_status
+            )
+        ).length;
+
+      const totalSakit =
+        filteredAttendance.filter(
+          (item) =>
+            isSakit(
+              item.attendance_status
+            )
+        ).length;
+
+      const activeTeachers =
+        new Set(
+          filteredAttendance
+            .map(
+              (item) =>
+                item.teacher_id
+            )
+            .filter(Boolean)
+        ).size;
+
+      const percentage =
+        totalAttendanceRows > 0
+          ? Math.round(
+              (totalHadir /
+                totalAttendanceRows) *
+                100
+            )
+          : 0;
+
+      return {
+        totalRombel,
+        totalAttendanceRows,
+        totalHadir,
+        totalIzin,
+        totalAlpa,
+        totalSakit,
+
+        totalTidakHadir:
+          totalIzin +
+          totalAlpa +
+          totalSakit,
+
+        activeTeachers,
+        percentage,
+      };
+    }, [
+      rombelGroups,
+      filteredAttendance,
+    ]);
+
+  /* =========================================================
+     EXPORT EXCEL
+  ========================================================= */
+
+  function handleExportExcel() {
+    const monthNumber =
+      Number(exportMonth);
+
+    const yearNumber =
+      Number(exportYear);
+
+    if (
+      !monthNumber ||
+      !yearNumber
+    ) {
       alert(
-        "Mapel yang dipilih belum terhubung dengan guru ini. Hubungkan melalui menu Guru → Assign."
+        "Pilih bulan dan tahun export terlebih dahulu."
       );
+
       return;
     }
 
-    const studentsNotConnectedToSubject =
-      selectedStudentIds.filter(
-        (studentId) =>
-          !selectedTeacherRelations.some(
-            (relation) =>
-              relation.student_id === studentId &&
-              relation.subject_id === form.subject_id
+    const { start, end } =
+      getCutoffRange(
+        monthNumber,
+        yearNumber
+      );
+
+    const selectedMonthName =
+      monthOptions[
+        monthNumber
+      ] ||
+      `Bulan ${monthNumber}`;
+
+    const periodAttendance =
+      attendance.filter(
+        (item) =>
+          isDateInRange(
+            item.attendance_date,
+            start,
+            end
           )
       );
 
-    if (studentsNotConnectedToSubject.length > 0) {
-      alert(
-        "Ada siswa yang belum terhubung dengan guru dan mapel yang dipilih."
-      );
-      return;
-    }
-
-    const selectedSubjectForSave =
-      subjects.find(
-        (subject) => subject.id === form.subject_id
-      ) || null;
+    /*
+      IMPORTANT:
+      Kita tetap pakai seluruh siswa,
+      bukan hanya siswa yang sudah punya
+      attendance pada periode tersebut.
+    */
 
     if (
-      selectedSubjectForSave &&
-      isMathSubject(selectedSubjectForSave)
+      students.length === 0
     ) {
-      if (isAllGrade(selectedSubjectForSave.grade)) {
-        alert(
-          "Mapel Matematika tidak boleh menggunakan All Grade."
-        );
-        return;
-      }
-
-      const mathGradeNumber = getGradeNumber(
-        selectedSubjectForSave.grade
+      alert(
+        "Belum ada data siswa yang dapat diexport."
       );
 
-      const selectedGrades = Array.from(
-        new Set(
-          selectedStudentIds
-            .map((studentId) => {
-              const student = students.find(
-                (item) => item.id === studentId
-              );
+      return;
+    }
 
-              return getGradeNumber(student?.grade);
-            })
-            .filter((grade): grade is number => Boolean(grade))
+    const periodDates =
+      getDatesBetween(
+        start,
+        end
+      );
+
+    /*
+      Map attendance:
+      student_id -> tanggal -> attendance[]
+    */
+
+    const attendanceMap =
+      new Map<
+        string,
+        Map<
+          string,
+          EnrichedAttendance[]
+        >
+      >();
+
+    periodAttendance.forEach(
+      (item) => {
+        if (
+          !item.student_id ||
+          !item.attendance_date
+        ) {
+          return;
+        }
+
+        if (
+          !attendanceMap.has(
+            item.student_id
+          )
+        ) {
+          attendanceMap.set(
+            item.student_id,
+            new Map()
+          );
+        }
+
+        const studentAttendance =
+          attendanceMap.get(
+            item.student_id
+          );
+
+        if (!studentAttendance) {
+          return;
+        }
+
+        const current =
+          studentAttendance.get(
+            item.attendance_date
+          ) || [];
+
+        current.push(item);
+
+        studentAttendance.set(
+          item.attendance_date,
+          current
+        );
+      }
+    );
+
+    /*
+      HEADER
+    */
+
+    const headers = [
+      "No",
+      "Nama Siswa",
+      "Kelas",
+      "NIPD",
+      "NISN",
+
+      ...periodDates.map(
+        (date) =>
+          formatExcelDate(date)
+      ),
+
+      "Total H",
+      "Total I",
+      "Total A",
+      "Total S",
+      "Persentase Kehadiran",
+    ];
+
+    /*
+      DATA
+    */
+
+    const exportRows =
+      students
+        .slice()
+        .sort((a, b) =>
+          (
+            a.full_name || ""
+          ).localeCompare(
+            b.full_name || ""
+          )
         )
+        .map(
+          (
+            student,
+            index
+          ) => {
+            const row:
+              (string | number)[] =
+              [
+                index + 1,
+
+                student.full_name ||
+                  "-",
+
+                formatClass(
+                  student.level,
+                  student.grade
+                ),
+
+                student.nis ||
+                  "-",
+
+                student.nisn ||
+                  "-",
+              ];
+
+            let totalHadir = 0;
+            let totalIzin = 0;
+            let totalAlpa = 0;
+            let totalSakit = 0;
+
+            periodDates.forEach(
+              (date) => {
+                const studentAttendance =
+                  attendanceMap.get(
+                    student.id
+                  );
+
+                const dateRows =
+                  studentAttendance?.get(
+                    date
+                  ) || [];
+
+                /*
+                  Bisa saja 1 siswa punya lebih dari
+                  1 sesi pada tanggal sama.
+                */
+
+                const codes =
+                  dateRows
+                    .map(
+                      (item) =>
+                        getAttendanceCode(
+                          item.attendance_status
+                        )
+                    )
+                    .filter(Boolean);
+
+                const uniqueCodes =
+                  Array.from(
+                    new Set(codes)
+                  );
+
+                row.push(
+                  uniqueCodes.join(
+                    "/"
+                  )
+                );
+
+                dateRows.forEach(
+                  (item) => {
+                    if (
+                      isHadir(
+                        item.attendance_status
+                      )
+                    ) {
+                      totalHadir++;
+                    }
+
+                    if (
+                      isIzin(
+                        item.attendance_status
+                      )
+                    ) {
+                      totalIzin++;
+                    }
+
+                    if (
+                      isAlpa(
+                        item.attendance_status
+                      )
+                    ) {
+                      totalAlpa++;
+                    }
+
+                    if (
+                      isSakit(
+                        item.attendance_status
+                      )
+                    ) {
+                      totalSakit++;
+                    }
+                  }
+                );
+              }
+            );
+
+            const totalRecorded =
+              totalHadir +
+              totalIzin +
+              totalAlpa +
+              totalSakit;
+
+            const percentage =
+              totalRecorded > 0
+                ? Math.round(
+                    (totalHadir /
+                      totalRecorded) *
+                      100
+                  )
+                : 0;
+
+            row.push(
+              totalHadir,
+              totalIzin,
+              totalAlpa,
+              totalSakit,
+              `${percentage}%`
+            );
+
+            return row;
+          }
+        );
+
+    /*
+      INFORMASI FILE
+    */
+
+    const worksheetData = [
+      [
+        "REKAP ABSENSI SISWA",
+      ],
+
+      [
+        "Periode",
+        `${formatDate(
+          start
+        )} s/d ${formatDate(
+          end
+        )}`,
+      ],
+
+      [
+        "Bulan Rekap",
+        `${selectedMonthName} ${yearNumber}`,
+      ],
+
+      [],
+
+      headers,
+
+      ...exportRows,
+    ];
+
+    const worksheet =
+      XLSX.utils.aoa_to_sheet(
+        worksheetData
       );
 
-      if (selectedGrades.length > 1) {
-        alert(
-          "Untuk Matematika, jadwal harus dibuat per kelas."
-        );
-        return;
-      }
+    /*
+      Merge title
+    */
 
-      if (
-        mathGradeNumber &&
-        selectedGrades.length === 1 &&
-        selectedGrades[0] !== mathGradeNumber
-      ) {
-        alert(
-          `Mapel Matematika yang dipilih untuk Kelas ${mathGradeNumber}, tetapi siswa yang dipilih Kelas ${selectedGrades[0]}.`
-        );
-        return;
-      }
-    }
+    worksheet["!merges"] = [
+      {
+        s: {
+          r: 0,
+          c: 0,
+        },
 
-    if (!form.schedule_date) {
-      alert("Pilih tanggal jadwal terlebih dahulu.");
-      return;
-    }
+        e: {
+          r: 0,
+          c:
+            headers.length - 1,
+        },
+      },
+    ];
 
-    if (!form.start_time || !form.end_time) {
-      alert("Isi jam mulai dan jam selesai terlebih dahulu.");
-      return;
-    }
+    /*
+      Column widths
+    */
 
-    const durationMinutes = calculateDurationMinutes(
-      form.start_time,
-      form.end_time
+    worksheet["!cols"] = [
+      {
+        wch: 6,
+      },
+
+      {
+        wch: 30,
+      },
+
+      {
+        wch: 16,
+      },
+
+      {
+        wch: 16,
+      },
+
+      {
+        wch: 18,
+      },
+
+      ...periodDates.map(
+        () => ({
+          wch: 9,
+        })
+      ),
+
+      {
+        wch: 10,
+      },
+
+      {
+        wch: 10,
+      },
+
+      {
+        wch: 10,
+      },
+
+      {
+        wch: 10,
+      },
+
+      {
+        wch: 22,
+      },
+    ];
+
+    /*
+      Workbook
+    */
+
+    const workbook =
+      XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      worksheet,
+      "Rekap Absensi"
     );
 
-    if (!durationMinutes) {
-      alert("Jam selesai harus lebih besar dari jam mulai.");
-      return;
-    }
+    /*
+      Sheet legenda
+    */
 
-    if (selectedStudentIds.length === 0) {
-      alert("Pilih minimal 1 siswa untuk jadwal rombel.");
-      return;
-    }
+    const legendData = [
+      [
+        "Kode",
+        "Keterangan",
+      ],
 
-    setSaving(true);
+      [
+        "H",
+        "Hadir",
+      ],
 
-    try {
-      let temporaryScheduleUrl =
-        form.temporary_schedule_url || null;
+      [
+        "I",
+        "Izin",
+      ],
 
-      if (temporaryScheduleFile) {
-        temporaryScheduleUrl =
-          await uploadScheduleDocument(temporaryScheduleFile);
-      }
+      [
+        "A",
+        "Alpa",
+      ],
 
-      const sessionValue = formatSessionValue(durationMinutes);
+      [
+        "S",
+        "Sakit",
+      ],
 
-      const payload = selectedStudentIds.map((studentId) => ({
-        student_id: studentId,
-        teacher_id: form.teacher_id,
-        subject_id: form.subject_id,
-        day_name: form.day_name,
-        schedule_date: form.schedule_date,
-        start_time: form.start_time,
-        end_time: form.end_time,
-        duration_minutes: durationMinutes,
-        session_name: sessionValue,
-        material_topic: null,
-        semester: form.semester,
-        notes: form.notes.trim() || null,
-        temporary_schedule_url: temporaryScheduleUrl,
-        academic_year: ACADEMIC_YEAR,
-      }));
+      [
+        "",
+        "Kosong = belum ada data absensi pada tanggal tersebut",
+      ],
+    ];
 
-      const { error } = await supabase
-        .from("schedules")
-        .insert(payload);
+    const legendSheet =
+      XLSX.utils.aoa_to_sheet(
+        legendData
+      );
 
-      if (error) {
-        throw new Error(error.message);
-      }
+    legendSheet["!cols"] = [
+      {
+        wch: 12,
+      },
 
-      await fetchData();
+      {
+        wch: 60,
+      },
+    ];
 
-      setShowModal(false);
-      resetForm();
-    } catch (error) {
-      if (error instanceof Error) {
-        alert(`Gagal menyimpan jadwal: ${error.message}`);
-      } else {
-        alert("Gagal menyimpan jadwal.");
-      }
-    } finally {
-      setSaving(false);
-    }
+    XLSX.utils.book_append_sheet(
+      workbook,
+      legendSheet,
+      "Keterangan"
+    );
+
+    /*
+      Download .xlsx
+    */
+
+    XLSX.writeFile(
+      workbook,
+      `Rekap_Absensi_${selectedMonthName}_${yearNumber}_${start}_sd_${end}.xlsx`
+    );
   }
 
-  async function handleDeleteScheduleGroup(group: ScheduleGroup) {
-    const scheduleIds = Array.from(
-      new Set(
-        group.students
-          .filter((item) => item.data_source === "schedule")
-          .map((item) => item.id)
-          .filter(Boolean)
-      )
-    );
+  /* =========================================================
+     EXPORT & PRINT ABSENSI GURU
+  ========================================================= */
 
-    if (scheduleIds.length === 0) {
-      alert("Tidak ada jadwal admin yang dapat dihapus pada data ini.");
-      return;
+  function getTeacherAttendanceForPeriod() {
+    const monthNumber = Number(exportMonth);
+    const yearNumber = Number(exportYear);
+
+    if (!monthNumber || !yearNumber) {
+      alert("Pilih bulan dan tahun terlebih dahulu.");
+      return null;
     }
 
-    const confirmDelete = window.confirm(
-      `Hapus jadwal ${group.subject_name} - ${group.teacher_name} untuk ${group.total_students} siswa?\n\nData absensi guru yang sudah tersimpan tidak ikut dihapus.`
+    const { start, end } = getCutoffRange(monthNumber, yearNumber);
+    const rows = teacherAttendance.filter((item) =>
+      isDateInRange(item.attendance_date, start, end)
     );
 
-    if (!confirmDelete) return;
-
-    const { error } = await supabase
-      .from("schedules")
-      .delete()
-      .in("id", scheduleIds);
-
-    if (error) {
-      alert(`Gagal menghapus jadwal: ${error.message}`);
-      return;
-    }
-
-    await fetchData();
+    return { start, end, rows, monthNumber, yearNumber };
   }
 
-  async function handleDeleteAttendanceGroup(group: ScheduleGroup) {
-    const attendanceIds = Array.from(
-      new Set(
-        group.students
-          .map((item) => item.source_attendance_id || "")
-          .filter(Boolean)
-      )
+  function handleExportTeacherExcel() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    const { start, end, rows, monthNumber, yearNumber } = period;
+    const teacherMap = new Map(teachers.map((teacher) => [teacher.id, teacher]));
+    const sortedRows = [...rows].sort((a, b) => {
+      const nameA = teacherMap.get(a.teacher_id)?.full_name || "";
+      const nameB = teacherMap.get(b.teacher_id)?.full_name || "";
+      return nameA.localeCompare(nameB) ||
+        a.attendance_date.localeCompare(b.attendance_date);
+    });
+
+    const data = sortedRows.map((item, index) => ({
+      No: index + 1,
+      "Nama Guru": teacherMap.get(item.teacher_id)?.full_name || "Guru tidak ditemukan",
+      "Kode Guru": teacherMap.get(item.teacher_id)?.teacher_code || "-",
+      Tanggal: item.attendance_date,
+      "Jam Datang": item.arrival_time || "-",
+      "Jam Pulang": item.departure_time || "-",
+      Status: item.status || "-",
+      Keterangan: item.notes || "-",
+    }));
+
+    const summaryRows = teachers.map((teacher) => {
+      const teacherRows = rows.filter((item) => item.teacher_id === teacher.id);
+      const count = (status: string) =>
+        teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+
+      return {
+        "Nama Guru": teacher.full_name || "-",
+        "Total Hadir": count("Hadir"),
+        "Total Izin": count("Izin"),
+        "Total Sakit": count("Sakit"),
+        "Total Alpa": count("Alpa"),
+        "Total Tercatat": teacherRows.length,
+      };
+    });
+
+    const detailSheet = XLSX.utils.json_to_sheet(data);
+    detailSheet["!cols"] = [
+      { wch: 6 }, { wch: 28 }, { wch: 15 }, { wch: 14 },
+      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 35 },
+    ];
+
+    const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+    summarySheet["!cols"] = [
+      { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+      { wch: 14 }, { wch: 18 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, detailSheet, "Detail Absensi");
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Rekap Per Guru");
+
+    XLSX.writeFile(
+      workbook,
+      `Rekap_Absensi_Guru_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`
     );
-
-    if (attendanceIds.length === 0) {
-      alert("Belum ada data absensi guru pada sesi ini yang dapat dihapus.");
-      return;
-    }
-
-    const confirmDelete = window.confirm(
-      `Hapus absensi ${group.subject_name} - ${group.teacher_name} tanggal ${formatDate(
-        group.schedule_date
-      )}?\n\n${attendanceIds.length} data absensi siswa akan dihapus. Tindakan ini tidak dapat dibatalkan.`
-    );
-
-    if (!confirmDelete) return;
-
-    const { error } = await supabase
-      .from("attendance")
-      .delete()
-      .in("id", attendanceIds);
-
-    if (error) {
-      alert(`Gagal menghapus absensi: ${error.message}`);
-      return;
-    }
-
-    if (selectedGroup?.key === group.key) {
-      setSelectedGroup(null);
-    }
-
-    await fetchData();
-
-    alert("Data absensi guru berhasil dihapus.");
   }
+
+  function handlePrintTeacherAttendance() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    if (!printTeacherId) {
+      alert("Pilih guru yang ingin dicetak.");
+      return;
+    }
+
+    const { start, end, rows, monthNumber, yearNumber } = period;
+    const teacher = teachers.find((item) => item.id === printTeacherId);
+    if (!teacher) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
+
+    const dates = getDatesBetween(start, end);
+    const teacherRows = rows
+      .filter((item) => item.teacher_id === printTeacherId)
+      .sort((a, b) => a.attendance_date.localeCompare(b.attendance_date));
+
+    const rowByDate = new Map(teacherRows.map((item) => [item.attendance_date, item]));
+    const count = (status: string) =>
+      teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+
+    const tableRows = dates.map((date, index) => {
+      const item = rowByDate.get(date);
+      const displayDate = new Date(`${date}T00:00:00`).toLocaleDateString("id-ID", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric",
+      });
+      return `<tr>
+        <td>${index + 1}</td>
+        <td>${displayDate}</td>
+        <td>${item?.arrival_time || "-"}</td>
+        <td>${item?.departure_time || "-"}</td>
+        <td>${item?.status || "-"}</td>
+        <td>${item?.notes || "-"}</td>
+      </tr>`;
+    }).join("");
+
+    const safeName = (teacher.full_name || "Guru").replace(/[<>&"]/g, "");
+    const printWindow = window.open("", "_blank", "width=1100,height=800");
+    if (!printWindow) {
+      alert("Pop-up diblokir browser. Izinkan pop-up untuk mencetak.");
+      return;
+    }
+
+    printWindow.document.write(`<!DOCTYPE html>
+      <html lang="id"><head><meta charset="UTF-8" />
+      <title>Absensi Guru - ${safeName}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; color: #222; padding: 24px; }
+        h1 { text-align: center; font-size: 20px; margin: 0 0 6px; }
+        .subtitle { text-align: center; margin: 0 0 22px; font-size: 12px; }
+        .identity { margin-bottom: 14px; font-size: 13px; line-height: 1.8; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th, td { border: 1px solid #555; padding: 7px; text-align: left; }
+        th { background: #f1f1f1; }
+        .summary { margin: 14px 0; display: flex; gap: 18px; font-size: 12px; }
+        .sign { display: flex; justify-content: space-between; margin-top: 48px; text-align: center; font-size: 12px; }
+        .sign div { width: 220px; }
+        @page { size: A4 landscape; margin: 12mm; }
+        @media print { body { padding: 0; } }
+      </style></head><body>
+      <h1>REKAP ABSENSI GURU</h1>
+      <p class="subtitle">Periode ${start} s/d ${end} | ${monthOptions[monthNumber]} ${yearNumber}</p>
+      <div class="identity">
+        <strong>Nama Guru:</strong> ${safeName}<br/>
+        <strong>Kode Guru:</strong> ${teacher.teacher_code || "-"}
+      </div>
+      <div class="summary">
+        <span>Hadir: <strong>${count("Hadir")}</strong></span>
+        <span>Izin: <strong>${count("Izin")}</strong></span>
+        <span>Sakit: <strong>${count("Sakit")}</strong></span>
+        <span>Alpa: <strong>${count("Alpa")}</strong></span>
+      </div>
+      <table><thead><tr><th>No</th><th>Tanggal</th><th>Jam Datang</th><th>Jam Pulang</th><th>Status</th><th>Keterangan</th></tr></thead>
+      <tbody>${tableRows}</tbody></table>
+      <div class="sign">
+        <div>Mengetahui,<br/>Kepala Sekolah<br/><br/><br/><br/>(____________________)</div>
+        <div>Guru yang bersangkutan<br/><br/><br/><br/><br/>(____________________)</div>
+      </div>
+      <script>window.onload = () => { window.print(); };</script>
+      </body></html>`);
+    printWindow.document.close();
+  }
+
+  /* =========================================================
+     UI
+  ========================================================= */
 
   return (
     <KepalaSekolahLayout
       activeMenu="ABSENSI KBM SISWA DAN GURU HARIAN"
-      searchPlaceholder="Cari absensi KBM siswa dan guru..."
+      searchPlaceholder="Cari absensi, guru, siswa, atau materi..."
     >
-      <style jsx global>{`
-        .print-only {
-          display: none;
-        }
-
-        @media print {
-          @page {
-            size: A4 landscape;
-            margin: 8mm;
-          }
-
-          html,
-          body {
-            background: #ffffff !important;
-          }
-
-          body * {
-            visibility: hidden !important;
-          }
-
-          .print-root,
-          .print-root * {
-            visibility: visible !important;
-          }
-
-          .print-root {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            overflow: visible !important;
-            background: #ffffff !important;
-          }
-
-          .print-only {
-            display: block !important;
-          }
-
-          .print-hidden {
-            display: none !important;
-          }
-
-          .print-root > div {
-            overflow: visible !important;
-          }
-
-          .print-root table {
-            width: 100% !important;
-            min-width: 0 !important;
-            border-collapse: collapse !important;
-            table-layout: auto !important;
-            font-size: 8px !important;
-          }
-
-          .print-root thead {
-            display: table-header-group !important;
-          }
-
-          .print-root tr {
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
-          }
-
-          .print-root th,
-          .print-root td {
-            border: 1px solid #4b4b4b !important;
-            padding: 4px !important;
-            color: #111111 !important;
-            background: #ffffff !important;
-            vertical-align: top !important;
-          }
-
-          .print-root th {
-            font-weight: 800 !important;
-            text-align: center !important;
-          }
-
-          .print-root button {
-            appearance: none !important;
-            border: 0 !important;
-            background: transparent !important;
-            color: #111111 !important;
-            padding: 0 !important;
-            min-height: auto !important;
-            cursor: default !important;
-          }
-
-          .print-root .divide-y > :not([hidden]) ~ :not([hidden]) {
-            border-top: 1px solid #777777 !important;
-          }
-
-          .print-root .line-clamp-3 {
-            display: block !important;
-            overflow: visible !important;
-            -webkit-line-clamp: unset !important;
-          }
-
-          .print-root .rounded-md,
-          .print-root .rounded-xl,
-          .print-root .rounded-full {
-            border-radius: 2px !important;
-          }
-
-          .print-root .bg-\\[\\#22C55E\\],
-          .print-root .bg-\\[\\#7C3AED\\],
-          .print-root .bg-\\[\\#DC2626\\] {
-            background: transparent !important;
-            color: #111111 !important;
-            border: 0 !important;
-          }
-        }
-      `}</style>
-
       <section className="space-y-7">
-        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end print:hidden">
+        {/* HEADER */}
+
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
           <div>
             <p className="text-[12px] font-extrabold uppercase tracking-[0.18em] text-[#8A5A48]">
-              Jadwal Pembelajaran
+              Monitoring KBM
             </p>
 
             <h1 className="mt-2 text-[30px] font-extrabold tracking-[-0.02em] text-[#2B1B18]">
-              ABSENSI KBM GURU DAN SISWA HARIAN
+              Absensi KBM Bulanan
             </h1>
 
-            <p className="mt-2 max-w-[880px] text-[15px] leading-6 text-[#6F5549]">
-              Admin/Kepala Sekolah mengatur jadwal dasar dan jam KBM
-              siswa. Jam datang/pulang guru serta materi pembelajaran
-              diisi oleh masing-masing guru.
+            <p className="mt-2 max-w-[850px] text-[15px] leading-6 text-[#6F5549]">
+              Pantau absensi yang diinput guru. Halaman ini hanya untuk
+              monitoring dan export, bukan untuk input absensi.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={handlePrintSchedule}
-              className="flex h-11 items-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D]"
+          {/* EXPORT */}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={exportMonth}
+              onChange={(event) =>
+                setExportMonth(
+                  event.target.value
+                )
+              }
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] font-bold text-[#2B1B18] outline-none focus:border-[#9C0824]"
             >
-              <Printer className="h-4 w-4" />
-              Print Absensi
-            </button>
+              {monthOptions
+                .slice(1)
+                .map(
+                  (
+                    month,
+                    index
+                  ) => (
+                    <option
+                      key={
+                        month
+                      }
+                      value={String(
+                        index + 1
+                      )}
+                    >
+                      {month}
+                    </option>
+                  )
+                )}
+            </select>
+
+            <input
+              type="number"
+              value={exportYear}
+              onChange={(event) =>
+                setExportYear(
+                  event.target.value
+                )
+              }
+              className="h-11 w-[105px] rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] font-bold text-[#2B1B18] outline-none focus:border-[#9C0824]"
+            />
 
             <button
               type="button"
-              onClick={openModal}
-              className="flex h-11 items-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white"
+              onClick={
+                handleExportExcel
+              }
+              className="flex h-11 w-fit items-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] shadow-sm transition hover:bg-[#FFF8EF]"
             >
-              <Plus className="h-4 w-4" />
-              Tambah Jadwal
+              <Download className="h-4 w-4" />
+
+              Export Excel
             </button>
           </div>
         </div>
 
+        {/* EXPORT DAN CETAK ABSENSI GURU */}
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-[18px] font-extrabold text-[#2B1B18]">
+              Absensi Kehadiran Guru
+            </h2>
+            <p className="mt-1 text-[13px] text-[#6F5549]">
+              Rekap diambil dari tabel teacher_attendance, terpisah dari absensi siswa.
+              Periode mengikuti tanggal 21 bulan sebelumnya sampai tanggal 20 bulan pilihan.
+            </p>
+          </div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <select
+              value={printTeacherId}
+              onChange={(event) => setPrintTeacherId(event.target.value)}
+              className="h-11 min-w-[240px] rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            >
+              <option value="">Pilih guru untuk dicetak</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.full_name || "Tanpa nama"}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleExportTeacherExcel}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#720B24]"
+            >
+              <Download className="h-4 w-4" />
+              Export Absensi Guru
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintTeacherAttendance}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+            >
+              <Printer className="h-4 w-4" />
+              Cetak Absensi Per Guru
+            </button>
+            <span className="text-[12px] text-[#8A5A48]">
+              {teacherAttendance.length} data absensi guru tersimpan
+            </span>
+          </div>
+        </div>
+
+        {/* ERROR */}
+
         {errorMessage ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-red-700 print:hidden">
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-[14px] leading-6 text-red-700">
             <div className="flex gap-3">
-              <AlertCircle className="h-5 w-5 shrink-0" />
-              <p>{errorMessage}</p>
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+
+              <p>
+                {
+                  errorMessage
+                }
+              </p>
             </div>
           </div>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 print:hidden">
+        {/* SUMMARY */}
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
-            icon={<CalendarDays className="h-5 w-5" />}
-            label="Total Data KBM"
-            value={summary.totalSchedules}
-            info="Data"
+            icon={
+              <UsersRound className="h-5 w-5" />
+            }
+            label="Total Rombel Diabsen"
+            value={
+              summary.totalRombel
+            }
+            info="Rombel"
             tone="pink"
           />
 
           <SummaryCard
-            icon={<UsersRound className="h-5 w-5" />}
-            label="Total Rombel"
-            value={summary.totalRombel}
-            info="Rombel"
+            icon={
+              <CalendarCheck className="h-5 w-5" />
+            }
+            label="Total Data Absensi"
+            value={
+              summary.totalAttendanceRows
+            }
+            info="Rows"
             tone="orange"
           />
 
           <SummaryCard
-            icon={<UserRound className="h-5 w-5" />}
-            label="Siswa KBM"
-            value={summary.totalStudentsScheduled}
-            info="Siswa"
+            icon={
+              <UserCheck className="h-5 w-5" />
+            }
+            label="Total Hadir"
+            value={
+              summary.totalHadir
+            }
+            info={`${summary.percentage}%`}
             tone="green"
           />
 
           <SummaryCard
-            icon={<Clock className="h-5 w-5" />}
-            label="Guru Aktif"
-            value={summary.activeTeachers}
-            info="Guru"
+            icon={
+              <UserX className="h-5 w-5" />
+            }
+            label="Izin / Alpa / Sakit"
+            value={
+              summary.totalTidakHadir
+            }
+            info={`${summary.activeTeachers} Guru`}
             tone="blue"
           />
         </div>
 
-        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm print:hidden">
-          <div className="grid gap-3 xl:grid-cols-[1.7fr_1fr_1fr_1fr]">
+        {/* FILTER */}
+
+        <div className="rounded-[22px] border border-[#E1CFBE] bg-white p-5 shadow-sm">
+          <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_1fr_1fr]">
             <div className="relative">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
 
               <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Cari jadwal..."
-                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none"
+                value={
+                  search
+                }
+                onChange={(
+                  event
+                ) =>
+                  setSearch(
+                    event.target
+                      .value
+                  )
+                }
+                placeholder="Cari guru, siswa, NIPD, NISN, mapel, materi, atau keterangan..."
+                className="h-11 w-full rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] pl-11 pr-4 text-[14px] outline-none placeholder:text-[#9A7B6C] focus:border-[#9C0824]"
               />
             </div>
 
             <select
-              value={teacherFilter}
-              onChange={(event) =>
-                setTeacherFilter(event.target.value)
+              value={
+                teacherFilter
               }
-              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px]"
+              onChange={(
+                event
+              ) =>
+                setTeacherFilter(
+                  event.target
+                    .value
+                )
+              }
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value={ALL}>Semua Guru</option>
+              <option value="Semua Guru">
+                Semua Guru
+              </option>
 
-              {teachers.map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.full_name}
-                </option>
-              ))}
+              {teachers.map(
+                (teacher) => (
+                  <option
+                    key={
+                      teacher.id
+                    }
+                    value={
+                      teacher.id
+                    }
+                  >
+                    {
+                      teacher.full_name
+                    }
+                  </option>
+                )
+              )}
             </select>
 
             <select
-              value={dayFilter}
-              onChange={(event) =>
-                setDayFilter(event.target.value)
+              value={
+                statusFilter
               }
-              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px]"
+              onChange={(
+                event
+              ) =>
+                setStatusFilter(
+                  event.target
+                    .value
+                )
+              }
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value={ALL}>Semua Hari</option>
-
-              {dayOptions.map((day) => (
-                <option key={day}>{day}</option>
-              ))}
+              {statusOptions.map(
+                (status) => (
+                  <option
+                    key={
+                      status
+                    }
+                  >
+                    {status}
+                  </option>
+                )
+              )}
             </select>
 
             <select
-              value={subjectFilter}
-              onChange={(event) =>
-                setSubjectFilter(event.target.value)
+              value={
+                monthFilter
               }
-              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px]"
+              onChange={(
+                event
+              ) =>
+                setMonthFilter(
+                  event.target
+                    .value
+                )
+              }
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value={ALL}>Semua Mapel</option>
-
-              {subjects.map((subject) => (
-                <option key={subject.id} value={subject.id}>
-                  {getSubjectLabel(subject)}
-                </option>
-              ))}
+              {monthOptions.map(
+                (month) => (
+                  <option
+                    key={
+                      month
+                    }
+                  >
+                    {month}
+                  </option>
+                )
+              )}
             </select>
+
+            <input
+              type="date"
+              value={
+                dateFilter
+              }
+              onChange={(
+                event
+              ) =>
+                setDateFilter(
+                  event.target
+                    .value
+                )
+              }
+              className="h-11 rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
+            />
           </div>
         </div>
 
-        <div className="print-root overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
-          <div className="print-only px-4 pb-5 pt-2 text-center">
-            <h1 className="text-[20px] font-extrabold uppercase text-black">
-              ABSENSI KBM GURU DAN SISWA HARIAN
-            </h1>
-            <p className="mt-1 text-[12px] font-bold text-black">
-              HOMESCHOOLING TUNAS KARYA BANGSA
-            </p>
-            <p className="mt-1 text-[10px] text-black">
-              Tahun Ajaran {ACADEMIC_YEAR}
-            </p>
-          </div>
+        {/* TABLE */}
 
-          <div className="border-b border-[#EADACA] px-6 py-5 print:hidden">
-            <h2 className="text-[20px] font-extrabold">
-              Daftar Jadwal Rombel
+        <div className="overflow-hidden rounded-[22px] border border-[#E1CFBE] bg-white shadow-sm">
+          <div className="border-b border-[#EADACA] px-6 py-5">
+            <h2 className="text-[20px] font-extrabold text-[#2B1B18]">
+              Rekap Absensi KBM
             </h2>
 
             <p className="mt-1 text-[14px] text-[#6F5549]">
-              Menampilkan gabungan jadwal admin dan input absensi guru,
-              sehingga seluruh guru yang sudah mengisi KBM tetap muncul.
+              Datang dan pulang merupakan jam kehadiran guru. Jam Siswa dan
+              Sesi merupakan waktu kegiatan belajar siswa.
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1480px] border-collapse">
+            <table className="w-full min-w-[1750px] table-fixed border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
-                  <th rowSpan={2} className="border-r px-4 py-4">
+                  <th className="w-[70px] px-5 py-4">
                     No
                   </th>
-                  <th rowSpan={2} className="border-r px-4 py-4">
-                    Hari
+
+                  <th className="w-[250px] px-5 py-4">
+                    Nama
                   </th>
-                  <th rowSpan={2} className="border-r px-4 py-4">
-                    Tanggal
+
+                  <th className="w-[130px] px-5 py-4">
+                    Kelas
                   </th>
-                  <th rowSpan={2} className="border-r px-4 py-4">
-                    Nama Guru
-                  </th>
-                  <th rowSpan={2} className="border-r px-4 py-4">
+
+                  <th className="w-[125px] px-5 py-4">
                     Datang Guru
                   </th>
-                  <th rowSpan={2} className="border-r px-4 py-4">
+
+                  <th className="w-[125px] px-5 py-4">
                     Pulang Guru
                   </th>
 
-                  <th colSpan={9} className="border-r px-4 py-4 text-center">
-                    Jadwal Kegiatan Belajar Mengajar
+                  <th className="w-[145px] px-5 py-4">
+                    Jam Siswa
                   </th>
 
-                  <th rowSpan={2} className="border-r px-4 py-4">
-                    Keterangan
+                  <th className="w-[80px] px-5 py-4">
+                    Sesi
                   </th>
-                  <th rowSpan={2} className="print-hidden px-4 py-4">
-                    File
-                  </th>
-                  <th rowSpan={2} className="print-hidden px-4 py-4">
-                    Aksi
-                  </th>
-                </tr>
 
-                <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-[13px] font-extrabold text-[#6F5549]">
-                  <th className="border-r px-4 py-3">Jam Siswa</th>
-                  <th className="border-r px-4 py-3">Sesi</th>
-                  <th className="border-r px-4 py-3">Kls</th>
-                  <th className="border-r px-4 py-3">Mapel</th>
-                  <th className="border-r px-4 py-3">Materi</th>
-                  <th className="border-r px-4 py-3">Siswa</th>
-                  <th className="border-r bg-[#D1FAE5] px-4 py-3 text-center text-[#047857]">
+                  <th className="w-[180px] px-5 py-4">
+                    Guru
+                  </th>
+
+                  <th className="w-[150px] px-5 py-4">
+                    Mapel
+                  </th>
+
+                  <th className="w-[85px] px-5 py-4 text-center">
                     Hadir
                   </th>
-                  <th className="border-r bg-[#EDE9FE] px-4 py-3 text-center text-[#6D28D9]">
+
+                  <th className="w-[85px] px-5 py-4 text-center">
                     Izin
                   </th>
-                  <th className="border-r bg-[#FEE2E2] px-4 py-3 text-center text-[#B91C1C]">
+
+                  <th className="w-[85px] px-5 py-4 text-center">
                     Alpa
+                  </th>
+
+                  <th className="w-[300px] px-5 py-4">
+                    Keterangan
+                  </th>
+
+                  <th className="w-[115px] px-5 py-4">
+                    Aksi
                   </th>
                 </tr>
               </thead>
@@ -1630,235 +2450,179 @@ export default function KepalaSekolahJadwalPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={18} className="px-6 py-12 text-center">
-                      Memuat data jadwal...
+                    <td
+                      colSpan={
+                        14
+                      }
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Memuat data absensi...
                     </td>
                   </tr>
-                ) : groupedSchedules.length === 0 ? (
+                ) : visibleAttendanceRows.length ===
+                  0 ? (
                   <tr>
-                    <td colSpan={18} className="px-6 py-12 text-center">
-                      Belum ada jadwal rombel.
+                    <td
+                      colSpan={
+                        14
+                      }
+                      className="px-6 py-12 text-center text-[#6F5549]"
+                    >
+                      Belum ada data absensi.
                     </td>
                   </tr>
                 ) : (
-                  groupedSchedules.map((group, index) => {
-                    const classList = Array.from(
-                      new Set(
-                        group.students.map((student) =>
-                          formatClass(
-                            student.student_level,
-                            student.student_grade
-                          )
-                        )
-                      )
-                    ).join(", ");
-
-                    return (
+                  visibleAttendanceRows.map(
+                    (
+                      {
+                        group,
+                        student,
+                        isFirstInGroup,
+                      },
+                      index
+                    ) => (
                       <tr
-                        key={group.key}
-                        className="border-b border-[#F0E1D4] text-[14px]"
+                        key={`${group.key}-${student.id}`}
+                        className="min-h-[92px] border-b border-[#F0E1D4] text-[14px] text-[#2B1B18] transition hover:bg-[#FFFCF8]"
                       >
-                        <td className="border-r px-4 py-4 font-bold">
-                          {index + 1}
+                        <td className="whitespace-nowrap px-5 py-4 align-middle font-bold">
+                          {index +
+                            1}
                         </td>
 
-                        <td className="border-r px-4 py-4 font-extrabold">
-                          {group.day_name || "-"}
+                        <td className="px-5 py-4 align-middle">
+                          <div className="min-w-0">
+                            <p className="break-words font-extrabold leading-5">
+                              {
+                                student.student_name
+                              }
+                            </p>
+
+                            <p className="mt-1 break-words text-[12px] leading-5 text-[#6F5549]">
+                              NIPD:{" "}
+                              {student.student_nis ||
+                                "-"}
+
+                              {student.student_nisn
+                                ? ` • NISN: ${student.student_nisn}`
+                                : ""}
+                            </p>
+                          </div>
                         </td>
 
-                        <td className="whitespace-nowrap border-r px-4 py-4">
-                          {formatDate(group.schedule_date)}
+                        <td className="px-5 py-4 align-middle">
+                          <span className="break-words leading-5">
+                            {formatClass(
+                              student.student_level,
+                              student.student_grade
+                            )}
+                          </span>
                         </td>
 
-                        <td className="border-r px-4 py-4 font-extrabold">
-                          {group.teacher_name}
+                        <td className="whitespace-nowrap px-5 py-4 align-middle">
+                          {formatTime(
+                            group.teacher_arrival_time
+                          )}
                         </td>
 
-                        <td className="border-r px-4 py-4">
-                          {formatTime(group.teacher_arrival_time)}
+                        <td className="whitespace-nowrap px-5 py-4 align-middle">
+                          {formatTime(
+                            group.teacher_departure_time
+                          )}
                         </td>
 
-                        <td className="border-r px-4 py-4">
-                          {formatTime(group.teacher_departure_time)}
+                        <td className="whitespace-nowrap px-5 py-4 align-middle">
+                          {formatTime(
+                            group.start_time
+                          )}
+                          -
+                          {formatTime(
+                            group.end_time
+                          )}
                         </td>
 
-                        <td className="border-r px-4 py-4">
-                          {formatTime(group.start_time)}-
-                          {formatTime(group.end_time)}
-                        </td>
-
-                        <td className="border-r px-4 py-4 text-center font-extrabold">
+                        <td className="px-5 py-4 align-middle font-extrabold">
                           {formatSessionValue(
+                            group.session_name,
                             group.duration_minutes,
                             group.start_time,
                             group.end_time
                           )}
                         </td>
 
-                        <td className="border-r px-4 py-4">
-                          {classList || "-"}
+                        <td className="px-5 py-4 align-middle">
+                          <p className="break-words font-extrabold leading-5">
+                            {
+                              group.teacher_name
+                            }
+                          </p>
                         </td>
 
-                        <td className="border-r px-4 py-4">
-                          {group.subject_name}
+                        <td className="px-5 py-4 align-middle">
+                          <p className="break-words leading-5">
+                            {
+                              group.subject_name
+                            }
+                          </p>
                         </td>
 
-                        <td className="max-w-[260px] border-r px-4 py-4">
-                          {group.material_topic ? (
-                            <p className="line-clamp-3 font-bold">
-                              {group.material_topic}
+                        <td className="px-5 py-4 align-middle text-center">
+                          <ChecklistBox
+                            checked={isHadir(
+                              student.attendance_status
+                            )}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 align-middle text-center">
+                          <ChecklistBox
+                            checked={isIzin(
+                              student.attendance_status
+                            )}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 align-middle text-center">
+                          <ChecklistBox
+                            checked={isAlpa(
+                              student.attendance_status
+                            )}
+                          />
+                        </td>
+
+                        <td className="px-5 py-4 align-middle text-[#6F5549]">
+                          <div className="max-h-[64px] overflow-hidden">
+                            <p className="break-words leading-5">
+                              {getAttendanceNote(
+                                student
+                              )}
                             </p>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 align-middle">
+                          {isFirstInGroup ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedRombel(
+                                  group
+                                )
+                              }
+                              className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+                            >
+                              <Eye className="h-4 w-4" />
+                              Detail
+                            </button>
                           ) : (
-                            <span className="text-[12px] text-[#64748B]">
-                              Belum diisi guru
+                            <span className="text-[12px] text-[#A58A7A]">
+                              -
                             </span>
                           )}
                         </td>
-
-                        {/* SISWA */}
-                        <td className="min-w-[230px] border-r p-0 align-top">
-                          <div className="divide-y divide-[#F0E1D4]">
-                            {group.students.map((student) => (
-                              <button
-                                key={`${group.key}-${student.id}-name`}
-                                type="button"
-                                onClick={() => setSelectedGroup(group)}
-                                className="flex min-h-12 w-full items-center px-4 py-2 text-left text-[13px] font-bold transition hover:bg-[#FFF8EF]"
-                              >
-                                {student.student_name}
-                              </button>
-                            ))}
-                          </div>
-                        </td>
-
-                        {/* HADIR */}
-                        <td className="w-[76px] border-r p-0 align-top">
-                          <div className="divide-y divide-[#F0E1D4]">
-                            {group.students.map((student) => (
-                              <div
-                                key={`${group.key}-${student.id}-hadir`}
-                                className="flex min-h-12 items-center justify-center px-2 py-2"
-                              >
-                                {student.attendance_status === "Hadir" ? (
-                                  <span className="inline-flex h-7 w-10 items-center justify-center rounded-md bg-[#22C55E] font-extrabold text-white">
-                                    ✓
-                                  </span>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-
-                        {/* IZIN */}
-                        <td className="w-[76px] border-r p-0 align-top">
-                          <div className="divide-y divide-[#F0E1D4]">
-                            {group.students.map((student) => (
-                              <div
-                                key={`${group.key}-${student.id}-izin`}
-                                className="flex min-h-12 items-center justify-center px-2 py-2"
-                              >
-                                {student.attendance_status === "Izin" ? (
-                                  <span className="inline-flex h-7 w-10 items-center justify-center rounded-md bg-[#7C3AED] font-extrabold text-white">
-                                    ✓
-                                  </span>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-
-                        {/* ALPA */}
-                        <td className="w-[76px] border-r p-0 align-top">
-                          <div className="divide-y divide-[#F0E1D4]">
-                            {group.students.map((student) => (
-                              <div
-                                key={`${group.key}-${student.id}-alpa`}
-                                className="flex min-h-12 items-center justify-center px-2 py-2"
-                              >
-                                {student.attendance_status === "Alpa" ? (
-                                  <span className="inline-flex h-7 w-10 items-center justify-center rounded-md bg-[#DC2626] font-extrabold text-white">
-                                    ✓
-                                  </span>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-
-                        {/* KETERANGAN */}
-                        <td className="min-w-[230px] border-r p-0 align-top">
-                          <div className="divide-y divide-[#F0E1D4]">
-                            {group.students.map((student) => (
-                              <div
-                                key={`${group.key}-${student.id}-note`}
-                                className="flex min-h-12 items-center px-4 py-2 text-[13px] text-[#6F5549]"
-                              >
-                                {student.attendance_note ||
-                                  group.notes ||
-                                  "-"}
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-
-                        <td className="print-hidden px-4 py-4">
-                          {group.temporary_schedule_url ? (
-                            <a
-                              href={group.temporary_schedule_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-extrabold text-[#8C0F2D]"
-                            >
-                              <FileText className="h-4 w-4" />
-                              Lihat File
-                            </a>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-
-                        <td className="print-hidden px-4 py-4">
-                          <div className="flex min-w-[150px] flex-col items-start gap-2">
-                            {group.students.some(
-                              (item) => Boolean(item.source_attendance_id)
-                            ) ? (
-                              <>
-                                <span className="inline-flex rounded-full bg-[#E8F5EE] px-3 py-1 text-[11px] font-extrabold text-[#158A58]">
-                                  Input Guru
-                                </span>
-
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void handleDeleteAttendanceGroup(group)
-                                  }
-                                  className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] bg-white px-3 text-[13px] font-extrabold text-[#DC2626] transition hover:bg-red-50"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                  Hapus Absensi
-                                </button>
-                              </>
-                            ) : null}
-
-                            {group.students.some(
-                              (item) => item.data_source === "schedule"
-                            ) ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDeleteScheduleGroup(group)
-                                }
-                                className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#E6D5C4] bg-white px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                Hapus Jadwal
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
                       </tr>
-                    );
-                  })
+                    )
+                  )
                 )}
               </tbody>
             </table>
@@ -1866,376 +2630,290 @@ export default function KepalaSekolahJadwalPage() {
         </div>
       </section>
 
-      {showModal ? (
+      {/* DETAIL MODAL */}
+
+      {selectedRombel ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
-          <div className="max-h-[92vh] w-full max-w-[920px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
+          <div className="max-h-[92vh] w-full max-w-[980px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] shadow-2xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#E1CFBE] bg-[#FFF8EF] px-6 py-5">
               <div>
-                <h2 className="text-[22px] font-extrabold">
-                  Tambah Jadwal Rombel
+                <h2 className="text-[22px] font-extrabold text-[#2B1B18]">
+                  Detail Absensi Rombel
                 </h2>
 
-                <p className="mt-1 text-[13px] text-[#6F5549]">
-                  Admin hanya mengatur jam KBM siswa. Jam datang/pulang
-                  guru dan materi pembelajaran diisi oleh guru.
+                <p className="mt-1 text-[14px] text-[#6F5549]">
+                  {selectedRombel.teacher_name} •{" "}
+                  {selectedRombel.subject_name} •{" "}
+                  {formatDate(
+                    selectedRombel.attendance_date
+                  )}
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowModal(false)}
-                className="rounded-full p-2"
+                onClick={() =>
+                  setSelectedRombel(
+                    null
+                  )
+                }
+                className="rounded-full p-2 text-[#6F5549] transition hover:bg-[#F4E5DA]"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="space-y-5 px-6 py-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <FormGroup label="Nama Guru">
-                  <select
-                    value={form.teacher_id}
-                    onChange={(event) => {
-                      const teacherId = event.target.value;
-
-                      setForm((previous) => ({
-                        ...previous,
-                        teacher_id: teacherId,
-                        subject_id: "",
-                      }));
-
-                      setSelectedStudentIds([]);
-                    }}
-                    className="h-12 w-full rounded-xl border px-4"
-                  >
-                    <option value="">Pilih guru</option>
-
-                    {teachers.map((teacher) => (
-                      <option key={teacher.id} value={teacher.id}>
-                        {teacher.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </FormGroup>
-
-                <FormGroup label="Mapel">
-                  <select
-                    value={form.subject_id}
-                    onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        subject_id: event.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-xl border px-4"
-                  >
-                    <option value="">Pilih mata pelajaran</option>
-
-                    {subjectOptionsForSchedule.map((subject) => (
-                      <option key={subject.id} value={subject.id}>
-                        {getSubjectLabel(subject)}
-                      </option>
-                    ))}
-                  </select>
-                </FormGroup>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <FormGroup label="Tanggal">
-                  <input
-                    type="date"
-                    value={form.schedule_date}
-                    onChange={(event) => {
-                      const dateValue = event.target.value;
-
-                      setForm((previous) => ({
-                        ...previous,
-                        schedule_date: dateValue,
-                        day_name: getDayName(dateValue),
-                      }));
-                    }}
-                    className="h-12 w-full rounded-xl border px-4"
-                  />
-                </FormGroup>
-
-                <FormGroup label="Hari">
-                  <select
-                    value={form.day_name}
-                    onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        day_name: event.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-xl border px-4"
-                  >
-                    {dayOptions.map((day) => (
-                      <option key={day}>{day}</option>
-                    ))}
-                  </select>
-                </FormGroup>
-              </div>
-
               <div className="grid gap-4 md:grid-cols-4">
-                <FormGroup label="Jam Mulai KBM Siswa">
-                  <input
-                    type="time"
-                    value={form.start_time}
-                    onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        start_time: event.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-xl border px-4"
-                  />
-                </FormGroup>
+                <DetailSummaryCard
+                  label="Total Siswa"
+                  value={
+                    selectedRombel.total
+                  }
+                />
 
-                <FormGroup label="Jam Selesai KBM Siswa">
-                  <input
-                    type="time"
-                    value={form.end_time}
-                    onChange={(event) =>
-                      setForm((previous) => ({
-                        ...previous,
-                        end_time: event.target.value,
-                      }))
-                    }
-                    className="h-12 w-full rounded-xl border px-4"
-                  />
-                </FormGroup>
+                <DetailSummaryCard
+                  label="Hadir"
+                  value={
+                    selectedRombel.hadir
+                  }
+                />
 
-                <FormGroup label="Jam Siswa">
-                  <input
+                <DetailSummaryCard
+                  label="Izin"
+                  value={
+                    selectedRombel.izin
+                  }
+                />
+
+                <DetailSummaryCard
+                  label="Alpa"
+                  value={
+                    selectedRombel.alpa
+                  }
+                />
+              </div>
+
+              <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+                <div className="grid gap-3 text-[13px] md:grid-cols-4">
+                  <InfoItem
+                    label="Hari"
                     value={
-                      form.start_time && form.end_time
-                        ? `${formatTime(form.start_time)}-${formatTime(
-                          form.end_time
-                        )}`
-                        : "-"
+                      selectedRombel.day_name ||
+                      "-"
                     }
-                    readOnly
-                    className="h-12 w-full rounded-xl border bg-[#FFF8EF] px-4"
                   />
-                </FormGroup>
 
-                <FormGroup label="Sesi">
-                  <input
-                    value={formatSessionValue(
-                      calculateDurationMinutes(
-                        form.start_time,
-                        form.end_time
-                      )
+                  <InfoItem
+                    label="Tanggal"
+                    value={formatDate(
+                      selectedRombel.attendance_date
                     )}
-                    readOnly
-                    className="h-12 w-full rounded-xl border bg-[#FFF8EF] px-4"
                   />
-                </FormGroup>
-              </div>
 
-              <FormGroup label="Semester">
-                <select
-                  value={form.semester}
-                  onChange={(event) =>
-                    setForm((previous) => ({
-                      ...previous,
-                      semester: event.target.value,
-                    }))
-                  }
-                  className="h-12 w-full rounded-xl border px-4"
-                >
-                  {semesterOptions.map((semester) => (
-                    <option key={semester}>{semester}</option>
-                  ))}
-                </select>
-              </FormGroup>
+                  <InfoItem
+                    label="Datang Guru"
+                    value={formatTime(
+                      selectedRombel.teacher_arrival_time
+                    )}
+                  />
 
-              <FormGroup label="Keterangan">
-                <textarea
-                  value={form.notes}
-                  onChange={(event) =>
-                    setForm((previous) => ({
-                      ...previous,
-                      notes: event.target.value,
-                    }))
-                  }
-                  rows={3}
-                  className="w-full rounded-xl border px-4 py-3"
-                />
-              </FormGroup>
+                  <InfoItem
+                    label="Pulang Guru"
+                    value={formatTime(
+                      selectedRombel.teacher_departure_time
+                    )}
+                  />
 
-              <div className="rounded-2xl border bg-white p-5">
-                <label className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-xl border bg-[#FFF8EF]">
-                  <UploadCloud className="h-4 w-4" />
-                  Pilih File Jadwal
+                  <InfoItem
+                    label="Jam Siswa"
+                    value={`${formatTime(
+                      selectedRombel.start_time
+                    )}-${formatTime(
+                      selectedRombel.end_time
+                    )}`}
+                  />
 
-                  <input
-                    type="file"
-                    className="hidden"
-                    onChange={(event) =>
-                      setTemporaryScheduleFile(
-                        event.target.files?.[0] || null
-                      )
+                  <InfoItem
+                    label="Sesi"
+                    value={formatSessionValue(
+                      selectedRombel.session_name,
+                      selectedRombel.duration_minutes,
+                      selectedRombel.start_time,
+                      selectedRombel.end_time
+                    )}
+                  />
+
+                  <InfoItem
+                    label="Mapel"
+                    value={
+                      selectedRombel.subject_name
                     }
                   />
-                </label>
+
+                  <InfoItem
+                    label="Guru"
+                    value={
+                      selectedRombel.teacher_name
+                    }
+                  />
+
+                  <InfoItem
+                    label="Materi"
+                    value={
+                      selectedRombel.material_topic ||
+                      "-"
+                    }
+                  />
+                </div>
               </div>
 
-              <div className="rounded-2xl border bg-white p-5">
-                <div className="flex items-center justify-between">
-                  <p className="font-extrabold">
-                    Pilih Siswa Rombel ({selectedStudentIds.length})
-                  </p>
+              <div className="overflow-hidden rounded-2xl border border-[#E1CFBE] bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1120px] table-fixed border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
+                        <th className="w-[60px] px-5 py-4">
+                          No
+                        </th>
 
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={selectAllFilteredStudents}
-                      className="rounded-xl border px-3 py-2 text-xs"
-                    >
-                      Pilih Semua
-                    </button>
+                        <th className="w-[230px] px-5 py-4">
+                          Siswa
+                        </th>
 
-                    <button
-                      type="button"
-                      onClick={clearSelectedStudents}
-                      className="rounded-xl border px-3 py-2 text-xs"
-                    >
-                      Kosongkan
-                    </button>
-                  </div>
-                </div>
+                        <th className="w-[130px] px-5 py-4">
+                          NIPD
+                        </th>
 
-                <input
-                  value={studentSearch}
-                  onChange={(event) =>
-                    setStudentSearch(event.target.value)
-                  }
-                  placeholder="Cari siswa..."
-                  className="mt-4 h-11 w-full rounded-xl border px-4"
-                />
+                        <th className="w-[120px] px-5 py-4">
+                          Kelas
+                        </th>
 
-                <div className="mt-4 max-h-[280px] overflow-y-auto rounded-xl border">
-                  {filteredStudents.map((student) => {
-                    const checked =
-                      selectedStudentIds.includes(student.id);
+                        <th className="w-[80px] px-5 py-4 text-center">
+                          Hadir
+                        </th>
 
-                    return (
-                      <label
-                        key={student.id}
-                        className="flex cursor-pointer items-center justify-between border-b px-4 py-3"
-                      >
-                        <div>
-                          <p className="font-bold">
-                            {student.full_name}
-                          </p>
+                        <th className="w-[80px] px-5 py-4 text-center">
+                          Izin
+                        </th>
 
-                          <p className="text-xs text-[#6F5549]">
-                            {formatClass(
-                              student.level,
-                              student.grade
-                            )}
-                          </p>
-                        </div>
+                        <th className="w-[80px] px-5 py-4 text-center">
+                          Alpa
+                        </th>
 
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleStudent(student.id)}
-                        />
-                      </label>
-                    );
-                  })}
+                        <th className="w-[160px] px-5 py-4">
+                          Pemahaman
+                        </th>
+
+                        <th className="w-[250px] px-5 py-4">
+                          Keterangan
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {selectedRombel.students.map(
+                        (
+                          student,
+                          index
+                        ) => (
+                          <tr
+                            key={
+                              student.id
+                            }
+                            className="min-h-[82px] border-b border-[#F0E1D4] text-[14px]"
+                          >
+                            <td className="px-5 py-4 align-middle font-bold">
+                              {index +
+                                1}
+                            </td>
+
+                            <td className="px-5 py-4 align-middle">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F8DFD0] text-[13px] font-extrabold text-[#8C0F2D]">
+                                  {getInitials(
+                                    student.student_name
+                                  )}
+                                </div>
+
+                                <p className="break-words font-extrabold leading-5 text-[#2B1B18]">
+                                  {
+                                    student.student_name
+                                  }
+                                </p>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-[#6F5549]">
+                              {student.student_nis ||
+                                "-"}
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-[#6F5549]">
+                              {formatClass(
+                                student.student_level,
+                                student.student_grade
+                              )}
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-center">
+                              <ChecklistBox
+                                checked={isHadir(
+                                  student.attendance_status
+                                )}
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-center">
+                              <ChecklistBox
+                                checked={isIzin(
+                                  student.attendance_status
+                                )}
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-center">
+                              <ChecklistBox
+                                checked={isAlpa(
+                                  student.attendance_status
+                                )}
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 align-middle">
+                              <UnderstandingBadge
+                                status={
+                                  student.understanding_status
+                                }
+                              />
+                            </td>
+
+                            <td className="px-5 py-4 align-middle text-[#6F5549]">
+                              <p className="break-words leading-5">
+                                {getAttendanceNote(
+                                  student
+                                )}
+                              </p>
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => void handleSaveSchedule()}
-                disabled={saving}
-                className="h-12 w-full rounded-xl bg-[#8C0F2D] font-extrabold text-white disabled:opacity-50"
+                onClick={() =>
+                  setSelectedRombel(
+                    null
+                  )
+                }
+                className="h-11 w-full rounded-xl bg-[#8C0F2D] text-[14px] font-extrabold text-white transition hover:bg-[#54131D]"
               >
-                {saving ? "Menyimpan..." : "Simpan Jadwal Rombel"}
+                Tutup Detail
               </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {selectedGroup ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 py-8">
-          <div className="max-h-[90vh] w-full max-w-[800px] overflow-y-auto rounded-[22px] bg-[#FFF8EF] p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-extrabold">
-                  Detail Rombel
-                </h2>
-
-                <p className="text-sm text-[#6F5549]">
-                  {selectedGroup.teacher_name} •{" "}
-                  {selectedGroup.subject_name}
-                </p>
-
-                <p className="mt-1 text-xs text-[#8A6A5A]">
-                  Datang Guru:{" "}
-                  {formatTime(selectedGroup.teacher_arrival_time)} •
-                  Pulang Guru:{" "}
-                  {formatTime(selectedGroup.teacher_departure_time)} •
-                  Jam Siswa: {formatTime(selectedGroup.start_time)}-
-                  {formatTime(selectedGroup.end_time)}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {selectedGroup.students.some(
-                  (item) => Boolean(item.source_attendance_id)
-                ) ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleDeleteAttendanceGroup(selectedGroup)
-                    }
-                    className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#FECACA] bg-white px-3 text-[12px] font-extrabold text-[#DC2626] transition hover:bg-red-50"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Hapus Absensi
-                  </button>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedGroup(null)}
-                  className="rounded-full p-2 transition hover:bg-[#F4E5DA]"
-                >
-                  <X />
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-5 overflow-hidden rounded-xl border bg-white">
-              {selectedGroup.students.map((student, index) => (
-                <div
-                  key={student.id}
-                  className="flex items-center justify-between border-b px-5 py-4 last:border-b-0"
-                >
-                  <div>
-                    <p className="font-extrabold">
-                      {index + 1}. {student.student_name}
-                    </p>
-
-                    <p className="mt-1 text-xs text-[#6F5549]">
-                      {formatClass(
-                        student.student_level,
-                        student.student_grade
-                      )}
-                    </p>
-                  </div>
-
-                  <span className="rounded-full bg-[#FFF8EF] px-3 py-1 text-xs font-bold">
-                    {student.attendance_status || "Belum diabsen"}
-                  </span>
-                </div>
-              ))}
             </div>
           </div>
         </div>
@@ -2243,6 +2921,10 @@ export default function KepalaSekolahJadwalPage() {
     </KepalaSekolahLayout>
   );
 }
+
+/* =========================================================
+   COMPONENTS
+========================================================= */
 
 function SummaryCard({
   icon,
@@ -2255,13 +2937,24 @@ function SummaryCard({
   label: string;
   value: number | string;
   info: string;
-  tone: "pink" | "orange" | "blue" | "green";
+  tone:
+    | "pink"
+    | "orange"
+    | "blue"
+    | "green";
 }) {
   const toneClass = {
-    pink: "bg-[#F8E1E8] text-[#8C0F2D]",
-    orange: "bg-[#F4DFD5] text-[#B85C38]",
-    blue: "bg-[#D7ECFA] text-[#1779B8]",
-    green: "bg-[#C7F0DA] text-[#158A58]",
+    pink:
+      "bg-[#F8E1E8] text-[#8C0F2D]",
+
+    orange:
+      "bg-[#F4DFD5] text-[#B85C38]",
+
+    blue:
+      "bg-[#D7ECFA] text-[#1779B8]",
+
+    green:
+      "bg-[#C7F0DA] text-[#158A58]",
   }[tone];
 
   return (
@@ -2278,7 +2971,7 @@ function SummaryCard({
         </span>
       </div>
 
-      <p className="text-[26px] font-extrabold leading-none">
+      <p className="text-[26px] font-extrabold leading-none text-[#2B1B18]">
         {value}
       </p>
 
@@ -2289,20 +2982,87 @@ function SummaryCard({
   );
 }
 
-function FormGroup({
+function DetailSummaryCard({
   label,
-  children,
+  value,
 }: {
   label: string;
-  children: ReactNode;
+  value: number | string;
 }) {
   return (
-    <label className="block">
-      <p className="mb-2 text-[13px] font-extrabold">
+    <div className="rounded-2xl border border-[#E1CFBE] bg-white px-5 py-4">
+      <p className="text-[13px] text-[#6F5549]">
         {label}
       </p>
 
-      {children}
-    </label>
+      <p className="mt-2 text-[24px] font-extrabold text-[#2B1B18]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ChecklistBox({
+  checked,
+}: {
+  checked: boolean;
+}) {
+  return (
+    <span
+      className={`mx-auto flex h-6 w-12 items-center justify-center rounded-[5px] border text-[13px] font-extrabold ${
+        checked
+          ? "border-[#2F66C9] bg-[#3F73C8] text-white"
+          : "border-[#C9D3E6] bg-white text-transparent"
+      }`}
+    >
+      ✓
+    </span>
+  );
+}
+
+function UnderstandingBadge({
+  status,
+}: {
+  status?: string | null;
+}) {
+  const safe =
+    status || "-";
+
+  const className =
+    safe === "Paham"
+      ? "bg-[#C7F0DA] text-[#158A58]"
+      : safe ===
+          "Cukup Paham"
+        ? "bg-[#FFF2B8] text-[#B26A00]"
+        : safe === "-"
+          ? "bg-[#F1F5F9] text-[#64748B]"
+          : "bg-[#FFE4E6] text-[#BE123C]";
+
+  return (
+    <span
+      className={`inline-flex rounded-full px-3 py-1 text-[12px] font-extrabold ${className}`}
+    >
+      {safe}
+    </span>
+  );
+}
+
+function InfoItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8A5A48]">
+        {label}
+      </p>
+
+      <p className="mt-1 break-words font-extrabold text-[#2B1B18]">
+        {value}
+      </p>
+    </div>
   );
 }
