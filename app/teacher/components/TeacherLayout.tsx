@@ -14,6 +14,7 @@ import {
   GalleryHorizontal,
   LayoutGrid,
   LogOut,
+  Menu,
   PenLine,
   Plus,
   Search,
@@ -109,6 +110,7 @@ export default function TeacherLayout({
 
   const [displayName, setDisplayName] = useState(teacherName || "Guru");
   const [displaySubject, setDisplaySubject] = useState(teacherSubject || "Guru");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     async function loadTeacherProfile() {
@@ -211,9 +213,26 @@ export default function TeacherLayout({
   return (
     <main className="min-h-screen w-full overflow-x-hidden bg-[#F6EFE6] text-[#2C1A17]">
       <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-[#F6EFE6]">
-        <aside className="fixed left-0 top-0 z-40 flex h-screen w-[266px] flex-col bg-[#8A0017] text-white">
+        {mobileMenuOpen && (
+          <button
+            type="button"
+            aria-label="Tutup menu"
+            onClick={() => setMobileMenuOpen(false)}
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          />
+        )}
+
+        <aside
+          className={`fixed left-0 top-0 z-50 flex h-[100dvh] w-[266px] max-w-[85vw] flex-col bg-[#8A0017] text-white shadow-2xl transition-transform duration-300 ease-in-out md:translate-x-0 md:shadow-none ${
+            mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
           <div className="flex h-[98px] items-center border-b border-white/10 px-5">
-            <Link href="/teacher" className="flex items-center gap-3">
+            <Link
+              href="/teacher"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center gap-3"
+            >
               <div className="h-12 w-12 overflow-hidden rounded-full bg-white/10">
                 <Image
                   src="/icon_hstkb_logo.png"
@@ -249,6 +268,7 @@ export default function TeacherLayout({
                   <Link
                     key={menu.name}
                     href={menu.href}
+                    onClick={() => setMobileMenuOpen(false)}
                     className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left transition ${
                       isActive ? "bg-[#A10A26] shadow-sm" : "hover:bg-white/5"
                     }`}
@@ -272,6 +292,7 @@ export default function TeacherLayout({
           <div className="border-t border-white/10 px-3 py-4">
             <Link
               href="/teacher/laporan-kbm"
+              onClick={() => setMobileMenuOpen(false)}
               className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#D97A37] text-[13px] font-bold text-white transition hover:brightness-105"
             >
               <Plus className="h-[15px] w-[15px]" />
@@ -306,9 +327,19 @@ export default function TeacherLayout({
           </div>
         </aside>
 
-        <section className="ml-[266px] min-h-screen w-[calc(100%-266px)] max-w-[calc(100%-266px)] flex-1 overflow-x-hidden bg-[#F6EFE6]">
-          <header className="sticky top-0 z-30 flex h-[98px] w-full max-w-full items-center justify-between border-b border-[#E8D7C5] bg-[#F6EFE6]/95 px-8 backdrop-blur">
-            <div className="relative w-full max-w-[470px]">
+        <section className="ml-0 min-h-screen w-full min-w-0 max-w-full flex-1 overflow-x-hidden bg-[#F6EFE6] md:ml-[266px] md:w-[calc(100%-266px)] md:max-w-[calc(100%-266px)]">
+          <header className="sticky top-0 z-30 flex min-h-[76px] w-full max-w-full items-center gap-3 border-b border-[#E8D7C5] bg-[#F6EFE6]/95 px-4 py-3 backdrop-blur sm:px-6 md:h-[98px] md:px-8 md:py-0">
+            <button
+              type="button"
+              aria-label="Buka menu navigasi"
+              aria-expanded={mobileMenuOpen}
+              onClick={() => setMobileMenuOpen(true)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#DCC8B6] bg-[#F8F2EA] text-[#8A0017] md:hidden"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+
+            <div className="relative min-w-0 w-full max-w-[470px]">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#8E6A58]" />
               <input
                 placeholder={searchPlaceholder}
@@ -316,7 +347,7 @@ export default function TeacherLayout({
               />
             </div>
 
-            <div className="ml-8 flex min-w-0 items-center gap-5">
+            <div className="ml-auto hidden min-w-0 items-center gap-5 sm:flex md:ml-8">
               <Bell className="h-5 w-5 shrink-0 text-[#8A4A32]" />
 
               <div className="h-10 w-px shrink-0 bg-[#DCC8B6]" />
@@ -338,7 +369,7 @@ export default function TeacherLayout({
             </div>
           </header>
 
-          <div className="w-full max-w-full overflow-x-hidden px-8 py-8">
+          <div className="w-full max-w-full overflow-x-hidden px-4 py-5 sm:px-6 md:px-8 md:py-8">
             <div className="w-full max-w-full overflow-hidden">{children}</div>
             <AcademicFooter />
           </div>

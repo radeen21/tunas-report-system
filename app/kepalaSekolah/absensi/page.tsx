@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from "react";
 import * as XLSX from "xlsx";
 import {
   AlertCircle,
   CalendarCheck,
+  FileSpreadsheet,
+  Upload,
   Download,
   Printer,
   Eye,
@@ -82,6 +84,19 @@ type TeacherAttendanceRow = {
   status: string;
   notes: string | null;
   created_at?: string;
+};
+
+type TeacherImportRow = {
+  rowNumber: number;
+  teacherCode: string;
+  teacherId: string | null;
+  teacherName: string;
+  attendanceDate: string;
+  arrivalTime: string | null;
+  departureTime: string | null;
+  status: string;
+  notes: string | null;
+  error: string | null;
 };
 
 type EnrichedAttendance = AttendanceRow & {
@@ -770,6 +785,46 @@ function getDatesBetween(
   return dates;
 }
 
+function normalizeHeader(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s_\-]+/g, "");
+}
+
+function parseImportDate(value: unknown): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return toYMD(value);
+  if (typeof value === "number" && value > 0) {
+    const parts = XLSX.SSF.parse_date_code(value);
+    if (parts) return `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`;
+  }
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  let match = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (match) return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+  match = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (match) return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
+  return null;
+}
+
+function parseImportTime(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" && value >= 0 && value < 1) {
+    const minutes = Math.round(value * 24 * 60);
+    return `${String(Math.floor(minutes / 60) % 24).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00`;
+  }
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}:${(match[3] || "00")}`;
+}
+
+function normalizeImportStatus(value: unknown): string | null {
+  const status = normalizeText(String(value ?? ""));
+  if (["h", "hadir", "present"].includes(status)) return "Hadir";
+  if (["i", "izin", "ijin", "permission"].includes(status)) return "Izin";
+  if (["s", "sakit", "sick"].includes(status)) return "Sakit";
+  if (["a", "alpa", "alpha", "absent", "tidak hadir"].includes(status)) return "Alpa";
+  return null;
+}
+
 /* =========================================================
    PAGE
 ========================================================= */
@@ -783,6 +838,11 @@ export default function KepalaSekolahAbsensiPage() {
 
   const [teacherAttendance, setTeacherAttendance] =
     useState<TeacherAttendanceRow[]>([]);
+
+  const [teacherImportRows, setTeacherImportRows] = useState<TeacherImportRow[]>([]);
+  const [teacherImportFileName, setTeacherImportFileName] = useState("");
+  const [teacherImportMessage, setTeacherImportMessage] = useState("");
+  const [teacherImporting, setTeacherImporting] = useState(false);
 
   const [printTeacherId, setPrintTeacherId] =
     useState("");
@@ -2040,6 +2100,115 @@ export default function KepalaSekolahAbsensiPage() {
   }
 
   /* =========================================================
+     IMPORT ABSENSI GURU DARI SPREADSHEET
+  ========================================================= */
+
+  async function handleTeacherImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setTeacherImportMessage("");
+    setTeacherImportRows([]);
+    setTeacherImportFileName(file.name);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!sheet) throw new Error("Sheet pertama tidak ditemukan.");
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      if (!rawRows.length) throw new Error("Spreadsheet belum berisi data.");
+      const teacherByCode = new Map<string, TeacherRow>();
+      teachers.forEach((teacher) => {
+        const code = normalizeText(teacher.teacher_code);
+        if (code) teacherByCode.set(code, teacher);
+      });
+      const parsed: TeacherImportRow[] = rawRows.map((raw, index) => {
+        const values = new Map(Object.entries(raw).map(([key, value]) => [normalizeHeader(key), value]));
+        const get = (...keys: string[]) => {
+          for (const key of keys) {
+            const value = values.get(key);
+            if (value !== undefined && String(value).trim() !== "") return value;
+          }
+          return "";
+        };
+        const teacherCode = String(get("kodeguru", "teacher_code", "kodepengajar")).trim();
+        const teacher = teacherByCode.get(normalizeText(teacherCode));
+        const attendanceDate = parseImportDate(get("tanggal", "tanggalabsensi", "attendance_date", "date")) || "";
+        const arrivalTime = parseImportTime(get("jamdatang", "jammasuk", "arrival_time", "checkin"));
+        const departureTime = parseImportTime(get("jampulang", "jamkeluar", "departure_time", "checkout"));
+        const rawStatus = get("status", "kehadiran", "statuskehadiran");
+        const status = normalizeImportStatus(rawStatus) || "";
+        const notes = String(get("keterangan", "catatan", "notes", "note") || "").trim() || null;
+        const errors: string[] = [];
+        if (!teacherCode) errors.push("Kode Guru kosong");
+        else if (!teacher) errors.push(`Kode Guru ${teacherCode} tidak ditemukan`);
+        if (!attendanceDate) errors.push("Tanggal tidak valid/kosong");
+        if (!status) errors.push(`Status '${String(rawStatus || "kosong")}' tidak dikenali`);
+        if (!arrivalTime && !departureTime && !status) errors.push("Data kehadiran tidak lengkap");
+        return {
+          rowNumber: index + 2, teacherCode, teacherId: teacher?.id || null,
+          teacherName: teacher?.full_name || "Guru tidak ditemukan", attendanceDate,
+          arrivalTime, departureTime, status, notes, error: errors.length ? errors.join("; ") : null,
+        };
+      }).filter((row) => row.teacherCode || row.attendanceDate || row.status || row.arrivalTime || row.departureTime);
+      if (!parsed.length) throw new Error("Tidak ada baris data yang dapat dibaca.");
+      setTeacherImportRows(parsed);
+      setTeacherImportMessage(`Berhasil membaca ${parsed.length} baris. Periksa data sebelum menyimpan.`);
+    } catch (error) {
+      setTeacherImportMessage(error instanceof Error ? error.message : "Gagal membaca file Excel.");
+    }
+  }
+
+  async function handleSaveTeacherImport() {
+    const validRows = teacherImportRows.filter((row) => !row.error && row.teacherId);
+    if (!validRows.length) {
+      setTeacherImportMessage("Tidak ada baris valid untuk disimpan. Periksa Kode Guru, tanggal, dan status.");
+      return;
+    }
+    setTeacherImporting(true);
+    setTeacherImportMessage("");
+    try {
+      const uniqueRows = new Map<string, TeacherImportRow>();
+      validRows.forEach((row) => uniqueRows.set(`${row.teacherId}|${row.attendanceDate}`, row));
+      const rowsToSave = [...uniqueRows.values()];
+      const teacherIds = [...new Set(rowsToSave.map((row) => row.teacherId as string))];
+      const dates = [...new Set(rowsToSave.map((row) => row.attendanceDate))];
+      const { data: existing, error: existingError } = await supabase
+        .from("teacher_attendance").select("*").in("teacher_id", teacherIds).in("attendance_date", dates);
+      if (existingError) throw existingError;
+      const existingMap = new Map((existing || []).map((item) => [`${item.teacher_id}|${item.attendance_date}`, item]));
+      let inserted = 0;
+      let updated = 0;
+      for (const row of rowsToSave) {
+        const key = `${row.teacherId}|${row.attendanceDate}`;
+        const payload = {
+          teacher_id: row.teacherId,
+          attendance_date: row.attendanceDate,
+          arrival_time: row.arrivalTime,
+          departure_time: row.departureTime,
+          status: row.status,
+          notes: row.notes,
+          updated_at: new Date().toISOString(),
+        };
+        const old = existingMap.get(key);
+        const result = old
+          ? await supabase.from("teacher_attendance").update(payload).eq("id", old.id)
+          : await supabase.from("teacher_attendance").insert(payload);
+        if (result.error) throw result.error;
+        if (old) updated++; else inserted++;
+      }
+      setTeacherImportMessage(`Import selesai. ${inserted} data baru ditambahkan dan ${updated} data diperbarui. Baris tidak valid dilewati.`);
+      setTeacherImportRows([]);
+      setTeacherImportFileName("");
+      await fetchData();
+    } catch (error) {
+      setTeacherImportMessage(error instanceof Error ? `Gagal menyimpan import: ${error.message}` : "Gagal menyimpan data import.");
+    } finally {
+      setTeacherImporting(false);
+    }
+  }
+
+  /* =========================================================
      UI
   ========================================================= */
 
@@ -2135,6 +2304,31 @@ export default function KepalaSekolahAbsensiPage() {
               Rekap diambil dari tabel teacher_attendance, terpisah dari absensi siswa.
               Periode mengikuti tanggal 21 bulan sebelumnya sampai tanggal 20 bulan pilihan.
             </p>
+          </div>
+          <div className="mb-4 rounded-2xl border border-dashed border-[#C9AA98] bg-[#FFFCF8] p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="font-extrabold text-[#2B1B18]">Import Absensi Guru dari Excel</p>
+                <p className="mt-1 text-[12px] leading-5 text-[#6F5549]">Gunakan kolom Kode Guru, Tanggal, Jam Datang, Jam Pulang, Status, dan Keterangan. Nama guru dicocokkan melalui Kode Guru ke tabel teachers.</p>
+              </div>
+              <label className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] hover:bg-[#FFF8EF]">
+                <Upload className="h-4 w-4" /> Pilih File Excel
+                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleTeacherImportFile} />
+              </label>
+            </div>
+            {teacherImportFileName ? <p className="mt-3 text-[12px] font-bold text-[#6F5549]">File: {teacherImportFileName}</p> : null}
+            {teacherImportMessage ? <p className="mt-3 rounded-xl bg-[#FFF1E8] px-3 py-2 text-[13px] text-[#75412F]">{teacherImportMessage}</p> : null}
+            {teacherImportRows.length > 0 ? <>
+              <div className="mt-3 max-h-[300px] overflow-auto rounded-xl border border-[#E1CFBE] bg-white">
+                <table className="w-full min-w-[850px] text-left text-[12px]"><thead className="sticky top-0 bg-[#FFF8EF] text-[#6F5549]"><tr>{["Baris", "Kode Guru", "Nama Guru", "Tanggal", "Datang", "Pulang", "Status", "Validasi"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead>
+                  <tbody>{teacherImportRows.map((row) => <tr key={row.rowNumber} className="border-t border-[#F0E1D4]"><td className="px-3 py-2">{row.rowNumber}</td><td className="px-3 py-2 font-bold">{row.teacherCode || "-"}</td><td className="px-3 py-2">{row.teacherName}</td><td className="px-3 py-2">{row.attendanceDate || "-"}</td><td className="px-3 py-2">{row.arrivalTime || "-"}</td><td className="px-3 py-2">{row.departureTime || "-"}</td><td className="px-3 py-2">{row.status || "-"}</td><td className={`px-3 py-2 ${row.error ? "font-bold text-red-600" : "text-green-700"}`}>{row.error || "Valid"}</td></tr>)}</tbody>
+                </table>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[12px] text-[#6F5549]">{teacherImportRows.filter((row) => !row.error).length} valid • {teacherImportRows.filter((row) => row.error).length} perlu diperbaiki</p>
+                <div className="flex gap-2"><button type="button" onClick={() => { setTeacherImportRows([]); setTeacherImportFileName(""); setTeacherImportMessage(""); }} className="h-10 rounded-xl border border-[#DCC8B6] px-4 text-[13px] font-bold text-[#6F5549]">Batal</button><button type="button" disabled={teacherImporting || !teacherImportRows.some((row) => !row.error)} onClick={handleSaveTeacherImport} className="h-10 rounded-xl bg-[#8C0F2D] px-5 text-[13px] font-extrabold text-white disabled:opacity-50">{teacherImporting ? "Menyimpan..." : "Simpan Data Import"}</button></div>
+              </div>
+            </> : null}
           </div>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <select

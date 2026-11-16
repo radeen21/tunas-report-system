@@ -12,6 +12,7 @@ import {
   Printer,
   Save,
   Search,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -423,6 +424,7 @@ export default function TeacherAbsensiPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [deletingHistoryKey, setDeletingHistoryKey] = useState<string | null>(null);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -1696,6 +1698,43 @@ export default function TeacherAbsensiPage() {
     XLSX.writeFile(workbook, "Template_Import_Laporan_KBM.xlsx");
   }
 
+  async function handleDeleteAttendanceHistory(history: AttendanceHistoryGroup) {
+    if (!teacher?.id) {
+      alert("Akun guru tidak ditemukan. Silakan login kembali.");
+      return;
+    }
+    const rowIds = history.rows.map((row) => row.id).filter(Boolean);
+    if (rowIds.length === 0) {
+      alert("Data absensi yang akan dihapus tidak ditemukan.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Hapus riwayat KBM ${history.subjectName} tanggal ${formatDate(history.attendanceDate)}?\n\nSebanyak ${rowIds.length} data absensi siswa pada sesi ini akan dihapus. Rekap kehadiran harian guru tidak ikut dihapus.`
+    );
+    if (!confirmed) return;
+    try {
+      setDeletingHistoryKey(history.key);
+      setErrorMessage("");
+      setSuccessMessage("");
+      // Hapus hanya baris attendance milik sesi ini; teacher_attendance tetap aman.
+      const { error } = await supabase
+        .from("attendance")
+        .delete()
+        .eq("teacher_id", teacher.id)
+        .in("id", rowIds);
+      if (error) throw new Error(error.message);
+      if (selectedHistory?.key === history.key) setSelectedHistory(null);
+      if (editingHistory?.key === history.key) setEditingHistory(null);
+      await fetchData();
+      setSuccessMessage(`Riwayat KBM ${history.subjectName} tanggal ${formatDate(history.attendanceDate)} berhasil dihapus.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Terjadi kesalahan yang tidak diketahui.";
+      alert(`Gagal menghapus riwayat absensi: ${message}`);
+    } finally {
+      setDeletingHistoryKey(null);
+    }
+  }
+
   function exportAttendanceToExcel() {
     if (attendanceHistory.length === 0) {
       alert("Belum ada riwayat absensi yang dapat diekspor.");
@@ -2831,6 +2870,16 @@ export default function TeacherAbsensiPage() {
                             >
                               <Pencil className="h-4 w-4" />
                               Edit Absensi
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteAttendanceHistory(history)}
+                              disabled={deletingHistoryKey === history.key}
+                              className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-red-200 bg-white px-3 text-[13px] font-extrabold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              {deletingHistoryKey === history.key ? "Menghapus..." : "Hapus"}
                             </button>
                           </div>
                         </td>
