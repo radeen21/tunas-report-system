@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 import {
   AlertCircle,
   CalendarCheck,
@@ -11,7 +11,6 @@ import {
   FileSpreadsheet,
   Upload,
   Search,
-  Trash2,
   UserCheck,
   UserX,
   UsersRound,
@@ -806,9 +805,6 @@ export default function KepalaSekolahAbsensiPage() {
   const [loading, setLoading] =
     useState(true);
 
-  const [deletingAttendanceId, setDeletingAttendanceId] =
-    useState<string | null>(null);
-
   const [
     errorMessage,
     setErrorMessage,
@@ -1191,51 +1187,6 @@ export default function KepalaSekolahAbsensiPage() {
       );
     };
   }, []);
-
-  /* =========================================================
-     DELETE ABSENSI KBM
-     Menghapus satu baris absensi siswa dari tabel attendance.
-  ========================================================= */
-
-  async function handleDeleteAttendance(item: EnrichedAttendance) {
-    const studentName = item.student_name || "siswa ini";
-    const dateLabel = formatDate(item.attendance_date);
-    const confirmed = window.confirm(
-      `Hapus data absensi KBM ${studentName} tanggal ${dateLabel}?\n\nData yang dihapus tidak dapat dikembalikan.`
-    );
-
-    if (!confirmed) return;
-
-    setDeletingAttendanceId(item.id);
-    setErrorMessage("");
-
-    try {
-      const { error } = await supabase
-        .from("attendance")
-        .delete()
-        .eq("id", item.id);
-
-      if (error) throw error;
-
-      setAttendance((current) =>
-        current.filter((row) => row.id !== item.id)
-      );
-
-      // Tutup detail jika data yang dihapus sedang ditampilkan.
-      setSelectedRombel((current) =>
-        current && current.students.some((student) => student.id === item.id)
-          ? null
-          : current
-      );
-    } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "Gagal menghapus data absensi KBM.";
-      setErrorMessage(`Gagal menghapus absensi KBM: ${message}`);
-    } finally {
-      setDeletingAttendanceId(null);
-    }
-  }
 
   /* =========================================================
      FILTER
@@ -1736,6 +1687,303 @@ export default function KepalaSekolahAbsensiPage() {
     );
   }
 
+
+  /* =========================================================
+     EXPORT EXCEL ABSENSI MURID
+     Format tabel mengikuti desain Excel Absensi KBM Harian.
+     Berisi semua data siswa pada periode yang dipilih.
+  ========================================================= */
+
+  function handleExportStudentExcel() {
+    const monthNumber = Number(exportMonth);
+    const yearNumber = Number(exportYear);
+
+    if (!monthNumber || !yearNumber) {
+      alert("Pilih bulan dan tahun export terlebih dahulu.");
+      return;
+    }
+
+    const { start, end } = getCutoffRange(monthNumber, yearNumber);
+    // Export ini khusus data kehadiran siswa. Baris absensi guru tanpa
+    // student_id tidak dimasukkan ke laporan murid.
+    const periodAttendance = attendance.filter((item) =>
+      isDateInRange(item.attendance_date, start, end) &&
+      Boolean(item.student_id)
+    );
+
+    if (periodAttendance.length === 0) {
+      alert("Tidak ada data absensi KBM pada periode yang dipilih.");
+      return;
+    }
+
+    // Kelompokkan data berdasarkan satu kegiatan/rombel KBM.
+    const groups = groupAttendanceByRombel(periodAttendance)
+      .filter((group) => group.students.length > 0)
+      .sort((a, b) => {
+      const dateCompare = (a.attendance_date || "").localeCompare(b.attendance_date || "");
+      if (dateCompare !== 0) return dateCompare;
+      return (a.start_time || "").localeCompare(b.start_time || "");
+    });
+
+    const worksheetData: (string | number)[][] = [
+      ["ABSENSI KBM GURU DAN SISWA HARIAN"],
+      ["HOMESCHOOLING TUNAS KARYA BANGSA"],
+      [
+        "Tahun Ajaran",
+        `${monthNumber >= 7 ? yearNumber : yearNumber - 1}/${monthNumber >= 7 ? yearNumber + 1 : yearNumber}`,
+      ],
+      [
+        "Periode",
+        `${formatDate(start)} s/d ${formatDate(end)}`,
+      ],
+      [
+        "No",
+        "Hari",
+        "Tanggal",
+        "Nama Guru",
+        "Datang Guru",
+        "Pulang Guru",
+        "Jadwal Kegiatan Belajar Mengajar",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Keterangan",
+      ],
+      [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Jam Siswa",
+        "Sesi",
+        "Kls",
+        "Mapel",
+        "Materi",
+        "Siswa",
+        "Hadir",
+        "Izin",
+        "Alpa",
+        "",
+      ],
+    ];
+
+    const merges: Array<{ s: { r: number; c: number }; e: { r: number; c: number } }> = [
+      // Judul dan identitas sekolah
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
+      { s: { r: 2, c: 1 }, e: { r: 2, c: 15 } },
+      { s: { r: 3, c: 1 }, e: { r: 3, c: 15 } },
+      // Header bertingkat
+      { s: { r: 4, c: 6 }, e: { r: 4, c: 14 } },
+    ];
+
+    // Kolom identitas dan keterangan membentang dua baris header.
+    [0, 1, 2, 3, 4, 5, 15].forEach((column) => {
+      merges.push({
+        s: { r: 4, c: column },
+        e: { r: 5, c: column },
+      });
+    });
+
+    let totalSessions = 0;
+    let totalHadir = 0;
+    let totalIzin = 0;
+    let totalAlpa = 0;
+    let totalSakit = 0;
+
+    groups.forEach((group, groupIndex) => {
+      const groupStartRow = worksheetData.length;
+      const studentsInGroup = group.students;
+      const groupRowCount = Math.max(studentsInGroup.length, 1);
+
+      const dateValue = group.attendance_date || "";
+      const dateObject = dateValue ? new Date(`${dateValue}T00:00:00`) : null;
+      const dayLabel =
+        group.day_name ||
+        (dateObject && !Number.isNaN(dateObject.getTime())
+          ? new Intl.DateTimeFormat("id-ID", { weekday: "long" }).format(dateObject)
+          : "-");
+
+      const duration =
+        group.duration_minutes ||
+        calculateDurationMinutes(group.start_time, group.end_time);
+
+      let sessionNumber = 0;
+      if (duration) {
+        sessionNumber = duration === 60 ? 0.75 : duration / 90;
+      } else {
+        const parsed = Number(String(group.session_name || "").replace(",", "."));
+        sessionNumber = Number.isFinite(parsed) ? parsed : 0;
+      }
+      totalSessions += sessionNumber;
+
+      const classNames = Array.from(
+        new Set(
+          studentsInGroup.map((student) =>
+            formatClass(student.student_level, student.student_grade)
+          )
+        )
+      ).filter((value) => value && value !== "-");
+
+      const classLabel = classNames.length ? classNames.join(", ") : "-";
+      const sessionLabel = sessionNumber
+        ? new Intl.NumberFormat("id-ID", {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 2,
+          }).format(sessionNumber)
+        : "-";
+
+      const groupValues: (string | number)[] = [
+        groupIndex + 1,
+        dayLabel,
+        formatDate(group.attendance_date),
+        group.teacher_name || "-",
+        formatTime(group.teacher_arrival_time),
+        formatTime(group.teacher_departure_time),
+        `${formatTime(group.start_time)}-${formatTime(group.end_time)}`,
+        sessionLabel,
+        classLabel,
+        group.subject_name || "-",
+        group.material_topic || "-",
+      ];
+
+      if (studentsInGroup.length === 0) {
+        worksheetData.push([
+          ...groupValues,
+          "-",
+          "",
+          "",
+          "",
+          "-",
+        ]);
+      } else {
+        studentsInGroup.forEach((student) => {
+          const hadir = isHadir(student.attendance_status);
+          const izin = isIzin(student.attendance_status);
+          const alpa = isAlpa(student.attendance_status);
+          const sakit = isSakit(student.attendance_status);
+
+          if (hadir) totalHadir += 1;
+          if (izin) totalIzin += 1;
+          if (alpa) totalAlpa += 1;
+          if (sakit) totalSakit += 1;
+
+          const note = getAttendanceNote(student);
+          const displayNote =
+            note !== "-" ? note : sakit ? "Sakit" : "-";
+
+          worksheetData.push([
+            ...groupValues,
+            student.student_name || "-",
+            hadir ? "✓" : "",
+            izin ? "✓" : "",
+            alpa ? "✓" : "",
+            displayNote,
+          ]);
+        });
+      }
+
+      const groupEndRow = worksheetData.length - 1;
+
+      // Informasi kegiatan yang sama digabung vertikal; nama/status siswa tetap per baris.
+      if (groupEndRow > groupStartRow) {
+        for (let column = 0; column <= 10; column += 1) {
+          merges.push({
+            s: { r: groupStartRow, c: column },
+            e: { r: groupEndRow, c: column },
+          });
+        }
+      }
+    });
+
+    const totalRowIndex = worksheetData.length;
+    worksheetData.push([
+      "TOTAL SESI",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      Number(totalSessions.toFixed(2)),
+      "",
+      "",
+      "",
+      "",
+      `Hadir: ${totalHadir}`,
+      `Izin: ${totalIzin}`,
+      `Alpa: ${totalAlpa}`,
+      `Sakit: ${totalSakit}`,
+    ]);
+    merges.push({
+      s: { r: totalRowIndex, c: 0 },
+      e: { r: totalRowIndex, c: 6 },
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+    worksheet["!merges"] = merges;
+    worksheet["!cols"] = [
+      { wch: 6 },  // No
+      { wch: 12 }, // Hari
+      { wch: 14 }, // Tanggal
+      { wch: 25 }, // Nama Guru
+      { wch: 13 }, // Datang Guru
+      { wch: 13 }, // Pulang Guru
+      { wch: 15 }, // Jam Siswa
+      { wch: 9 },  // Sesi
+      { wch: 12 }, // Kls
+      { wch: 20 }, // Mapel
+      { wch: 28 }, // Materi
+      { wch: 30 }, // Siswa
+      { wch: 9 },  // Hadir
+      { wch: 9 },  // Izin
+      { wch: 9 },  // Alpa
+      { wch: 32 }, // Keterangan
+    ];
+    worksheet["!rows"] = [
+      { hpt: 28 },
+      { hpt: 22 },
+      { hpt: 18 },
+      { hpt: 18 },
+      { hpt: 24 },
+      { hpt: 30 },
+    ];
+    worksheet["!freeze"] = { xSplit: 6, ySplit: 6 };
+    worksheet["!autofilter"] = {
+      ref: `A6:P${Math.max(6, totalRowIndex)}`,
+    };
+    worksheet["!pageSetup"] = {
+      orientation: "landscape",
+      paperSize: 9,
+      fitToWidth: 1,
+      fitToHeight: 0,
+    };
+    worksheet["!margins"] = {
+      left: 0.25,
+      right: 0.25,
+      top: 0.5,
+      bottom: 0.5,
+      header: 0.2,
+      footer: 0.2,
+    };
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Murid");
+
+    XLSX.writeFile(
+      workbook,
+      `Absensi_Murid_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`,
+      { bookType: "xlsx", cellStyles: true }
+    );
+  }
+
   /* =========================================================
      IMPORT ABSENSI GURU DARI EXCEL
      Pencocokan menggunakan Kode Guru (teachers.teacher_code)
@@ -2008,65 +2256,490 @@ export default function KepalaSekolahAbsensiPage() {
     return { start, end, rows, monthNumber, yearNumber };
   }
 
+  /* =========================================================
+     EXPORT & PRINT ABSENSI GURU
+     Format mengikuti lembar "Absensi KBM Guru dan Siswa Harian".
+     Export dan cetak menggunakan guru yang dipilih pada dropdown.
+  ========================================================= */
+
+  type TeacherReportGroup = {
+    teacherId: string;
+    teacherName: string;
+    date: string;
+    dayName: string;
+    arrivalTime: string;
+    departureTime: string;
+    teacherStatus: string;
+    teacherNotes: string;
+    group: RombelGroup | null;
+  };
+
+  function buildTeacherReportGroups(
+    start: string,
+    end: string,
+    selectedTeacherId?: string
+  ): TeacherReportGroup[] {
+    const teacherMap = new Map(teachers.map((teacher) => [teacher.id, teacher]));
+    const dailyAttendance = teacherAttendance.filter((item) =>
+      isDateInRange(item.attendance_date, start, end) &&
+      (!selectedTeacherId || item.teacher_id === selectedTeacherId)
+    );
+    const kbmGroups = groupAttendanceByRombel(
+      attendance.filter((item) =>
+        isDateInRange(item.attendance_date, start, end) &&
+        (!selectedTeacherId || item.teacher_id === selectedTeacherId)
+      )
+    );
+
+    const dailyMap = new Map<string, TeacherAttendanceRow>();
+    dailyAttendance.forEach((item) => {
+      dailyMap.set(`${item.teacher_id}__${item.attendance_date}`, item);
+    });
+
+    const combined = new Map<string, {
+      teacherId: string;
+      date: string;
+      groups: RombelGroup[];
+    }>();
+
+    dailyAttendance.forEach((item) => {
+      const key = `${item.teacher_id}__${item.attendance_date}`;
+      if (!combined.has(key)) {
+        combined.set(key, {
+          teacherId: item.teacher_id,
+          date: item.attendance_date,
+          groups: [],
+        });
+      }
+    });
+
+    kbmGroups.forEach((group) => {
+      if (!group.teacher_id || !group.attendance_date) return;
+      const key = `${group.teacher_id}__${group.attendance_date}`;
+      const current = combined.get(key) || {
+        teacherId: group.teacher_id,
+        date: group.attendance_date,
+        groups: [],
+      };
+      current.groups.push(group);
+      combined.set(key, current);
+    });
+
+    const result: TeacherReportGroup[] = [];
+    Array.from(combined.values())
+      .sort((a, b) =>
+        a.date.localeCompare(b.date) ||
+        (teacherMap.get(a.teacherId)?.full_name || "").localeCompare(
+          teacherMap.get(b.teacherId)?.full_name || ""
+        )
+      )
+      .forEach((daily) => {
+        const teacher = teacherMap.get(daily.teacherId);
+        const dailyRecord = dailyMap.get(`${daily.teacherId}__${daily.date}`);
+        const firstKbm = daily.groups[0];
+        const arrivalTime =
+          dailyRecord?.arrival_time ||
+          firstKbm?.teacher_arrival_time ||
+          "";
+        const departureTime =
+          dailyRecord?.departure_time ||
+          firstKbm?.teacher_departure_time ||
+          "";
+        const dateObject = new Date(`${daily.date}T00:00:00`);
+        const dayName =
+          firstKbm?.day_name ||
+          (Number.isNaN(dateObject.getTime())
+            ? "-"
+            : new Intl.DateTimeFormat("id-ID", { weekday: "long" }).format(dateObject));
+
+        if (daily.groups.length === 0) {
+          result.push({
+            teacherId: daily.teacherId,
+            teacherName: teacher?.full_name || "Guru tidak ditemukan",
+            date: daily.date,
+            dayName,
+            arrivalTime,
+            departureTime,
+            teacherStatus: dailyRecord?.status || "-",
+            teacherNotes: dailyRecord?.notes || "Tidak ada jadwal hari ini",
+            group: null,
+          });
+          return;
+        }
+
+        daily.groups
+          .sort((a, b) => (a.start_time || "").localeCompare(b.start_time || ""))
+          .forEach((group) => {
+            result.push({
+              teacherId: daily.teacherId,
+              teacherName: teacher?.full_name || group.teacher_name || "Guru tidak ditemukan",
+              date: daily.date,
+              dayName: group.day_name || dayName,
+              arrivalTime:
+                dailyRecord?.arrival_time || group.teacher_arrival_time || "",
+              departureTime:
+                dailyRecord?.departure_time || group.teacher_departure_time || "",
+              teacherStatus: dailyRecord?.status || "-",
+              teacherNotes: dailyRecord?.notes || "",
+              group,
+            });
+          });
+      });
+
+    return result;
+  }
+
+  function getTeacherReportCellRows(item: TeacherReportGroup): (string | number)[][] {
+    const group = item.group;
+    const studentsInGroup = group?.students || [];
+    const sessionNumber = group
+      ? Number(String(group.session_name || "0").replace(",", ".")) || 0
+      : 0;
+    const classNames = group
+      ? Array.from(new Set(
+          group.students
+            .map((student) => formatClass(student.student_level, student.student_grade))
+            .filter((value) => value && value !== "-")
+        )).join(", ")
+      : "-";
+
+    const base = [
+      item.dayName || "-",
+      formatDate(item.date),
+      item.teacherName,
+      formatTime(item.arrivalTime),
+      formatTime(item.departureTime),
+      group ? `${formatTime(group.start_time)}-${formatTime(group.end_time)}` : "-",
+      group ? sessionNumber : "-",
+      classNames || "-",
+      group?.subject_name || "-",
+      group?.material_topic || "-",
+    ];
+
+    if (!studentsInGroup.length) {
+      return [[
+        ...base,
+        "-",
+        "",
+        "",
+        "",
+        item.teacherNotes || (
+          item.teacherStatus !== "-" ? item.teacherStatus : "Tidak ada jadwal hari ini"
+        ),
+      ]];
+    }
+
+    return studentsInGroup.map((student) => {
+      const status = normalizeAttendanceStatus(student.attendance_status);
+      return [
+        ...base,
+        student.student_name || "-",
+        isHadir(status) ? "✓" : "",
+        isIzin(status) ? "✓" : "",
+        isAlpa(status) ? "✓" : "",
+        getAttendanceNote(student) !== "-"
+          ? getAttendanceNote(student)
+          : isSakit(status)
+            ? "Sakit"
+            : item.teacherNotes || "",
+      ];
+    });
+  }
+
   function handleExportTeacherExcel() {
     const period = getTeacherAttendanceForPeriod();
     if (!period) return;
 
-    const { start, end, rows, monthNumber, yearNumber } = period;
-    const teacherMap = new Map(teachers.map((teacher) => [teacher.id, teacher]));
-    const sortedRows = [...rows].sort((a, b) => {
-      const nameA = teacherMap.get(a.teacher_id)?.full_name || "";
-      const nameB = teacherMap.get(b.teacher_id)?.full_name || "";
-      return nameA.localeCompare(nameB) ||
-        a.attendance_date.localeCompare(b.attendance_date);
-    });
+    if (!printTeacherId) {
+      alert("Pilih guru terlebih dahulu untuk export absensi.");
+      return;
+    }
 
-    const data = sortedRows.map((item, index) => ({
-      No: index + 1,
-      "Nama Guru": teacherMap.get(item.teacher_id)?.full_name || "Guru tidak ditemukan",
-      "Kode Guru": teacherMap.get(item.teacher_id)?.teacher_code || "-",
-      Tanggal: item.attendance_date,
-      "Jam Datang": item.arrival_time || "-",
-      "Jam Pulang": item.departure_time || "-",
-      Status: item.status || "-",
-      Keterangan: item.notes || "-",
-    }));
+    const teacher = teachers.find((item) => item.id === printTeacherId);
+    if (!teacher) {
+      alert("Data guru tidak ditemukan.");
+      return;
+    }
 
-    const summaryRows = teachers.map((teacher) => {
-      const teacherRows = rows.filter((item) => item.teacher_id === teacher.id);
-      const count = (status: string) =>
-        teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+    const { start, end, monthNumber, yearNumber } = period;
+    const reportGroups = buildTeacherReportGroups(start, end, printTeacherId);
 
-      return {
-        "Nama Guru": teacher.full_name || "-",
-        "Total Hadir": count("Hadir"),
-        "Total Izin": count("Izin"),
-        "Total Sakit": count("Sakit"),
-        "Total Alpa": count("Alpa"),
-        "Total Tercatat": teacherRows.length,
-      };
-    });
+    if (reportGroups.length === 0) {
+      alert(`Tidak ada data absensi guru atau KBM untuk ${teacher.full_name || "guru ini"} pada periode yang dipilih.`);
+      return;
+    }
 
-    const detailSheet = XLSX.utils.json_to_sheet(data);
-    detailSheet["!cols"] = [
-      { wch: 6 }, { wch: 28 }, { wch: 15 }, { wch: 14 },
-      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 35 },
+    const academicYear =
+      monthNumber >= 7
+        ? `${yearNumber}/${yearNumber + 1}`
+        : `${yearNumber - 1}/${yearNumber}`;
+
+    // Susunan header mengikuti contoh Excel: 3 baris identitas,
+    // lalu header tabel bertingkat pada baris 4 dan 5.
+    const worksheetData: (string | number)[][] = [
+      ["ABSENSI KBM GURU DAN SISWA HARIAN"],
+      ["HOMESCHOOLING TUNAS KARYA BANGSA"],
+      [`Tahun Ajaran ${academicYear}`],
+      [
+        "No", "Hari", "Tanggal", "Nama Guru", "Datang Guru", "Pulang Guru",
+        "Jadwal Kegiatan Belajar Mengajar", "", "", "", "", "", "", "", "", "Keterangan",
+      ],
+      [
+        "", "", "", "", "", "",
+        "Jam Siswa", "Sesi", "Kls", "Mapel", "Materi", "Siswa",
+        "Hadir", "Izin", "Alpa", "",
+      ],
     ];
 
-    const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
-    summarySheet["!cols"] = [
-      { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
-      { wch: 14 }, { wch: 18 },
+    const merges: XLSX.Range[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } },
+      { s: { r: 3, c: 6 }, e: { r: 3, c: 14 } },
     ];
+
+    [0, 1, 2, 3, 4, 5, 15].forEach((column) => {
+      merges.push({
+        s: { r: 3, c: column },
+        e: { r: 4, c: column },
+      });
+    });
+
+    let groupNumber = 0;
+    let totalHadir = 0;
+    let totalIzin = 0;
+    let totalAlpa = 0;
+    let totalSakit = 0;
+
+    const groupRowRanges: Array<{ startRow: number; endRow: number }> = [];
+
+    reportGroups.forEach((item) => {
+      const startRow = worksheetData.length;
+      const rows = getTeacherReportCellRows(item);
+      groupNumber += 1;
+
+      rows.forEach((row) => {
+        // row berisi Hari s/d Keterangan (15 kolom); nomor ditambahkan di depan.
+        worksheetData.push([groupNumber, ...row]);
+      });
+
+      const endRow = worksheetData.length - 1;
+      groupRowRanges.push({ startRow, endRow });
+
+      // Identitas sesi/jadwal digabung vertikal, kolom siswa dan status tetap per siswa.
+      if (endRow > startRow) {
+        for (let column = 0; column <= 10; column += 1) {
+          merges.push({
+            s: { r: startRow, c: column },
+            e: { r: endRow, c: column },
+          });
+        }
+      }
+
+      (item.group?.students || []).forEach((student) => {
+        const status = normalizeAttendanceStatus(student.attendance_status);
+        if (isHadir(status)) totalHadir += 1;
+        if (isIzin(status)) totalIzin += 1;
+        if (isAlpa(status)) totalAlpa += 1;
+        if (isSakit(status)) totalSakit += 1;
+      });
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+    worksheet["!merges"] = merges;
+
+    // Lebar kolom meniru proporsi pada contoh Excel yang dikirim.
+    worksheet["!cols"] = [
+      { wch: 5 },   // No
+      { wch: 12 },  // Hari
+      { wch: 15 },  // Tanggal
+      { wch: 24 },  // Nama Guru
+      { wch: 10 },  // Datang Guru
+      { wch: 10 },  // Pulang Guru
+      { wch: 13 },  // Jam Siswa
+      { wch: 7 },   // Sesi
+      { wch: 8 },   // Kls
+      { wch: 16 },  // Mapel
+      { wch: 21 },  // Materi
+      { wch: 25 },  // Siswa
+      { wch: 8 },   // Hadir
+      { wch: 8 },   // Izin
+      { wch: 8 },   // Alpa
+      { wch: 28 },  // Keterangan
+    ];
+
+    const thinBorder = {
+      top: { style: "thin", color: { rgb: "333333" } },
+      bottom: { style: "thin", color: { rgb: "333333" } },
+      left: { style: "thin", color: { rgb: "333333" } },
+      right: { style: "thin", color: { rgb: "333333" } },
+    };
+
+    const titleStyle = {
+      font: { name: "Arial", sz: 15, bold: true, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const schoolStyle = {
+      font: { name: "Arial", sz: 11, bold: true, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const yearStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "555555" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const headerStyle = {
+      font: { name: "Arial", sz: 10, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "F2F2F2" } },
+      border: thinBorder,
+    };
+
+    const dataStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "111111" } },
+      alignment: { vertical: "top", wrapText: true },
+      border: thinBorder,
+    };
+
+    // Style judul dan identitas sekolah.
+    ["A1", "A2", "A3"].forEach((address, index) => {
+      if (!worksheet[address]) return;
+      worksheet[address].s =
+        index === 0 ? titleStyle : index === 1 ? schoolStyle : yearStyle;
+    });
+
+    // Style dua tingkat header.
+    for (let row = 3; row <= 4; row += 1) {
+      for (let column = 0; column <= 15; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = headerStyle;
+      }
+    }
+
+    // Style data dan tanda status berwarna seperti contoh.
+    groupRowRanges.forEach(({ startRow, endRow }) => {
+      for (let row = startRow; row <= endRow; row += 1) {
+        for (let column = 0; column <= 15; column += 1) {
+          const address = XLSX.utils.encode_cell({ r: row, c: column });
+          if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+          worksheet[address].s = {
+            ...dataStyle,
+            alignment: {
+              vertical: "top",
+              horizontal: [0, 2, 4, 5, 7, 8, 12, 13, 14].includes(column)
+                ? "center"
+                : "left",
+              wrapText: true,
+            },
+          };
+        }
+
+        const hadirAddress = XLSX.utils.encode_cell({ r: row, c: 12 });
+        const izinAddress = XLSX.utils.encode_cell({ r: row, c: 13 });
+        const alpaAddress = XLSX.utils.encode_cell({ r: row, c: 14 });
+
+        if (worksheet[hadirAddress]?.v === "✓") {
+          worksheet[hadirAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "20BF6B" } },
+          };
+        }
+
+        if (worksheet[izinAddress]?.v === "✓") {
+          worksheet[izinAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "7C3AED" } },
+          };
+        }
+
+        if (worksheet[alpaAddress]?.v === "✓") {
+          worksheet[alpaAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "DC2626" } },
+          };
+        }
+      }
+    });
+
+    // Tinggi baris judul/header dan data mengikuti banyaknya teks.
+    worksheet["!rows"] = [
+      { hpt: 30 },
+      { hpt: 22 },
+      { hpt: 18 },
+      { hpt: 28 },
+      { hpt: 30 },
+    ];
+
+    groupRowRanges.forEach(({ startRow, endRow }) => {
+      for (let row = startRow; row <= endRow; row += 1) {
+        const studentText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 11 })]?.v || ""
+        );
+        const materialText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 10 })]?.v || ""
+        );
+        const noteText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 15 })]?.v || ""
+        );
+
+        const lines = Math.max(
+          1,
+          Math.ceil(studentText.length / 25),
+          Math.ceil(materialText.length / 21),
+          Math.ceil(noteText.length / 28)
+        );
+
+        worksheet["!rows"]![row] = {
+          hpt: Math.min(90, Math.max(25, lines * 15)),
+        };
+      }
+    });
+
+    worksheet["!freeze"] = { xSplit: 6, ySplit: 5 };
+    worksheet["!sheetView"] = [{ showGridLines: false }];
+    worksheet["!pageSetup"] = {
+      orientation: "landscape",
+      paperSize: 9,
+      fitToWidth: 1,
+      fitToHeight: 0,
+    };
+    worksheet["!margins"] = {
+      left: 0.25,
+      right: 0.25,
+      top: 0.35,
+      bottom: 0.35,
+      header: 0.15,
+      footer: 0.15,
+    };
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, detailSheet, "Detail Absensi");
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Rekap Per Guru");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Guru Harian");
+
+    const safeTeacherName = (teacher.full_name || "Guru")
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
 
     XLSX.writeFile(
       workbook,
-      `Rekap_Absensi_Guru_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`
+      `Absensi_KBM_${safeTeacherName}_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`,
+      { bookType: "xlsx", cellStyles: true }
     );
+  }
+
+  function escapePrintHtml(value: unknown) {
+    return String(value ?? "-")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   function handlePrintTeacherAttendance() {
@@ -2078,39 +2751,52 @@ export default function KepalaSekolahAbsensiPage() {
       return;
     }
 
-    const { start, end, rows, monthNumber, yearNumber } = period;
+    const { start, end, monthNumber, yearNumber } = period;
     const teacher = teachers.find((item) => item.id === printTeacherId);
     if (!teacher) {
       alert("Data guru tidak ditemukan.");
       return;
     }
 
-    const dates = getDatesBetween(start, end);
-    const teacherRows = rows
-      .filter((item) => item.teacher_id === printTeacherId)
-      .sort((a, b) => a.attendance_date.localeCompare(b.attendance_date));
+    const reportGroups = buildTeacherReportGroups(start, end, printTeacherId);
+    if (reportGroups.length === 0) {
+      alert("Tidak ada data absensi guru atau KBM untuk guru ini pada periode yang dipilih.");
+      return;
+    }
 
-    const rowByDate = new Map(teacherRows.map((item) => [item.attendance_date, item]));
-    const count = (status: string) =>
-      teacherRows.filter((item) => (item.status || "").toLowerCase() === status.toLowerCase()).length;
+    let rowNumber = 0;
+    const bodyRows = reportGroups.map((item) => {
+      const rows = getTeacherReportCellRows(item);
+      const rowSpan = rows.length;
+      const first = rows[0];
+      const sharedCells = [
+        `<td rowspan="${rowSpan}">${++rowNumber}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[0])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[1])}</td>`,
+        `<td rowspan="${rowSpan}"><strong>${escapePrintHtml(first[2])}</strong></td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[3])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[4])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[5])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[6])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[7])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[8])}</td>`,
+        `<td rowspan="${rowSpan}">${escapePrintHtml(first[9])}</td>`,
+      ].join("");
 
-    const tableRows = dates.map((date, index) => {
-      const item = rowByDate.get(date);
-      const displayDate = new Date(`${date}T00:00:00`).toLocaleDateString("id-ID", {
-        weekday: "long", day: "2-digit", month: "long", year: "numeric",
-      });
-      return `<tr>
-        <td>${index + 1}</td>
-        <td>${displayDate}</td>
-        <td>${item?.arrival_time || "-"}</td>
-        <td>${item?.departure_time || "-"}</td>
-        <td>${item?.status || "-"}</td>
-        <td>${item?.notes || "-"}</td>
-      </tr>`;
+      return rows.map((row, index) => {
+        const studentCells = [
+          `<td class="student">${escapePrintHtml(row[10])}</td>`,
+          `<td class="status">${row[11] ? '<span class="check hadir">✓</span>' : ""}</td>`,
+          `<td class="status">${row[12] ? '<span class="check izin">✓</span>' : ""}</td>`,
+          `<td class="status">${row[13] ? '<span class="check alpa">✓</span>' : ""}</td>`,
+          `<td class="note">${escapePrintHtml(row[14])}</td>`,
+        ].join("");
+        return `<tr>${index === 0 ? sharedCells : ""}${studentCells}</tr>`;
+      }).join("");
     }).join("");
 
-    const safeName = (teacher.full_name || "Guru").replace(/[<>&"]/g, "");
-    const printWindow = window.open("", "_blank", "width=1100,height=800");
+    const safeName = escapePrintHtml(teacher.full_name || "Guru");
+    const printWindow = window.open("", "_blank", "width=1400,height=900");
     if (!printWindow) {
       alert("Pop-up diblokir browser. Izinkan pop-up untuk mencetak.");
       return;
@@ -2118,36 +2804,54 @@ export default function KepalaSekolahAbsensiPage() {
 
     printWindow.document.write(`<!DOCTYPE html>
       <html lang="id"><head><meta charset="UTF-8" />
-      <title>Absensi Guru - ${safeName}</title>
+      <title>Absensi KBM Guru dan Siswa - ${safeName}</title>
       <style>
         * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; color: #222; padding: 24px; }
-        h1 { text-align: center; font-size: 20px; margin: 0 0 6px; }
-        .subtitle { text-align: center; margin: 0 0 22px; font-size: 12px; }
-        .identity { margin-bottom: 14px; font-size: 13px; line-height: 1.8; }
-        table { width: 100%; border-collapse: collapse; font-size: 11px; }
-        th, td { border: 1px solid #555; padding: 7px; text-align: left; }
-        th { background: #f1f1f1; }
-        .summary { margin: 14px 0; display: flex; gap: 18px; font-size: 12px; }
-        .sign { display: flex; justify-content: space-between; margin-top: 48px; text-align: center; font-size: 12px; }
+        body { font-family: Arial, sans-serif; color: #111; padding: 18px; }
+        h1 { text-align: center; font-size: 20px; font-weight: 800; margin: 0 0 7px; }
+        .school { text-align: center; font-size: 12px; font-weight: 700; margin: 0 0 5px; }
+        .period { text-align: center; font-size: 10px; margin: 0 0 20px; }
+        .teacher { font-size: 11px; margin: -8px 0 12px; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+        th, td { border: 1px solid #555; padding: 5px 4px; vertical-align: top; overflow-wrap: anywhere; }
+        th { text-align: center; font-weight: 700; vertical-align: middle; }
+        .student { font-weight: 700; }
+        .status { text-align: center; vertical-align: middle; }
+        .check { display: inline-block; color: white; font-weight: 700; padding: 5px 9px; border-radius: 2px; }
+        .hadir { background: #20bf6b; }
+        .izin { background: #7c3aed; }
+        .alpa { background: #e05252; }
+        .note { color: #6b625d; }
+        .sign { display: flex; justify-content: space-between; margin-top: 42px; text-align: center; font-size: 11px; }
         .sign div { width: 220px; }
-        @page { size: A4 landscape; margin: 12mm; }
-        @media print { body { padding: 0; } }
+        @page { size: A4 landscape; margin: 9mm; }
+        @media print { body { padding: 0; } thead { display: table-header-group; } tr { page-break-inside: avoid; } }
       </style></head><body>
-      <h1>REKAP ABSENSI GURU</h1>
-      <p class="subtitle">Periode ${start} s/d ${end} | ${monthOptions[monthNumber]} ${yearNumber}</p>
-      <div class="identity">
-        <strong>Nama Guru:</strong> ${safeName}<br/>
-        <strong>Kode Guru:</strong> ${teacher.teacher_code || "-"}
-      </div>
-      <div class="summary">
-        <span>Hadir: <strong>${count("Hadir")}</strong></span>
-        <span>Izin: <strong>${count("Izin")}</strong></span>
-        <span>Sakit: <strong>${count("Sakit")}</strong></span>
-        <span>Alpa: <strong>${count("Alpa")}</strong></span>
-      </div>
-      <table><thead><tr><th>No</th><th>Tanggal</th><th>Jam Datang</th><th>Jam Pulang</th><th>Status</th><th>Keterangan</th></tr></thead>
-      <tbody>${tableRows}</tbody></table>
+      <h1>ABSENSI KBM GURU DAN SISWA HARIAN</h1>
+      <p class="school">HOMESCHOOLING TUNAS KARYA BANGSA</p>
+      <p class="period">Tahun Ajaran ${monthNumber >= 7 ? yearNumber : yearNumber - 1}/${monthNumber >= 7 ? yearNumber + 1 : yearNumber} · Periode ${escapePrintHtml(formatDate(start))} s/d ${escapePrintHtml(formatDate(end))}</p>
+      <p class="teacher"><strong>Nama Guru:</strong> ${safeName} &nbsp; <strong>Kode Guru:</strong> ${escapePrintHtml(teacher.teacher_code || "-")}</p>
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2" style="width:3%">No</th>
+            <th rowspan="2" style="width:6%">Hari</th>
+            <th rowspan="2" style="width:7%">Tanggal</th>
+            <th rowspan="2" style="width:10%">Nama Guru</th>
+            <th rowspan="2" style="width:5%">Datang Guru</th>
+            <th rowspan="2" style="width:5%">Pulang Guru</th>
+            <th colspan="9">Jadwal Kegiatan Belajar Mengajar</th>
+            <th rowspan="2" style="width:12%">Keterangan</th>
+          </tr>
+          <tr>
+            <th style="width:7%">Jam Siswa</th><th style="width:4%">Sesi</th>
+            <th style="width:5%">Kls</th><th style="width:8%">Mapel</th>
+            <th style="width:9%">Materi</th><th style="width:13%">Siswa</th>
+            <th style="width:4%">Hadir</th><th style="width:4%">Izin</th><th style="width:4%">Alpa</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
       <div class="sign">
         <div>Mengetahui,<br/>Kepala Sekolah<br/><br/><br/><br/>(____________________)</div>
         <div>Guru yang bersangkutan<br/><br/><br/><br/><br/>(____________________)</div>
@@ -2304,7 +3008,7 @@ export default function KepalaSekolahAbsensiPage() {
               onChange={(event) => setPrintTeacherId(event.target.value)}
               className="h-11 min-w-[240px] rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
             >
-              <option value="">Pilih guru untuk dicetak</option>
+              <option value="">Pilih guru untuk export / cetak</option>
               {teachers.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
                   {teacher.full_name || "Tanpa nama"}
@@ -2317,7 +3021,15 @@ export default function KepalaSekolahAbsensiPage() {
               className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#720B24]"
             >
               <Download className="h-4 w-4" />
-              Export Absensi Guru
+              Export Excel Guru Terpilih
+            </button>
+            <button
+              type="button"
+              onClick={handleExportStudentExcel}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Export Excel Absensi Murid
             </button>
             <button
               type="button"
@@ -2548,7 +3260,7 @@ export default function KepalaSekolahAbsensiPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1750px] table-fixed border-collapse">
+            <table className="w-full min-w-[1870px] table-fixed border-collapse">
               <thead>
                 <tr className="border-b border-[#EADACA] bg-[#FFF8EF] text-left text-[13px] font-extrabold text-[#6F5549]">
                   <th className="w-[70px] px-5 py-4">
@@ -2557,6 +3269,10 @@ export default function KepalaSekolahAbsensiPage() {
 
                   <th className="w-[250px] px-5 py-4">
                     Nama
+                  </th>
+
+                  <th className="w-[130px] px-5 py-4">
+                    Tanggal
                   </th>
 
                   <th className="w-[130px] px-5 py-4">
@@ -2614,7 +3330,7 @@ export default function KepalaSekolahAbsensiPage() {
                   <tr>
                     <td
                       colSpan={
-                        14
+                        15
                       }
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
@@ -2626,7 +3342,7 @@ export default function KepalaSekolahAbsensiPage() {
                   <tr>
                     <td
                       colSpan={
-                        14
+                        15
                       }
                       className="px-6 py-12 text-center text-[#6F5549]"
                     >
@@ -2670,6 +3386,10 @@ export default function KepalaSekolahAbsensiPage() {
                                 : ""}
                             </p>
                           </div>
+                        </td>
+
+                        <td className="whitespace-nowrap px-5 py-4 align-middle">
+                          {formatDate(group.attendance_date)}
                         </td>
 
                         <td className="px-5 py-4 align-middle">
@@ -2763,29 +3483,24 @@ export default function KepalaSekolahAbsensiPage() {
                         </td>
 
                         <td className="px-5 py-4 align-middle">
-                          <div className="flex items-center gap-2">
-                            {isFirstInGroup ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedRombel(group)}
-                                className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-                              >
-                                <Eye className="h-4 w-4" />
-                                Detail
-                              </button>
-                            ) : null}
+                          {isFirstInGroup ? (
                             <button
                               type="button"
-                              onClick={() => void handleDeleteAttendance(student)}
-                              disabled={deletingAttendanceId === student.id}
-                              title="Hapus data absensi KBM ini"
-                              aria-label={`Hapus absensi ${student.student_name}`}
-                              className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-red-200 px-3 text-[13px] font-extrabold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() =>
+                                setSelectedRombel(
+                                  group
+                                )
+                              }
+                              className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-[#DCC8B6] px-3 text-[13px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
                             >
-                              <Trash2 className="h-4 w-4" />
-                              {deletingAttendanceId === student.id ? "Menghapus..." : "Hapus"}
+                              <Eye className="h-4 w-4" />
+                              Detail
                             </button>
-                          </div>
+                          ) : (
+                            <span className="text-[12px] text-[#A58A7A]">
+                              -
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )

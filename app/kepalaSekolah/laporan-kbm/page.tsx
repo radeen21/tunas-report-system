@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import KepalaSekolahLayout from "../components/KepalaSekolahLayout";
+import * as XLSX from "xlsx-js-style";
 
 type StudentOption = {
   id: string;
@@ -560,115 +561,328 @@ export default function KepalaSekolahLaporanKBMPage() {
       return;
     }
 
-    const rows = filteredReports.map((report, index) => ({
-      No: index + 1,
-      "Tanggal Laporan": formatDate(report.report_date),
-      "Nama Siswa": report.student_name || "-",
-      NIPD: report.student_nis || "-",
-      NISN: report.student_nisn || "-",
-      Guru: report.teacher_name || "-",
-      "Email Guru": report.teacher_email || "-",
-      "Mata Pelajaran": report.subject_label || report.subject_name || "-",
-      Kelas:
-        report.class_level ||
-        formatClass(report.student_level, report.student_grade),
-      Semester: report.semester || "-",
-      BAB: report.chapter || "-",
-      "Materi Pokok": report.material_topic || "-",
-      "Masalah / Kendala": report.learning_issue || "-",
-      Solusi: report.solution || "-",
-      "Catatan Guru / Revisi": report.teacher_note || "-",
-      Status: getStatusLabel(report.status),
-      "Created At": formatDateTime(report.created_at),
-      "Updated At": formatDateTime(report.updated_at),
-    }));
+    // Workbook XLSX asli: tiap laporan disusun seperti lembar laporan,
+    // bukan HTML/print yang dibuka sebagai file Excel.
+    const aoa: (string | number)[][] = [
+      ["LAPORAN KEGIATAN BELAJAR MENGAJAR"],
+      ["HOMESCHOOLING TUNAS KARYA BANGSA"],
+      ["REKAPITULASI LAPORAN KBM"],
+      [
+        `Filter Guru: ${
+          teacherFilter === "Semua Guru"
+            ? "Semua Guru"
+            : teachers.find((teacher) => teacher.id === teacherFilter)?.full_name || "-"
+        }`,
+      ],
+      [`Filter Status: ${statusFilter}`],
+      [`Tanggal Cetak: ${formatDateTime(new Date().toISOString())}`],
+      [`Total Laporan: ${filteredReports.length}`],
+      [""],
+    ];
 
-    const headers = Object.keys(rows[0]);
+    const merges: any[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 5 } },
+      ...[3, 4, 5, 6].map((r) => ({
+        s: { r, c: 0 },
+        e: { r, c: 5 },
+      })),
+    ];
 
-    const tableRows = rows
-      .map((row) => {
-        return `
-          <tr>
-            ${headers
-              .map((header) => {
-                const value = row[header as keyof typeof row];
-                return `<td>${escapeExcelCell(value)}</td>`;
-              })
-              .join("")}
-          </tr>
-        `;
-      })
-      .join("");
+    const reportRanges: Array<{ startRow: number; endRow: number }> = [];
 
-    const html = `
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <style>
-            table {
-              border-collapse: collapse;
-              width: 100%;
-              font-family: Arial, sans-serif;
-              font-size: 12px;
-            }
+    filteredReports.forEach((report, index) => {
+      const startRow = aoa.length;
 
-            th {
-              background: #7A1F2B;
-              color: #ffffff;
-              font-weight: bold;
-              border: 1px solid #dddddd;
-              padding: 8px;
-              text-align: left;
-              white-space: nowrap;
-            }
+      // Judul masing-masing laporan.
+      aoa.push([`${index + 1}. LAPORAN KEGIATAN BELAJAR MENGAJAR`]);
+      merges.push({
+        s: { r: aoa.length - 1, c: 0 },
+        e: { r: aoa.length - 1, c: 5 },
+      });
 
-            td {
-              border: 1px solid #dddddd;
-              padding: 8px;
-              vertical-align: top;
-              mso-number-format: "\\@";
-            }
+      // Identitas siswa dan guru dibuat berdampingan seperti contoh.
+      const identityStart = aoa.length;
+      aoa.push([
+        `Nama Siswa: ${report.student_name || "-"}`,
+        "",
+        "",
+        `Guru: ${report.teacher_name || "-"}`,
+        "",
+        "",
+      ]);
+      aoa.push([
+        `NIPD: ${report.student_nis || "-"}`,
+        "",
+        "",
+        `Mata Pelajaran: ${report.subject_label || report.subject_name || "-"}`,
+        "",
+        "",
+      ]);
+      aoa.push([
+        `NISN: ${report.student_nisn || "-"}`,
+        "",
+        "",
+        `Tanggal Laporan: ${formatDate(report.report_date)}`,
+        "",
+        "",
+      ]);
+      aoa.push([
+        `Kelas: ${
+          report.class_level ||
+          formatClass(report.student_level, report.student_grade)
+        }`,
+        "",
+        "",
+        `Status: ${getStatusLabel(report.status)}`,
+        "",
+        "",
+      ]);
 
-            .title {
-              font-size: 18px;
-              font-weight: bold;
-              color: #2B1B18;
-              margin-bottom: 6px;
-            }
+      for (let r = identityStart; r < identityStart + 4; r++) {
+        merges.push(
+          { s: { r, c: 0 }, e: { r, c: 2 } },
+          { s: { r, c: 3 }, e: { r, c: 5 } }
+        );
+      }
 
-            .subtitle {
-              font-size: 12px;
-              color: #6B4A3A;
-              margin-bottom: 16px;
-            }
-          </style>
-        </head>
+      // Header tabel detail.
+      const bandRow = aoa.length;
+      aoa.push(["RINCIAN LAPORAN KBM"]);
+      merges.push({
+        s: { r: bandRow, c: 0 },
+        e: { r: bandRow, c: 5 },
+      });
 
-        <body>
-          <div class="title">Laporan KBM</div>
-          <div class="subtitle">
-            Export tanggal ${formatDateTime(new Date().toISOString())} |
-            Total data: ${filteredReports.length}
-          </div>
+      const headerRow = aoa.length;
+      aoa.push(["KOMPONEN", "", "URAIAN", "", "", ""]);
+      merges.push(
+        { s: { r: headerRow, c: 0 }, e: { r: headerRow, c: 1 } },
+        { s: { r: headerRow, c: 2 }, e: { r: headerRow, c: 5 } }
+      );
 
-          <table>
-            <thead>
-              <tr>
-                ${headers
-                  .map((header) => `<th>${escapeExcelCell(header)}</th>`)
-                  .join("")}
-              </tr>
-            </thead>
+      const detailItems = [
+        ["Semester", report.semester || "-"],
+        ["BAB", report.chapter || "-"],
+        ["Materi Pokok", report.material_topic || "-"],
+        ["Masalah / Kendala", report.learning_issue || "-"],
+        ["Solusi", report.solution || "-"],
+        ["Catatan Guru / Revisi", report.teacher_note || "-"],
+      ];
 
-            <tbody>
-              ${tableRows}
-            </tbody>
-          </table>
-        </body>
-      </html>
-    `;
+      detailItems.forEach(([label, value]) => {
+        const rowIndex = aoa.length;
+        aoa.push([label, "", value, "", "", ""]);
+        merges.push(
+          { s: { r: rowIndex, c: 0 }, e: { r: rowIndex, c: 1 } },
+          { s: { r: rowIndex, c: 2 }, e: { r: rowIndex, c: 5 } }
+        );
+      });
 
-    downloadHtmlAsExcel(`laporan-kbm-${formatExportDateName()}.xls`, html);
+      // Timestamp dibuat dua kolom lebar.
+      const timestampRow1 = aoa.length;
+      aoa.push([
+        `Dibuat: ${formatDateTime(report.created_at)}`,
+        "",
+        "",
+        `Diperbarui: ${formatDateTime(report.updated_at)}`,
+        "",
+        "",
+      ]);
+      merges.push(
+        { s: { r: timestampRow1, c: 0 }, e: { r: timestampRow1, c: 2 } },
+        { s: { r: timestampRow1, c: 3 }, e: { r: timestampRow1, c: 5 } }
+      );
+
+      const endRow = aoa.length - 1;
+      reportRanges.push({ startRow, endRow });
+
+      // Jarak visual antar laporan.
+      aoa.push([""]);
+      merges.push({
+        s: { r: aoa.length - 1, c: 0 },
+        e: { r: aoa.length - 1, c: 5 },
+      });
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    worksheet["!merges"] = merges;
+    worksheet["!cols"] = [
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 14 },
+      { wch: 16 },
+    ];
+
+    const border = {
+      top: { style: "thin", color: { rgb: "333333" } },
+      bottom: { style: "thin", color: { rgb: "333333" } },
+      left: { style: "thin", color: { rgb: "333333" } },
+      right: { style: "thin", color: { rgb: "333333" } },
+    };
+
+    const titleStyle = {
+      font: { name: "Arial", sz: 16, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+    const subtitleStyle = {
+      font: { name: "Arial", sz: 11, bold: true, color: { rgb: "222222" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+    const captionStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "666666" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+    const filterStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "222222" } },
+      alignment: { vertical: "center", wrapText: true },
+    };
+    const sectionStyle = {
+      font: { name: "Arial", sz: 12, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "left", vertical: "center", wrapText: true },
+      border: {
+        bottom: { style: "thin", color: { rgb: "999999" } },
+      },
+    };
+    const identityStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "111111" } },
+      alignment: { vertical: "center", wrapText: true },
+    };
+    const bandStyle = {
+      font: { name: "Arial", sz: 10, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      fill: { patternType: "solid", fgColor: { rgb: "EAEAEA" } },
+      border,
+    };
+    const tableHeaderStyle = {
+      font: { name: "Arial", sz: 9, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "F1F1F1" } },
+      border,
+    };
+    const labelStyle = {
+      font: { name: "Arial", sz: 9, bold: true, color: { rgb: "222222" } },
+      alignment: { vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "F7F7F7" } },
+      border,
+    };
+    const valueStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "111111" } },
+      alignment: { vertical: "top", wrapText: true },
+      border,
+    };
+    const timestampStyle = {
+      font: { name: "Arial", sz: 8, color: { rgb: "444444" } },
+      alignment: { vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "FAFAFA" } },
+      border,
+    };
+
+    // Judul utama dan metadata.
+    ["A1", "A2", "A3"].forEach((address, index) => {
+      if (worksheet[address]) {
+        worksheet[address].s =
+          index === 0 ? titleStyle : index === 1 ? subtitleStyle : captionStyle;
+      }
+    });
+    for (let r = 3; r <= 6; r++) {
+      const address = XLSX.utils.encode_cell({ r, c: 0 });
+      if (worksheet[address]) worksheet[address].s = filterStyle;
+    }
+
+    worksheet["!rows"] = [
+      { hpt: 30 },
+      { hpt: 22 },
+      { hpt: 18 },
+      { hpt: 17 },
+      { hpt: 17 },
+      { hpt: 17 },
+      { hpt: 17 },
+      { hpt: 8 },
+    ];
+
+    // Styling per laporan dan tinggi baris menyesuaikan panjang uraian.
+    reportRanges.forEach(({ startRow, endRow }) => {
+      const titleRow = startRow;
+      const identityStart = titleRow + 1;
+      const bandRow = titleRow + 5;
+      const headerRow = titleRow + 6;
+      const detailStart = titleRow + 7;
+      const timestampRow = endRow;
+
+      const titleAddress = XLSX.utils.encode_cell({ r: titleRow, c: 0 });
+      if (worksheet[titleAddress]) worksheet[titleAddress].s = sectionStyle;
+      worksheet["!rows"]![titleRow] = { hpt: 28 };
+
+      for (let r = identityStart; r < identityStart + 4; r++) {
+        const address = XLSX.utils.encode_cell({ r, c: 0 });
+        if (worksheet[address]) worksheet[address].s = identityStyle;
+        const rightAddress = XLSX.utils.encode_cell({ r, c: 3 });
+        if (worksheet[rightAddress]) worksheet[rightAddress].s = identityStyle;
+        worksheet["!rows"]![r] = { hpt: 18 };
+      }
+
+      const bandAddress = XLSX.utils.encode_cell({ r: bandRow, c: 0 });
+      if (worksheet[bandAddress]) worksheet[bandAddress].s = bandStyle;
+      worksheet["!rows"]![bandRow] = { hpt: 21 };
+
+      const headerAddress = XLSX.utils.encode_cell({ r: headerRow, c: 0 });
+      if (worksheet[headerAddress]) worksheet[headerAddress].s = tableHeaderStyle;
+      const headerValueAddress = XLSX.utils.encode_cell({ r: headerRow, c: 2 });
+      if (worksheet[headerValueAddress]) {
+        worksheet[headerValueAddress].s = tableHeaderStyle;
+      }
+      worksheet["!rows"]![headerRow] = { hpt: 20 };
+
+      for (let r = detailStart; r < detailStart + 6; r++) {
+        const labelAddress = XLSX.utils.encode_cell({ r, c: 0 });
+        const valueAddress = XLSX.utils.encode_cell({ r, c: 2 });
+        if (worksheet[labelAddress]) worksheet[labelAddress].s = labelStyle;
+        if (worksheet[valueAddress]) worksheet[valueAddress].s = valueStyle;
+
+        const label = String(worksheet[labelAddress]?.v || "");
+        const value = String(worksheet[valueAddress]?.v || "");
+        const charsPerLine = 92;
+        const estimatedLines = Math.max(
+          1,
+          Math.ceil(value.length / charsPerLine),
+          Math.ceil(label.length / 28)
+        );
+        worksheet["!rows"]![r] = {
+          hpt: Math.min(120, Math.max(20, estimatedLines * 14)),
+        };
+      }
+
+      const timestampAddress = XLSX.utils.encode_cell({ r: timestampRow, c: 0 });
+      const timestampRightAddress = XLSX.utils.encode_cell({
+        r: timestampRow,
+        c: 3,
+      });
+      if (worksheet[timestampAddress]) {
+        worksheet[timestampAddress].s = timestampStyle;
+      }
+      if (worksheet[timestampRightAddress]) {
+        worksheet[timestampRightAddress].s = timestampStyle;
+      }
+      worksheet["!rows"]![timestampRow] = { hpt: 18 };
+
+      const spacerRow = endRow + 1;
+      worksheet["!rows"]![spacerRow] = { hpt: 10 };
+    });
+
+    worksheet["!freeze"] = { xSplit: 0, ySplit: 3 };
+    worksheet["!sheetView"] = [{ showGridLines: false }];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan KBM");
+    XLSX.writeFile(
+      workbook,
+      `laporan-kbm-${formatExportDateName()}.xlsx`,
+      { bookType: "xlsx", cellStyles: true }
+    );
   }
 
   return (

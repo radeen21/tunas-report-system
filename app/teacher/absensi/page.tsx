@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from "react";
-import * as XLSX from "xlsx";
+import { useEffect, useMemo, useState, Fragment, type ReactNode, type ChangeEvent } from "react";
+import * as XLSX from "xlsx-js-style";
 import {
   CalendarDays,
   CheckCircle2,
@@ -1748,86 +1748,274 @@ export default function TeacherAbsensiPage() {
       subjects.map((subject) => [subject.id, subject])
     );
 
-    // Mata pelajaran dan kelas dibuat terpisah agar mudah difilter di Excel.
-    const headers = [
-      "No",
-      "Nama Guru",
-      "Hari",
-      "Tanggal",
-      "Mata Pelajaran",
-      "Kelas",
-      "Jam Datang Guru",
-      "Jam Pulang Guru",
-      "Jam Mulai KBM",
-      "Jam Selesai KBM",
-      "Sesi",
-      "Materi",
-      "Nama Siswa",
-      "Status Kehadiran",
-      "Pemahaman",
-      "Catatan",
+    // Format laporan mengikuti contoh ABSENSI KBM GURU DAN SISWA HARIAN.
+    // Struktur dibuat per sesi; kolom identitas sesi digabung untuk seluruh siswa.
+    const aoa: (string | number)[][] = [
+      ["ABSENSI KBM GURU DAN SISWA HARIAN"],
+      ["HOMESCHOOLING TUNAS KARYA BANGSA"],
+      [`Tahun Ajaran ${ACADEMIC_YEAR}`],
+      [
+        "No",
+        "Hari",
+        "Tanggal",
+        "Nama Guru",
+        "Datang Guru",
+        "Pulang Guru",
+        "Jadwal Kegiatan Belajar Mengajar",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Keterangan",
+      ],
+      [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "Jam Siswa",
+        "Sesi",
+        "Kls",
+        "Mapel",
+        "Materi",
+        "Siswa",
+        "Hadir",
+        "Izin",
+        "Alpa",
+        "",
+      ],
     ];
 
-    const escapeCell = (value: unknown) => {
-      const text = String(value ?? "").replace(/\r?\n/g, " ");
-      return `"${text.replace(/"/g, '""')}"`;
+    const merges: XLSX.Range[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } },
+      { s: { r: 3, c: 0 }, e: { r: 4, c: 0 } },
+      { s: { r: 3, c: 1 }, e: { r: 4, c: 1 } },
+      { s: { r: 3, c: 2 }, e: { r: 4, c: 2 } },
+      { s: { r: 3, c: 3 }, e: { r: 4, c: 3 } },
+      { s: { r: 3, c: 4 }, e: { r: 4, c: 4 } },
+      { s: { r: 3, c: 5 }, e: { r: 4, c: 5 } },
+      { s: { r: 3, c: 6 }, e: { r: 3, c: 14 } },
+      { s: { r: 3, c: 15 }, e: { r: 4, c: 15 } },
+    ];
+
+    const border = {
+      top: { style: "thin", color: { rgb: "333333" } },
+      bottom: { style: "thin", color: { rgb: "333333" } },
+      left: { style: "thin", color: { rgb: "333333" } },
+      right: { style: "thin", color: { rgb: "333333" } },
     };
 
-    const rows: string[][] = [];
+    const headerStyle = {
+      font: { name: "Arial", bold: true, sz: 10, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "F2F2F2" } },
+      border,
+    };
+
+    const titleStyle = {
+      font: { name: "Arial", bold: true, sz: 16, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const subtitleStyle = {
+      font: { name: "Arial", bold: true, sz: 11, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const yearStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "333333" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const dataStyle = {
+      font: { name: "Arial", sz: 10, color: { rgb: "111111" } },
+      alignment: { vertical: "top", wrapText: true },
+      border,
+    };
+
     let number = 1;
+    const dataMerges: XLSX.Range[] = [];
 
     attendanceHistory.forEach((group) => {
-      group.rows.forEach((row) => {
-        const student = row.student_id
+      const groupRows = group.rows.length > 0 ? group.rows : [null];
+      const firstDataRow = aoa.length;
+
+      groupRows.forEach((row) => {
+        const student = row?.student_id
           ? studentMap.get(row.student_id)
           : null;
-
         const subject = group.subjectId
           ? subjectMap.get(group.subjectId)
           : null;
+        const status = row
+          ? normalizeAttendanceStatus(row.attendance_status)
+          : "Tidak Ada Jadwal";
 
-        rows.push([
-          String(number++),
-          teacher?.full_name || "Guru",
-          group.dayName,
-          group.attendanceDate,
-          subject?.name || group.subjectName || "-",
-          student ? formatClass(student.level, student.grade) : "-",
-          group.teacherArrivalTime || "-",
-          group.teacherDepartureTime || "-",
-          group.startTime || "-",
-          group.endTime || "-",
+        const note = row
+          ? getAttendanceNote(row) || (
+              status === "Tidak Ada Jadwal"
+                ? "Tidak ada jadwal hari ini"
+                : status === "Izin"
+                  ? "Izin"
+                  : status === "Alpa"
+                    ? "Alpa"
+                    : row.is_online
+                      ? "Online class"
+                      : row.is_offline
+                        ? "Belajar siswa di dalam kelas aktif"
+                        : "-"
+            )
+          : "Tidak ada jadwal hari ini";
+
+        aoa.push([
+          number,
+          group.dayName || "-",
+          formatDate(group.attendanceDate),
+          teacher?.full_name || "-",
+          formatTime(group.teacherArrivalTime),
+          formatTime(group.teacherDepartureTime),
+          `${formatTime(group.startTime)}-${formatTime(group.endTime)}`,
           group.sessionName || "-",
+          student ? formatClass(student.level, student.grade) : "-",
+          subject?.name || group.subjectName || "-",
           group.materialTopic || "-",
-          student?.full_name || "Nama siswa tidak ditemukan",
-          normalizeAttendanceStatus(row.attendance_status),
-          row.understanding_status || "-",
-          row.note || row.notes || "-",
+          student?.full_name || "Tidak ada jadwal hari ini",
+          status === "Hadir" ? "✓" : "",
+          status === "Izin" ? "✓" : "",
+          status === "Alpa" ? "✓" : "",
+          note,
         ]);
       });
+
+      const lastDataRow = aoa.length - 1;
+      if (lastDataRow > firstDataRow) {
+        // Merge kolom informasi tanggal/guru dan informasi sesi KBM.
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].forEach((column) => {
+          dataMerges.push({
+            s: { r: firstDataRow, c: column },
+            e: { r: lastDataRow, c: column },
+          });
+        });
+      }
+      number++;
     });
 
-    const csvContent = [headers, ...rows]
-      .map((row) => row.map(escapeCell).join(";"))
-      .join("\r\n");
-    const blob = new Blob(["\uFEFF", csvContent], {
-      type: "text/csv;charset=utf-8;",
+    const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    worksheet["!merges"] = [...merges, ...dataMerges];
+    worksheet["!cols"] = [
+      { wch: 5 }, { wch: 12 }, { wch: 14 }, { wch: 23 },
+      { wch: 11 }, { wch: 11 }, { wch: 13 }, { wch: 7 },
+      { wch: 7 }, { wch: 17 }, { wch: 24 }, { wch: 31 },
+      { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 32 },
+    ];
+    worksheet["!rows"] = [
+      { hpt: 28 }, { hpt: 20 }, { hpt: 17 },
+      { hpt: 24 }, { hpt: 34 },
+    ];
+
+    const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:P5");
+
+    // Styling judul dan identitas sekolah.
+    ["A1", "A2", "A3"].forEach((address, index) => {
+      if (worksheet[address]) {
+        worksheet[address].s = index === 0
+          ? titleStyle
+          : index === 1
+            ? subtitleStyle
+            : yearStyle;
+      }
     });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+
+    // Styling seluruh header tabel.
+    for (let row = 3; row <= 4; row++) {
+      for (let col = 0; col <= 15; col++) {
+        const address = XLSX.utils.encode_cell({ r: row, c: col });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = headerStyle;
+      }
+    }
+
+    // Styling baris data, termasuk centang berwarna sesuai status.
+    for (let row = 5; row <= range.e.r; row++) {
+      for (let col = 0; col <= 15; col++) {
+        const address = XLSX.utils.encode_cell({ r: row, c: col });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = {
+          ...dataStyle,
+          alignment: {
+            vertical: "top",
+            horizontal: [0, 2, 4, 5, 7, 8, 12, 13, 14].includes(col)
+              ? "center"
+              : "left",
+            wrapText: true,
+          },
+        };
+      }
+
+      const hadirAddress = XLSX.utils.encode_cell({ r: row, c: 12 });
+      const izinAddress = XLSX.utils.encode_cell({ r: row, c: 13 });
+      const alpaAddress = XLSX.utils.encode_cell({ r: row, c: 14 });
+
+      if (worksheet[hadirAddress]?.v === "✓") {
+        worksheet[hadirAddress].s = {
+          ...headerStyle,
+          font: { name: "Arial", bold: true, sz: 15, color: { rgb: "FFFFFF" } },
+          fill: { patternType: "solid", fgColor: { rgb: "20BF6B" } },
+        };
+      }
+      if (worksheet[izinAddress]?.v === "✓") {
+        worksheet[izinAddress].s = {
+          ...headerStyle,
+          font: { name: "Arial", bold: true, sz: 15, color: { rgb: "FFFFFF" } },
+          fill: { patternType: "solid", fgColor: { rgb: "7C3AED" } },
+        };
+      }
+      if (worksheet[alpaAddress]?.v === "✓") {
+        worksheet[alpaAddress].s = {
+          ...headerStyle,
+          font: { name: "Arial", bold: true, sz: 15, color: { rgb: "FFFFFF" } },
+          fill: { patternType: "solid", fgColor: { rgb: "DC2626" } },
+        };
+      }
+    }
+
+    // Tinggi baris mengikuti banyaknya teks siswa/keterangan.
+    for (let row = 5; row <= range.e.r; row++) {
+      const studentText = String(worksheet[XLSX.utils.encode_cell({ r: row, c: 11 })]?.v || "");
+      const noteText = String(worksheet[XLSX.utils.encode_cell({ r: row, c: 15 })]?.v || "");
+      const estimatedLines = Math.max(
+        1,
+        Math.ceil(studentText.length / 28),
+        Math.ceil(noteText.length / 30)
+      );
+      worksheet["!rows"]![row] = { hpt: Math.max(28, estimatedLines * 18) };
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Harian");
+    workbook.Workbook = {
+      Views: [{ RTL: false }],
+    };
+
     const safeTeacherName = (teacher?.full_name || "guru")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
+    const fileDate = todayYMD();
 
-    link.href = url;
-    link.download = `absensi-${safeTeacherName || "guru"}-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    XLSX.writeFile(
+      workbook,
+      `Absensi_Harian_${safeTeacherName || "guru"}_${fileDate}.xlsx`,
+      { bookType: "xlsx", cellStyles: true }
+    );
   }
 
   return (
@@ -2892,95 +3080,187 @@ export default function TeacherAbsensiPage() {
           </div>
         </div>
 
-        {/* Area khusus cetak: hanya menampilkan riwayat milik guru yang sedang login. */}
+        {/* Area cetak: format disamakan dengan file Export Excel. */}
         <div id="teacher-attendance-print" className="hidden print:block">
-          <div className="mb-6 border-b-2 border-black pb-4 text-center">
-            <h1 className="text-xl font-bold uppercase">
-              LAPORAN ABSENSI GURU
+          <div className="mb-5 text-center">
+            <h1 className="text-[18px] font-extrabold uppercase tracking-wide">
+              ABSENSI KBM GURU DAN SISWA HARIAN
             </h1>
-            <p className="mt-1 text-sm">Homeschooling Tunas Karya Bangsa</p>
-            <p className="mt-3 text-left text-sm">
-              <strong>Nama Guru:</strong> {teacher?.full_name || "-"}
+            <p className="mt-1 text-[11px] font-bold">
+              HOMESCHOOLING TUNAS KARYA BANGSA
             </p>
-            <p className="text-left text-sm">
-              <strong>Periode:</strong> Seluruh riwayat absensi tersimpan
-            </p>
-            <p className="text-left text-sm">
-              <strong>Tanggal Cetak:</strong> {formatDate(todayYMD())}
+            <p className="mt-1 text-[9px]">
+              Tahun Ajaran {ACADEMIC_YEAR}
             </p>
           </div>
 
           {attendanceHistory.length === 0 ? (
             <p className="text-sm">Belum ada data absensi.</p>
           ) : (
-            attendanceHistory.map((history, historyIndex) => (
-              <div
-                key={`print-${history.key}`}
-                className="mb-6 break-inside-avoid"
-              >
-                <div className="mb-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                  <p><strong>{historyIndex + 1}. Hari/Tanggal:</strong> {history.dayName}, {formatDate(history.attendanceDate)}</p>
-                  <p><strong>Mapel/Kelas:</strong> {history.subjectName}</p>
-                  <p><strong>Datang:</strong> {formatTime(history.teacherArrivalTime)}</p>
-                  <p><strong>Pulang:</strong> {formatTime(history.teacherDepartureTime)}</p>
-                  <p><strong>Jam KBM:</strong> {formatTime(history.startTime)} - {formatTime(history.endTime)}</p>
-                  <p><strong>Sesi:</strong> {history.sessionName}</p>
-                  <p className="col-span-2"><strong>Materi:</strong> {history.materialTopic}</p>
-                </div>
+            <table className="teacher-print-table w-full border-collapse">
+              <colgroup>
+                <col style={{ width: "2.5%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "5%" }} />
+                <col style={{ width: "5%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "3.5%" }} />
+                <col style={{ width: "3.5%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "16%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "4.5%" }} />
+                <col style={{ width: "10%" }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th rowSpan={2}>No</th>
+                  <th rowSpan={2}>Hari</th>
+                  <th rowSpan={2}>Tanggal</th>
+                  <th rowSpan={2}>Nama<br />Guru</th>
+                  <th rowSpan={2}>Datang<br />Guru</th>
+                  <th rowSpan={2}>Pulang<br />Guru</th>
+                  <th colSpan={9}>Jadwal Kegiatan Belajar Mengajar</th>
+                  <th rowSpan={2}>Keterangan</th>
+                </tr>
+                <tr>
+                  <th>Jam<br />Siswa</th>
+                  <th>Sesi</th>
+                  <th>Kls</th>
+                  <th>Mapel</th>
+                  <th>Materi</th>
+                  <th>Siswa</th>
+                  <th>Hadir</th>
+                  <th>Izin</th>
+                  <th>Alpa</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attendanceHistory.map((history, historyIndex) => {
+                  const sessionRows = history.rows.length > 0
+                    ? history.rows
+                    : [null];
 
-                <table className="w-full border-collapse text-xs">
-                  <thead>
-                    <tr>
-                      <th className="border border-black p-2">No</th>
-                      <th className="border border-black p-2 text-left">Nama Siswa</th>
-                      <th className="border border-black p-2">Kelas</th>
-                      <th className="border border-black p-2">Status</th>
-                      <th className="border border-black p-2">Pemahaman</th>
-                      <th className="border border-black p-2 text-left">Keterangan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.rows.map((row, rowIndex) => {
-                      const student = students.find(
-                        (item) => item.id === row.student_id
-                      );
-                      return (
-                        <tr key={`print-${row.id}`}>
-                          <td className="border border-black p-2 text-center">{rowIndex + 1}</td>
-                          <td className="border border-black p-2">{student?.full_name || "-"}</td>
-                          <td className="border border-black p-2 text-center">
-                            {formatClass(student?.level, student?.grade)}
-                          </td>
-                          <td className="border border-black p-2 text-center">
-                            {normalizeAttendanceStatus(row.attendance_status)}
-                          </td>
-                          <td className="border border-black p-2 text-center">
-                            {row.understanding_status || "-"}
-                          </td>
-                          <td className="border border-black p-2">
-                            {getAttendanceNote(row) || "-"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                  const firstStudent = history.rows[0]?.student_id
+                    ? students.find((item) => item.id === history.rows[0].student_id)
+                    : null;
 
-                <p className="mt-2 text-right text-xs">
-                  Total: {history.totalStudents} siswa | Hadir: {history.hadir} | Izin: {history.izin} | Alpa: {history.alpa} | Tidak ada jadwal: {history.tidakAdaJadwal}
-                </p>
-              </div>
-            ))
+                  const subject = subjects.find(
+                    (item) => item.id === history.subjectId
+                  ) || null;
+
+                  return (
+                    <Fragment key={`print-session-${history.key}`}>
+                      {sessionRows.map((row, rowIndex) => {
+                        const student = row?.student_id
+                          ? students.find((item) => item.id === row.student_id)
+                          : null;
+                        const status = row
+                          ? normalizeAttendanceStatus(row.attendance_status)
+                          : "Tidak Ada Jadwal";
+
+                        const note = row
+                          ? getAttendanceNote(row) || (
+                              status === "Tidak Ada Jadwal"
+                                ? "Tidak ada jadwal hari ini"
+                                : status === "Izin"
+                                  ? "Izin"
+                                  : status === "Alpa"
+                                    ? "Alpa"
+                                    : row.is_online
+                                      ? "Online class"
+                                      : row.is_offline
+                                        ? "Belajar siswa di dalam kelas aktif"
+                                        : "-"
+                            )
+                          : "Tidak ada jadwal hari ini";
+
+                        const first = rowIndex === 0;
+                        const span = sessionRows.length;
+
+                        return (
+                          <tr key={`print-row-${history.key}-${row?.id || rowIndex}`}>
+                            {first ? (
+                              <>
+                                <td rowSpan={span} className="print-center print-bold">
+                                  {historyIndex + 1}
+                                </td>
+                                <td rowSpan={span} className="print-bold">
+                                  {history.dayName}
+                                </td>
+                                <td rowSpan={span} className="print-nowrap">
+                                  {formatDate(history.attendanceDate)}
+                                </td>
+                                <td rowSpan={span} className="print-bold">
+                                  {teacher?.full_name || "-"}
+                                </td>
+                                <td rowSpan={span} className="print-center print-nowrap">
+                                  {formatTime(history.teacherArrivalTime)}
+                                </td>
+                                <td rowSpan={span} className="print-center print-nowrap">
+                                  {formatTime(history.teacherDepartureTime)}
+                                </td>
+                                <td rowSpan={span} className="print-center print-nowrap">
+                                  {formatTime(history.startTime)}-{formatTime(history.endTime)}
+                                </td>
+                                <td rowSpan={span} className="print-center print-bold">
+                                  {history.sessionName}
+                                </td>
+                                <td rowSpan={span} className="print-center">
+                                  {firstStudent
+                                    ? formatClass(firstStudent.level, firstStudent.grade)
+                                    : "-"}
+                                </td>
+                                <td rowSpan={span}>
+                                  {subject?.name || history.subjectName || "-"}
+                                </td>
+                                <td rowSpan={span} className="print-bold">
+                                  {history.materialTopic || "-"}
+                                </td>
+                              </>
+                            ) : null}
+
+                            <td className="print-student-name">
+                              {student?.full_name || (row ? "-" : "Tidak ada jadwal hari ini")}
+                            </td>
+                            <td className="print-center">
+                              {status === "Hadir" ? (
+                                <span className="print-check print-check-present">✓</span>
+                              ) : null}
+                            </td>
+                            <td className="print-center">
+                              {status === "Izin" ? (
+                                <span className="print-check print-check-permission">✓</span>
+                              ) : null}
+                            </td>
+                            <td className="print-center">
+                              {status === "Alpa" ? (
+                                <span className="print-check print-check-absent">✓</span>
+                              ) : null}
+                            </td>
+                            <td className="print-note">{note}</td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
 
-          <div className="mt-12 grid grid-cols-2 gap-10 text-center text-sm">
+          <div className="mt-10 grid grid-cols-2 gap-10 text-center text-[10px]">
             <div>
               <p>Mengetahui,</p>
-              <p className="mt-20 border-t border-black pt-2">Kepala Sekolah</p>
+              <p className="mt-16 border-t border-black pt-2">Kepala Sekolah</p>
             </div>
             <div>
               <p>Guru yang bersangkutan,</p>
-              <p className="mt-20 border-t border-black pt-2">{teacher?.full_name || "Guru"}</p>
+              <p className="mt-16 border-t border-black pt-2">{teacher?.full_name || "Guru"}</p>
             </div>
           </div>
         </div>
@@ -2988,8 +3268,8 @@ export default function TeacherAbsensiPage() {
         <style jsx global>{`
           @media print {
             @page {
-              size: A4 portrait;
-              margin: 12mm;
+              size: A4 landscape;
+              margin: 8mm;
             }
 
             body * {
@@ -3010,20 +3290,88 @@ export default function TeacherAbsensiPage() {
               color: #000 !important;
               background: #fff !important;
               font-family: Arial, sans-serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
             }
 
-            #teacher-attendance-print table {
-              page-break-inside: auto;
+            #teacher-attendance-print .teacher-print-table {
+              width: 100% !important;
+              table-layout: fixed !important;
+              border-collapse: collapse !important;
+              font-size: 8px !important;
+              line-height: 1.35 !important;
             }
 
-            #teacher-attendance-print tr {
-              page-break-inside: avoid;
-              page-break-after: auto;
+            #teacher-attendance-print th,
+            #teacher-attendance-print td {
+              border: 1px solid #333 !important;
+              padding: 4px 4px !important;
+              vertical-align: top !important;
+              overflow-wrap: anywhere !important;
             }
 
             #teacher-attendance-print th {
-              background: #f1f1f1 !important;
+              background: #f2f2f2 !important;
               font-weight: 700 !important;
+              text-align: center !important;
+              vertical-align: middle !important;
+            }
+
+            #teacher-attendance-print .print-center {
+              text-align: center !important;
+              vertical-align: middle !important;
+            }
+
+            #teacher-attendance-print .print-bold {
+              font-weight: 700 !important;
+            }
+
+            #teacher-attendance-print .print-nowrap {
+              white-space: nowrap !important;
+            }
+
+            #teacher-attendance-print .print-student-name {
+              font-weight: 700 !important;
+            }
+
+            #teacher-attendance-print .print-note {
+              color: #6f625b !important;
+              font-size: 7.5px !important;
+            }
+
+            #teacher-attendance-print .print-check {
+              display: inline-flex !important;
+              width: 26px !important;
+              height: 22px !important;
+              align-items: center !important;
+              justify-content: center !important;
+              border-radius: 2px !important;
+              color: #fff !important;
+              font-size: 15px !important;
+              font-weight: 700 !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+
+            #teacher-attendance-print .print-check-present {
+              background: #20bf6b !important;
+            }
+
+            #teacher-attendance-print .print-check-permission {
+              background: #7c3aed !important;
+            }
+
+            #teacher-attendance-print .print-check-absent {
+              background: #dc2626 !important;
+            }
+
+            #teacher-attendance-print tr {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+
+            #teacher-attendance-print thead {
+              display: table-header-group !important;
             }
           }
         `}</style>
