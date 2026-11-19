@@ -697,25 +697,27 @@ function getCutoffRange(
   year: number
 ) {
   /*
+    Periode laporan menggunakan bulan kalender penuh.
     Contoh:
     pilih Agustus 2026
 
-    start = 21 Juli 2026
-    end   = 20 Agustus 2026
+    start = 1 Agustus 2026
+    end   = 31 Agustus 2026
   */
 
   const startDate =
     new Date(
       year,
-      month - 2,
-      21
+      month - 1,
+      1
     );
 
+  // Tanggal 0 pada bulan berikutnya adalah hari terakhir bulan pilihan.
   const endDate =
     new Date(
       year,
-      month - 1,
-      20
+      month,
+      0
     );
 
   return {
@@ -880,116 +882,83 @@ export default function KepalaSekolahAbsensiPage() {
     setErrorMessage("");
 
     try {
-      const [
-        teachersRes,
-        studentsRes,
-        subjectsRes,
-        attendanceRes,
-        teacherAttendanceRes,
-      ] =
-        await Promise.all([
-          supabase
-            .from("teachers")
-            .select("*")
-            .order("full_name"),
+      // Ambil master data seperti biasa. Data absensi diambil terpisah
+      // menggunakan pagination agar tidak terpotong batas maksimum Supabase.
+      const [teachersRes, studentsRes, subjectsRes] = await Promise.all([
+        supabase
+          .from("teachers")
+          .select("*")
+          .order("full_name"),
 
-          supabase
-            .from("students")
-            .select("*")
-            .order("full_name"),
+        supabase
+          .from("students")
+          .select("*")
+          .order("full_name"),
 
-          supabase
-            .from("subjects")
-            .select("*")
-            .order("name"),
+        supabase
+          .from("subjects")
+          .select("*")
+          .order("name"),
+      ]);
 
-          supabase
-            .from("attendance")
-            .select("*")
-            .order(
-              "attendance_date",
-              {
-                ascending:
-                  false,
-              }
-            )
-            .order(
-              "start_time",
-              {
-                ascending:
-                  true,
-              }
-            ),
-          supabase
-            .from("teacher_attendance")
-            .select("*")
-            .order("attendance_date", { ascending: false }),
-        ]);
-
-      if (
-        teachersRes.error
-      ) {
-        throw new Error(
-          teachersRes.error.message
-        );
+      if (teachersRes.error) {
+        throw new Error(teachersRes.error.message);
       }
 
-      if (
-        studentsRes.error
-      ) {
-        throw new Error(
-          studentsRes.error.message
-        );
+      if (studentsRes.error) {
+        throw new Error(studentsRes.error.message);
       }
 
-      if (
-        subjectsRes.error
-      ) {
-        throw new Error(
-          subjectsRes.error.message
-        );
+      if (subjectsRes.error) {
+        throw new Error(subjectsRes.error.message);
       }
 
-      if (
-        attendanceRes.error
-      ) {
-        throw new Error(
-          attendanceRes.error.message
-        );
+      const PAGE_SIZE = 1000;
+
+      // Ambil seluruh data KBM, 1.000 baris per permintaan.
+      const attendanceData: AttendanceRow[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("attendance")
+          .select("*")
+          .order("attendance_date", { ascending: false })
+          .order("start_time", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+          throw new Error(`Gagal mengambil data absensi KBM: ${error.message}`);
+        }
+
+        const page = (data || []) as AttendanceRow[];
+        attendanceData.push(...page);
+
+        if (page.length < PAGE_SIZE) break;
       }
 
-      if (teacherAttendanceRes.error) {
-        throw new Error(
-          `Gagal mengambil absensi guru: ${teacherAttendanceRes.error.message}`
-        );
+      // Ambil seluruh data absensi kehadiran guru dengan mekanisme yang sama.
+      const teacherAttendanceData: TeacherAttendanceRow[] = [];
+      for (let from = 0; ; from += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from("teacher_attendance")
+          .select("*")
+          .order("attendance_date", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) {
+          throw new Error(`Gagal mengambil absensi guru: ${error.message}`);
+        }
+
+        const page = (data || []) as TeacherAttendanceRow[];
+        teacherAttendanceData.push(...page);
+
+        if (page.length < PAGE_SIZE) break;
       }
 
-      const teachersData =
-        (
-          teachersRes.data ||
-          []
-        ) as TeacherRow[];
-
-      const studentsData =
-        (
-          studentsRes.data ||
-          []
-        ) as StudentRow[];
-
-      const subjectsData =
-        (
-          subjectsRes.data ||
-          []
-        ) as SubjectRow[];
-
-      const attendanceData =
-        (
-          attendanceRes.data ||
-          []
-        ) as AttendanceRow[];
-
-      const teacherAttendanceData =
-        (teacherAttendanceRes.data || []) as TeacherAttendanceRow[];
+      const teachersData = (teachersRes.data || []) as TeacherRow[];
+      const studentsData = (studentsRes.data || []) as StudentRow[];
+      const subjectsData = (subjectsRes.data || []) as SubjectRow[];
 
       setTeacherAttendance(teacherAttendanceData);
 
@@ -3758,7 +3727,7 @@ export default function KepalaSekolahAbsensiPage() {
             </h2>
             <p className="mt-1 text-[13px] text-[#6F5549]">
               Rekap diambil dari tabel teacher_attendance, terpisah dari absensi siswa.
-              Periode mengikuti tanggal 21 bulan sebelumnya sampai tanggal 20 bulan pilihan.
+              Periode laporan mengikuti bulan kalender penuh (tanggal 1 sampai hari terakhir bulan yang dipilih).
             </p>
           </div>
 
