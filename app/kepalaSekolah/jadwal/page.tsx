@@ -797,6 +797,9 @@ export default function KepalaSekolahAbsensiPage() {
   const [printTeacherId, setPrintTeacherId] =
     useState("");
 
+  const [printStudentId, setPrintStudentId] =
+    useState("");
+
   const [attendance, setAttendance] =
     useState<
       EnrichedAttendance[]
@@ -2328,7 +2331,7 @@ export default function KepalaSekolahAbsensiPage() {
     const result: TeacherReportGroup[] = [];
     Array.from(combined.values())
       .sort((a, b) =>
-        a.date.localeCompare(b.date) ||
+        b.date.localeCompare(a.date) ||
         (teacherMap.get(a.teacherId)?.full_name || "").localeCompare(
           teacherMap.get(b.teacherId)?.full_name || ""
         )
@@ -2389,6 +2392,38 @@ export default function KepalaSekolahAbsensiPage() {
     return result;
   }
 
+  function getTeacherReportWeekKey(dateValue: string) {
+    const date = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return "unknown";
+    const day = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - day + 3);
+    const firstThursday = new Date(date.getFullYear(), 0, 4);
+    const firstDay = (firstThursday.getDay() + 6) % 7;
+    firstThursday.setDate(firstThursday.getDate() - firstDay + 3);
+    const week = 1 + Math.round(
+      (date.getTime() - firstThursday.getTime()) / (7 * 24 * 60 * 60 * 1000)
+    );
+    return `${date.getFullYear()}-W${String(week).padStart(2, "0")}`;
+  }
+
+  function getTeacherReportWeekLabel(dateValue: string) {
+    const date = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return "Minggu tidak diketahui";
+    const monday = new Date(date);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return `${formatDate(monday.toISOString().slice(0, 10))} - ${formatDate(sunday.toISOString().slice(0, 10))}`;
+  }
+
+  function getTeacherReportWeekSessionTotal(items: TeacherReportGroup[]) {
+    return items.reduce((total, item) => {
+      if (!item.group) return total;
+      const value = Number(String(item.group.session_name || "0").replace(",", "."));
+      return total + (Number.isFinite(value) ? value : 0);
+    }, 0);
+  }
+
   function getTeacherReportCellRows(item: TeacherReportGroup): (string | number)[][] {
     const group = item.group;
     const studentsInGroup = group?.students || [];
@@ -2444,6 +2479,50 @@ export default function KepalaSekolahAbsensiPage() {
             : item.teacherNotes || "",
       ];
     });
+  }
+
+  function buildStudentReportGroups(
+    start: string,
+    end: string,
+    selectedStudentId: string
+  ): TeacherReportGroup[] {
+    if (!selectedStudentId) return [];
+
+    return buildTeacherReportGroups(start, end)
+      .filter((item) => item.group?.students.some(
+        (student) => student.student_id === selectedStudentId
+      ))
+      .map((item) => {
+        const filteredStudents = (item.group?.students || []).filter(
+          (student) => student.student_id === selectedStudentId
+        );
+        return {
+          ...item,
+          group: item.group
+            ? {
+                ...item.group,
+                students: filteredStudents,
+                total: filteredStudents.length,
+                hadir: filteredStudents.filter((student) =>
+                  isHadir(normalizeAttendanceStatus(student.attendance_status))
+                ).length,
+                izin: filteredStudents.filter((student) =>
+                  isIzin(normalizeAttendanceStatus(student.attendance_status))
+                ).length,
+                alpa: filteredStudents.filter((student) =>
+                  isAlpa(normalizeAttendanceStatus(student.attendance_status))
+                ).length,
+                sakit: filteredStudents.filter((student) =>
+                  isSakit(normalizeAttendanceStatus(student.attendance_status))
+                ).length,
+              }
+            : null,
+        };
+      })
+      .sort((a, b) =>
+        b.date.localeCompare(a.date) ||
+        (a.group?.start_time || "").localeCompare(b.group?.start_time || "")
+      );
   }
 
   function handleExportTeacherExcel() {
@@ -2512,29 +2591,59 @@ export default function KepalaSekolahAbsensiPage() {
     let totalSakit = 0;
 
     const groupRowRanges: Array<{ startRow: number; endRow: number }> = [];
+    const dateRowRanges: Array<{ date: string; startRow: number; endRow: number }> = [];
+    const weeklySummaryRows: number[] = [];
 
+    const weeklyBuckets = new Map<string, TeacherReportGroup[]>();
     reportGroups.forEach((item) => {
+      const key = getTeacherReportWeekKey(item.date);
+      const bucket = weeklyBuckets.get(key) || [];
+      bucket.push(item);
+      weeklyBuckets.set(key, bucket);
+    });
+
+    let currentDate = "";
+    let currentDateStart = -1;
+    let currentDateEnd = -1;
+
+    reportGroups.forEach((item, itemIndex) => {
       const startRow = worksheetData.length;
       const rows = getTeacherReportCellRows(item);
       groupNumber += 1;
 
       rows.forEach((row) => {
-        // row berisi Hari s/d Keterangan (15 kolom); nomor ditambahkan di depan.
         worksheetData.push([groupNumber, ...row]);
       });
 
       const endRow = worksheetData.length - 1;
       groupRowRanges.push({ startRow, endRow });
 
-      // Identitas sesi/jadwal digabung vertikal, kolom siswa dan status tetap per siswa.
+      // Kolom jadwal digabung untuk satu sesi/rombel.
       if (endRow > startRow) {
-        for (let column = 0; column <= 10; column += 1) {
+        // Kolom No dan kolom identitas sesi digabung per sesi.
+        // Hari (B) dan Tanggal (C) sengaja tidak digabung di sini karena
+        // keduanya digabung sekali per tanggal pada dateRowRanges di bawah.
+        [0, 3, 4, 5, 6, 7, 8, 9, 10].forEach((column) => {
           merges.push({
             s: { r: startRow, c: column },
             e: { r: endRow, c: column },
           });
-        }
+        });
       }
+
+      // Hari dan tanggal hanya ditampilkan sekali untuk seluruh jadwal pada tanggal yang sama.
+      if (currentDate !== item.date) {
+        if (currentDate && currentDateStart >= 0) {
+          dateRowRanges.push({
+            date: currentDate,
+            startRow: currentDateStart,
+            endRow: currentDateEnd,
+          });
+        }
+        currentDate = item.date;
+        currentDateStart = startRow;
+      }
+      currentDateEnd = endRow;
 
       (item.group?.students || []).forEach((student) => {
         const status = normalizeAttendanceStatus(student.attendance_status);
@@ -2542,6 +2651,55 @@ export default function KepalaSekolahAbsensiPage() {
         if (isIzin(status)) totalIzin += 1;
         if (isAlpa(status)) totalAlpa += 1;
         if (isSakit(status)) totalSakit += 1;
+      });
+
+      const nextItem = reportGroups[itemIndex + 1];
+      const isLastOfWeek =
+        !nextItem ||
+        getTeacherReportWeekKey(nextItem.date) !== getTeacherReportWeekKey(item.date);
+
+      if (isLastOfWeek) {
+        const weekItems = weeklyBuckets.get(getTeacherReportWeekKey(item.date)) || [];
+        const summaryRow = worksheetData.length;
+        const weekSessionTotal = getTeacherReportWeekSessionTotal(weekItems);
+        worksheetData.push([
+          "TOTAL SESI MINGGU INI",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          weekSessionTotal,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ]);
+        weeklySummaryRows.push(summaryRow);
+      }
+    });
+
+    if (currentDate && currentDateStart >= 0) {
+      dateRowRanges.push({
+        date: currentDate,
+        startRow: currentDateStart,
+        endRow: currentDateEnd,
+      });
+    }
+
+    // Merge hari dan tanggal lintas seluruh jadwal pada tanggal tersebut.
+    dateRowRanges.forEach(({ startRow, endRow }) => {
+      if (endRow <= startRow) return;
+      [1, 2].forEach((column) => {
+        merges.push({
+          s: { r: startRow, c: column },
+          e: { r: endRow, c: column },
+        });
       });
     });
 
@@ -2667,7 +2825,8 @@ export default function KepalaSekolahAbsensiPage() {
       }
     });
 
-    // Tinggi baris judul/header dan data mengikuti banyaknya teks.
+    // Inisialisasi tinggi baris sebelum memberi tinggi khusus pada subtotal mingguan.
+    // Jika belum dibuat, worksheet["!rows"][row] akan mengakses undefined.
     worksheet["!rows"] = [
       { hpt: 30 },
       { hpt: 22 },
@@ -2676,6 +2835,41 @@ export default function KepalaSekolahAbsensiPage() {
       { hpt: 30 },
     ];
 
+    weeklySummaryRows.forEach((row) => {
+      const summaryStyle = {
+        font: { name: "Arial", sz: 10, bold: true, color: { rgb: "111111" } },
+        alignment: { horizontal: "right", vertical: "center" },
+        fill: { patternType: "solid", fgColor: { rgb: "E8E8E8" } },
+        border: thinBorder,
+      };
+      for (let column = 0; column <= 15; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = summaryStyle;
+      }
+      merges.push(
+        { s: { r: row, c: 0 }, e: { r: row, c: 6 } },
+        { s: { r: row, c: 7 }, e: { r: row, c: 8 } },
+        { s: { r: row, c: 9 }, e: { r: row, c: 15 } }
+      );
+      // Tampilkan angka total pada sel utama merge H:I.
+      const totalCell = XLSX.utils.encode_cell({ r: row, c: 7 });
+      worksheet[totalCell] = {
+        t: "n",
+        v: Number(worksheetData[row][7]) || 0,
+        s: {
+          ...summaryStyle,
+          alignment: { horizontal: "center", vertical: "center" },
+          numFmt: "0.##",
+        },
+      };
+      worksheet["!rows"]![row] = { hpt: 22 };
+    });
+
+    // Re-assign merge metadata after adding weekly subtotal merges.
+    worksheet["!merges"] = merges;
+
+    // Tinggi baris judul/header dan data mengikuti banyaknya teks.
     groupRowRanges.forEach(({ startRow, endRow }) => {
       for (let row = startRow; row <= endRow; row += 1) {
         const studentText = String(
@@ -2733,6 +2927,410 @@ export default function KepalaSekolahAbsensiPage() {
     );
   }
 
+
+  function handleExportStudentIndividualExcel() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    if (!printStudentId) {
+      alert("Pilih siswa terlebih dahulu untuk export absensi.");
+      return;
+    }
+
+    const student = students.find((item) => item.id === printStudentId);
+    if (!student) {
+      alert("Data siswa tidak ditemukan.");
+      return;
+    }
+
+    const { start, end, monthNumber, yearNumber } = period;
+    const reportGroups = buildStudentReportGroups(start, end, printStudentId);
+
+    if (reportGroups.length === 0) {
+      alert(`Tidak ada data absensi KBM untuk ${student.full_name || "siswa ini"} pada periode yang dipilih.`);
+      return;
+    }
+
+    const academicYear =
+      monthNumber >= 7
+        ? `${yearNumber}/${yearNumber + 1}`
+        : `${yearNumber - 1}/${yearNumber}`;
+
+    // Susunan header mengikuti contoh Excel: 3 baris identitas,
+    // lalu header tabel bertingkat pada baris 4 dan 5.
+    const worksheetData: (string | number)[][] = [
+      ["LAPORAN ABSENSI KBM SISWA"],
+      ["HOMESCHOOLING TUNAS KARYA BANGSA"],
+      [`Tahun Ajaran ${academicYear}`],
+      [
+        "No", "Hari", "Tanggal", "Nama Guru", "Datang Guru", "Pulang Guru",
+        "Jadwal Kegiatan Belajar Mengajar", "", "", "", "", "", "", "", "", "Keterangan",
+      ],
+      [
+        "", "", "", "", "", "",
+        "Jam Siswa", "Sesi", "Kls", "Mapel", "Materi", "Siswa",
+        "Hadir", "Izin", "Alpa", "",
+      ],
+    ];
+
+    const merges: XLSX.Range[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 15 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 15 } },
+      { s: { r: 3, c: 6 }, e: { r: 3, c: 14 } },
+    ];
+
+    [0, 1, 2, 3, 4, 5, 15].forEach((column) => {
+      merges.push({
+        s: { r: 3, c: column },
+        e: { r: 4, c: column },
+      });
+    });
+
+    let groupNumber = 0;
+    let totalHadir = 0;
+    let totalIzin = 0;
+    let totalAlpa = 0;
+    let totalSakit = 0;
+
+    const groupRowRanges: Array<{ startRow: number; endRow: number }> = [];
+    const dateRowRanges: Array<{ date: string; startRow: number; endRow: number }> = [];
+    const weeklySummaryRows: number[] = [];
+
+    const weeklyBuckets = new Map<string, TeacherReportGroup[]>();
+    reportGroups.forEach((item) => {
+      const key = getTeacherReportWeekKey(item.date);
+      const bucket = weeklyBuckets.get(key) || [];
+      bucket.push(item);
+      weeklyBuckets.set(key, bucket);
+    });
+
+    let currentDate = "";
+    let currentDateStart = -1;
+    let currentDateEnd = -1;
+
+    reportGroups.forEach((item, itemIndex) => {
+      const startRow = worksheetData.length;
+      const rows = getTeacherReportCellRows(item);
+      groupNumber += 1;
+
+      rows.forEach((row) => {
+        worksheetData.push([groupNumber, ...row]);
+      });
+
+      const endRow = worksheetData.length - 1;
+      groupRowRanges.push({ startRow, endRow });
+
+      // Kolom jadwal digabung untuk satu sesi/rombel.
+      if (endRow > startRow) {
+        // Kolom No dan kolom identitas sesi digabung per sesi.
+        // Hari (B) dan Tanggal (C) sengaja tidak digabung di sini karena
+        // keduanya digabung sekali per tanggal pada dateRowRanges di bawah.
+        [0, 3, 4, 5, 6, 7, 8, 9, 10].forEach((column) => {
+          merges.push({
+            s: { r: startRow, c: column },
+            e: { r: endRow, c: column },
+          });
+        });
+      }
+
+      // Hari dan tanggal hanya ditampilkan sekali untuk seluruh jadwal pada tanggal yang sama.
+      if (currentDate !== item.date) {
+        if (currentDate && currentDateStart >= 0) {
+          dateRowRanges.push({
+            date: currentDate,
+            startRow: currentDateStart,
+            endRow: currentDateEnd,
+          });
+        }
+        currentDate = item.date;
+        currentDateStart = startRow;
+      }
+      currentDateEnd = endRow;
+
+      (item.group?.students || []).forEach((student) => {
+        const status = normalizeAttendanceStatus(student.attendance_status);
+        if (isHadir(status)) totalHadir += 1;
+        if (isIzin(status)) totalIzin += 1;
+        if (isAlpa(status)) totalAlpa += 1;
+        if (isSakit(status)) totalSakit += 1;
+      });
+
+      const nextItem = reportGroups[itemIndex + 1];
+      const isLastOfWeek =
+        !nextItem ||
+        getTeacherReportWeekKey(nextItem.date) !== getTeacherReportWeekKey(item.date);
+
+      if (isLastOfWeek) {
+        const weekItems = weeklyBuckets.get(getTeacherReportWeekKey(item.date)) || [];
+        const summaryRow = worksheetData.length;
+        const weekSessionTotal = getTeacherReportWeekSessionTotal(weekItems);
+        worksheetData.push([
+          "TOTAL SESI MINGGU INI",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          weekSessionTotal,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ]);
+        weeklySummaryRows.push(summaryRow);
+      }
+    });
+
+    if (currentDate && currentDateStart >= 0) {
+      dateRowRanges.push({
+        date: currentDate,
+        startRow: currentDateStart,
+        endRow: currentDateEnd,
+      });
+    }
+
+    // Merge hari dan tanggal lintas seluruh jadwal pada tanggal tersebut.
+    dateRowRanges.forEach(({ startRow, endRow }) => {
+      if (endRow <= startRow) return;
+      [1, 2].forEach((column) => {
+        merges.push({
+          s: { r: startRow, c: column },
+          e: { r: endRow, c: column },
+        });
+      });
+    });
+
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+    worksheet["!merges"] = merges;
+
+    // Lebar kolom meniru proporsi pada contoh Excel yang dikirim.
+    worksheet["!cols"] = [
+      { wch: 5 },   // No
+      { wch: 12 },  // Hari
+      { wch: 15 },  // Tanggal
+      { wch: 24 },  // Nama Guru
+      { wch: 10 },  // Datang Guru
+      { wch: 10 },  // Pulang Guru
+      { wch: 13 },  // Jam Siswa
+      { wch: 7 },   // Sesi
+      { wch: 8 },   // Kls
+      { wch: 16 },  // Mapel
+      { wch: 21 },  // Materi
+      { wch: 25 },  // Siswa
+      { wch: 8 },   // Hadir
+      { wch: 8 },   // Izin
+      { wch: 8 },   // Alpa
+      { wch: 28 },  // Keterangan
+    ];
+
+    const thinBorder = {
+      top: { style: "thin", color: { rgb: "333333" } },
+      bottom: { style: "thin", color: { rgb: "333333" } },
+      left: { style: "thin", color: { rgb: "333333" } },
+      right: { style: "thin", color: { rgb: "333333" } },
+    };
+
+    const titleStyle = {
+      font: { name: "Arial", sz: 15, bold: true, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const schoolStyle = {
+      font: { name: "Arial", sz: 11, bold: true, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const yearStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "555555" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+
+    const headerStyle = {
+      font: { name: "Arial", sz: 10, bold: true, color: { rgb: "111111" } },
+      alignment: { horizontal: "center", vertical: "center", wrapText: true },
+      fill: { patternType: "solid", fgColor: { rgb: "F2F2F2" } },
+      border: thinBorder,
+    };
+
+    const dataStyle = {
+      font: { name: "Arial", sz: 9, color: { rgb: "111111" } },
+      alignment: { vertical: "top", wrapText: true },
+      border: thinBorder,
+    };
+
+    // Style judul dan identitas sekolah.
+    ["A1", "A2", "A3"].forEach((address, index) => {
+      if (!worksheet[address]) return;
+      worksheet[address].s =
+        index === 0 ? titleStyle : index === 1 ? schoolStyle : yearStyle;
+    });
+
+    // Style dua tingkat header.
+    for (let row = 3; row <= 4; row += 1) {
+      for (let column = 0; column <= 15; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = headerStyle;
+      }
+    }
+
+    // Style data dan tanda status berwarna seperti contoh.
+    groupRowRanges.forEach(({ startRow, endRow }) => {
+      for (let row = startRow; row <= endRow; row += 1) {
+        for (let column = 0; column <= 15; column += 1) {
+          const address = XLSX.utils.encode_cell({ r: row, c: column });
+          if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+          worksheet[address].s = {
+            ...dataStyle,
+            alignment: {
+              vertical: "top",
+              horizontal: [0, 2, 4, 5, 7, 8, 12, 13, 14].includes(column)
+                ? "center"
+                : "left",
+              wrapText: true,
+            },
+          };
+        }
+
+        const hadirAddress = XLSX.utils.encode_cell({ r: row, c: 12 });
+        const izinAddress = XLSX.utils.encode_cell({ r: row, c: 13 });
+        const alpaAddress = XLSX.utils.encode_cell({ r: row, c: 14 });
+
+        if (worksheet[hadirAddress]?.v === "✓") {
+          worksheet[hadirAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "20BF6B" } },
+          };
+        }
+
+        if (worksheet[izinAddress]?.v === "✓") {
+          worksheet[izinAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "7C3AED" } },
+          };
+        }
+
+        if (worksheet[alpaAddress]?.v === "✓") {
+          worksheet[alpaAddress].s = {
+            ...headerStyle,
+            font: { name: "Arial", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+            fill: { patternType: "solid", fgColor: { rgb: "DC2626" } },
+          };
+        }
+      }
+    });
+
+    // Inisialisasi tinggi baris sebelum memberi tinggi khusus pada subtotal mingguan.
+    // Jika belum dibuat, worksheet["!rows"][row] akan mengakses undefined.
+    worksheet["!rows"] = [
+      { hpt: 30 },
+      { hpt: 22 },
+      { hpt: 18 },
+      { hpt: 28 },
+      { hpt: 30 },
+    ];
+
+    weeklySummaryRows.forEach((row) => {
+      const summaryStyle = {
+        font: { name: "Arial", sz: 10, bold: true, color: { rgb: "111111" } },
+        alignment: { horizontal: "right", vertical: "center" },
+        fill: { patternType: "solid", fgColor: { rgb: "E8E8E8" } },
+        border: thinBorder,
+      };
+      for (let column = 0; column <= 15; column += 1) {
+        const address = XLSX.utils.encode_cell({ r: row, c: column });
+        if (!worksheet[address]) worksheet[address] = { t: "s", v: "" };
+        worksheet[address].s = summaryStyle;
+      }
+      merges.push(
+        { s: { r: row, c: 0 }, e: { r: row, c: 6 } },
+        { s: { r: row, c: 7 }, e: { r: row, c: 8 } },
+        { s: { r: row, c: 9 }, e: { r: row, c: 15 } }
+      );
+      // Tampilkan angka total pada sel utama merge H:I.
+      const totalCell = XLSX.utils.encode_cell({ r: row, c: 7 });
+      worksheet[totalCell] = {
+        t: "n",
+        v: Number(worksheetData[row][7]) || 0,
+        s: {
+          ...summaryStyle,
+          alignment: { horizontal: "center", vertical: "center" },
+          numFmt: "0.##",
+        },
+      };
+      worksheet["!rows"]![row] = { hpt: 22 };
+    });
+
+    // Re-assign merge metadata after adding weekly subtotal merges.
+    worksheet["!merges"] = merges;
+
+    // Tinggi baris judul/header dan data mengikuti banyaknya teks.
+    groupRowRanges.forEach(({ startRow, endRow }) => {
+      for (let row = startRow; row <= endRow; row += 1) {
+        const studentText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 11 })]?.v || ""
+        );
+        const materialText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 10 })]?.v || ""
+        );
+        const noteText = String(
+          worksheet[XLSX.utils.encode_cell({ r: row, c: 15 })]?.v || ""
+        );
+
+        const lines = Math.max(
+          1,
+          Math.ceil(studentText.length / 25),
+          Math.ceil(materialText.length / 21),
+          Math.ceil(noteText.length / 28)
+        );
+
+        worksheet["!rows"]![row] = {
+          hpt: Math.min(90, Math.max(25, lines * 15)),
+        };
+      }
+    });
+
+    worksheet["!freeze"] = { xSplit: 6, ySplit: 5 };
+    worksheet["!sheetView"] = [{ showGridLines: false }];
+    worksheet["!pageSetup"] = {
+      orientation: "landscape",
+      paperSize: 9,
+      fitToWidth: 1,
+      fitToHeight: 0,
+    };
+    worksheet["!margins"] = {
+      left: 0.25,
+      right: 0.25,
+      top: 0.35,
+      bottom: 0.35,
+      header: 0.15,
+      footer: 0.15,
+    };
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Absensi Siswa");
+
+    const safeTeacherName = (student.full_name || "Siswa")
+      .normalize("NFKD")
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    XLSX.writeFile(
+      workbook,
+      `Absensi_Siswa_${safeTeacherName}_${monthOptions[monthNumber]}_${yearNumber}_${start}_sd_${end}.xlsx`,
+      { bookType: "xlsx", cellStyles: true }
+    );
+  }
+
+
   function escapePrintHtml(value: unknown) {
     return String(value ?? "-")
       .replace(/&/g, "&amp;")
@@ -2765,35 +3363,75 @@ export default function KepalaSekolahAbsensiPage() {
     }
 
     let rowNumber = 0;
-    const bodyRows = reportGroups.map((item) => {
-      const rows = getTeacherReportCellRows(item);
-      const rowSpan = rows.length;
-      const first = rows[0];
-      const sharedCells = [
-        `<td rowspan="${rowSpan}">${++rowNumber}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[0])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[1])}</td>`,
-        `<td rowspan="${rowSpan}"><strong>${escapePrintHtml(first[2])}</strong></td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[3])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[4])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[5])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[6])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[7])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[8])}</td>`,
-        `<td rowspan="${rowSpan}">${escapePrintHtml(first[9])}</td>`,
-      ].join("");
+    const printWeekGroups = new Map<string, TeacherReportGroup[]>();
+    reportGroups.forEach((item) => {
+      const weekKey = getTeacherReportWeekKey(item.date);
+      const weekItems = printWeekGroups.get(weekKey) || [];
+      weekItems.push(item);
+      printWeekGroups.set(weekKey, weekItems);
+    });
 
-      return rows.map((row, index) => {
-        const studentCells = [
+    const dateRowSpans = new Map<string, number>();
+    reportGroups.forEach((item) => {
+      const rowCount = getTeacherReportCellRows(item).length;
+      dateRowSpans.set(item.date, (dateRowSpans.get(item.date) || 0) + rowCount);
+    });
+
+    const seenDateCells = new Set<string>();
+    const printRows: string[] = [];
+    reportGroups.forEach((item, itemIndex) => {
+      const rows = getTeacherReportCellRows(item);
+      const first = rows[0];
+      const itemRowCount = rows.length;
+      const showDateCells = !seenDateCells.has(item.date);
+
+      rows.forEach((row, rowIndex) => {
+        const cells: string[] = [];
+        if (rowIndex === 0) {
+          cells.push(`<td rowspan="${itemRowCount}">${++rowNumber}</td>`);
+          if (showDateCells) {
+            const dateSpan = dateRowSpans.get(item.date) || itemRowCount;
+            cells.push(
+              `<td rowspan="${dateSpan}">${escapePrintHtml(first[0])}</td>`,
+              `<td rowspan="${dateSpan}">${escapePrintHtml(first[1])}</td>`
+            );
+            seenDateCells.add(item.date);
+          }
+          cells.push(
+            `<td rowspan="${itemRowCount}"><strong>${escapePrintHtml(first[2])}</strong></td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[3])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[4])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[5])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[6])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[7])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[8])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[9])}</td>`
+          );
+        }
+        cells.push(
           `<td class="student">${escapePrintHtml(row[10])}</td>`,
           `<td class="status">${row[11] ? '<span class="check hadir">✓</span>' : ""}</td>`,
           `<td class="status">${row[12] ? '<span class="check izin">✓</span>' : ""}</td>`,
           `<td class="status">${row[13] ? '<span class="check alpa">✓</span>' : ""}</td>`,
-          `<td class="note">${escapePrintHtml(row[14])}</td>`,
-        ].join("");
-        return `<tr>${index === 0 ? sharedCells : ""}${studentCells}</tr>`;
-      }).join("");
-    }).join("");
+          `<td class="note">${escapePrintHtml(row[14])}</td>`
+        );
+        printRows.push(`<tr>${cells.join("")}</tr>`);
+      });
+
+      const nextItem = reportGroups[itemIndex + 1];
+      const isLastOfWeek =
+        !nextItem ||
+        getTeacherReportWeekKey(nextItem.date) !== getTeacherReportWeekKey(item.date);
+      if (isLastOfWeek) {
+        const weekItems = printWeekGroups.get(getTeacherReportWeekKey(item.date)) || [];
+        const weekTotal = getTeacherReportWeekSessionTotal(weekItems);
+        printRows.push(
+          `<tr class="weekly-total"><td colspan="7">TOTAL SESI MINGGU (${escapePrintHtml(getTeacherReportWeekLabel(item.date))})</td><td colspan="2">${weekTotal.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td><td colspan="7"></td></tr>`
+        );
+      }
+    });
+
+    const bodyRows = printRows.join("");
 
     const safeName = escapePrintHtml(teacher.full_name || "Guru");
     const printWindow = window.open("", "_blank", "width=1400,height=900");
@@ -2822,6 +3460,8 @@ export default function KepalaSekolahAbsensiPage() {
         .izin { background: #7c3aed; }
         .alpa { background: #e05252; }
         .note { color: #6b625d; }
+        .weekly-total td { font-weight: 700; background: #eeeeee; text-align: right; }
+        .weekly-total td:first-child { text-align: right; }
         .sign { display: flex; justify-content: space-between; margin-top: 42px; text-align: center; font-size: 11px; }
         .sign div { width: 220px; }
         @page { size: A4 landscape; margin: 9mm; }
@@ -2860,6 +3500,169 @@ export default function KepalaSekolahAbsensiPage() {
       </body></html>`);
     printWindow.document.close();
   }
+
+
+  function handlePrintStudentAttendance() {
+    const period = getTeacherAttendanceForPeriod();
+    if (!period) return;
+
+    if (!printStudentId) {
+      alert("Pilih siswa yang ingin dicetak.");
+      return;
+    }
+
+    const { start, end, monthNumber, yearNumber } = period;
+    const student = students.find((item) => item.id === printStudentId);
+    if (!student) {
+      alert("Data siswa tidak ditemukan.");
+      return;
+    }
+
+    const reportGroups = buildStudentReportGroups(start, end, printStudentId);
+    if (reportGroups.length === 0) {
+      alert("Tidak ada data absensi KBM untuk siswa ini pada periode yang dipilih.");
+      return;
+    }
+
+    let rowNumber = 0;
+    const printWeekGroups = new Map<string, TeacherReportGroup[]>();
+    reportGroups.forEach((item) => {
+      const weekKey = getTeacherReportWeekKey(item.date);
+      const weekItems = printWeekGroups.get(weekKey) || [];
+      weekItems.push(item);
+      printWeekGroups.set(weekKey, weekItems);
+    });
+
+    const dateRowSpans = new Map<string, number>();
+    reportGroups.forEach((item) => {
+      const rowCount = getTeacherReportCellRows(item).length;
+      dateRowSpans.set(item.date, (dateRowSpans.get(item.date) || 0) + rowCount);
+    });
+
+    const seenDateCells = new Set<string>();
+    const printRows: string[] = [];
+    reportGroups.forEach((item, itemIndex) => {
+      const rows = getTeacherReportCellRows(item);
+      const first = rows[0];
+      const itemRowCount = rows.length;
+      const showDateCells = !seenDateCells.has(item.date);
+
+      rows.forEach((row, rowIndex) => {
+        const cells: string[] = [];
+        if (rowIndex === 0) {
+          cells.push(`<td rowspan="${itemRowCount}">${++rowNumber}</td>`);
+          if (showDateCells) {
+            const dateSpan = dateRowSpans.get(item.date) || itemRowCount;
+            cells.push(
+              `<td rowspan="${dateSpan}">${escapePrintHtml(first[0])}</td>`,
+              `<td rowspan="${dateSpan}">${escapePrintHtml(first[1])}</td>`
+            );
+            seenDateCells.add(item.date);
+          }
+          cells.push(
+            `<td rowspan="${itemRowCount}"><strong>${escapePrintHtml(first[2])}</strong></td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[3])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[4])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[5])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[6])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[7])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[8])}</td>`,
+            `<td rowspan="${itemRowCount}">${escapePrintHtml(first[9])}</td>`
+          );
+        }
+        cells.push(
+          `<td class="student">${escapePrintHtml(row[10])}</td>`,
+          `<td class="status">${row[11] ? '<span class="check hadir">✓</span>' : ""}</td>`,
+          `<td class="status">${row[12] ? '<span class="check izin">✓</span>' : ""}</td>`,
+          `<td class="status">${row[13] ? '<span class="check alpa">✓</span>' : ""}</td>`,
+          `<td class="note">${escapePrintHtml(row[14])}</td>`
+        );
+        printRows.push(`<tr>${cells.join("")}</tr>`);
+      });
+
+      const nextItem = reportGroups[itemIndex + 1];
+      const isLastOfWeek =
+        !nextItem ||
+        getTeacherReportWeekKey(nextItem.date) !== getTeacherReportWeekKey(item.date);
+      if (isLastOfWeek) {
+        const weekItems = printWeekGroups.get(getTeacherReportWeekKey(item.date)) || [];
+        const weekTotal = getTeacherReportWeekSessionTotal(weekItems);
+        printRows.push(
+          `<tr class="weekly-total"><td colspan="7">TOTAL SESI MINGGU (${escapePrintHtml(getTeacherReportWeekLabel(item.date))})</td><td colspan="2">${weekTotal.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</td><td colspan="7"></td></tr>`
+        );
+      }
+    });
+
+    const bodyRows = printRows.join("");
+
+    const safeName = escapePrintHtml(student.full_name || "Siswa");
+    const printWindow = window.open("", "_blank", "width=1400,height=900");
+    if (!printWindow) {
+      alert("Pop-up diblokir browser. Izinkan pop-up untuk mencetak.");
+      return;
+    }
+
+    printWindow.document.write(`<!DOCTYPE html>
+      <html lang="id"><head><meta charset="UTF-8" />
+      <title>Absensi KBM Siswa - ${safeName}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; color: #111; padding: 18px; }
+        h1 { text-align: center; font-size: 20px; font-weight: 800; margin: 0 0 7px; }
+        .school { text-align: center; font-size: 12px; font-weight: 700; margin: 0 0 5px; }
+        .period { text-align: center; font-size: 10px; margin: 0 0 20px; }
+        .teacher { font-size: 11px; margin: -8px 0 12px; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+        th, td { border: 1px solid #555; padding: 5px 4px; vertical-align: top; overflow-wrap: anywhere; }
+        th { text-align: center; font-weight: 700; vertical-align: middle; }
+        .student { font-weight: 700; }
+        .status { text-align: center; vertical-align: middle; }
+        .check { display: inline-block; color: white; font-weight: 700; padding: 5px 9px; border-radius: 2px; }
+        .hadir { background: #20bf6b; }
+        .izin { background: #7c3aed; }
+        .alpa { background: #e05252; }
+        .note { color: #6b625d; }
+        .weekly-total td { font-weight: 700; background: #eeeeee; text-align: right; }
+        .weekly-total td:first-child { text-align: right; }
+        .sign { display: flex; justify-content: space-between; margin-top: 42px; text-align: center; font-size: 11px; }
+        .sign div { width: 220px; }
+        @page { size: A4 landscape; margin: 9mm; }
+        @media print { body { padding: 0; } thead { display: table-header-group; } tr { page-break-inside: avoid; } }
+      </style></head><body>
+      <h1>LAPORAN ABSENSI KBM SISWA</h1>
+      <p class="school">HOMESCHOOLING TUNAS KARYA BANGSA</p>
+      <p class="period">Tahun Ajaran ${monthNumber >= 7 ? yearNumber : yearNumber - 1}/${monthNumber >= 7 ? yearNumber + 1 : yearNumber} · Periode ${escapePrintHtml(formatDate(start))} s/d ${escapePrintHtml(formatDate(end))}</p>
+      <p class="teacher"><strong>Nama Siswa:</strong> ${safeName} &nbsp; <strong>NIPD:</strong> ${escapePrintHtml(student.nis || "-")} &nbsp; <strong>NISN:</strong> ${escapePrintHtml(student.nisn || "-")}</p>
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2" style="width:3%">No</th>
+            <th rowspan="2" style="width:6%">Hari</th>
+            <th rowspan="2" style="width:7%">Tanggal</th>
+            <th rowspan="2" style="width:10%">Nama Guru</th>
+            <th rowspan="2" style="width:5%">Datang Guru</th>
+            <th rowspan="2" style="width:5%">Pulang Guru</th>
+            <th colspan="9">Jadwal Kegiatan Belajar Mengajar</th>
+            <th rowspan="2" style="width:12%">Keterangan</th>
+          </tr>
+          <tr>
+            <th style="width:7%">Jam Siswa</th><th style="width:4%">Sesi</th>
+            <th style="width:5%">Kls</th><th style="width:8%">Mapel</th>
+            <th style="width:9%">Materi</th><th style="width:13%">Siswa</th>
+            <th style="width:4%">Hadir</th><th style="width:4%">Izin</th><th style="width:4%">Alpa</th>
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+      <div class="sign">
+        <div>Mengetahui,<br/>Kepala Sekolah<br/><br/><br/><br/>(____________________)</div>
+        <div>Orang Tua / Wali<br/><br/><br/><br/><br/>(____________________)</div>
+      </div>
+      <script>window.onload = () => { window.print(); };</script>
+      </body></html>`);
+    printWindow.document.close();
+  }
+
 
   /* =========================================================
      UI
@@ -3002,46 +3805,111 @@ export default function KepalaSekolahAbsensiPage() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <select
-              value={printTeacherId}
-              onChange={(event) => setPrintTeacherId(event.target.value)}
-              className="h-11 min-w-[240px] rounded-xl border border-[#DCC8B6] bg-[#FBF8F4] px-4 text-[14px] outline-none focus:border-[#9C0824]"
-            >
-              <option value="">Pilih guru untuk export / cetak</option>
-              {teachers.map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.full_name || "Tanpa nama"}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={handleExportTeacherExcel}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-5 text-[14px] font-extrabold text-white transition hover:bg-[#720B24]"
-            >
-              <Download className="h-4 w-4" />
-              Export Excel Guru Terpilih
-            </button>
-            <button
-              type="button"
-              onClick={handleExportStudentExcel}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              Export Excel Absensi Murid
-            </button>
-            <button
-              type="button"
-              onClick={handlePrintTeacherAttendance}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-5 text-[14px] font-extrabold text-[#8C0F2D] transition hover:bg-[#FFF8EF]"
-            >
-              <Printer className="h-4 w-4" />
-              Cetak Absensi Per Guru
-            </button>
-            <span className="text-[12px] text-[#8A5A48]">
-              {teacherAttendance.length} data absensi guru tersimpan
-            </span>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {/* PANEL EXPORT ABSENSI GURU */}
+            <section className="min-w-0 rounded-2xl border border-[#E7D3C1] bg-[#FFFCF8] p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F7E8E9] text-[#8C0F2D]">
+                  <UserCheck className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[15px] font-extrabold text-[#2B1B18]">Absensi Guru</h3>
+                  <p className="text-xs text-[#8A5A48]">Pilih guru untuk export Excel atau cetak laporan</p>
+                </div>
+              </div>
+
+              <select
+                value={printTeacherId}
+                onChange={(event) => setPrintTeacherId(event.target.value)}
+                className="h-11 w-full min-w-0 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] text-[#2B1B18] outline-none transition focus:border-[#9C0824] focus:ring-2 focus:ring-[#9C0824]/10"
+              >
+                <option value="">Pilih guru untuk export / cetak</option>
+                {teachers.map((teacher) => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.full_name || "Tanpa nama"}
+                  </option>
+                ))}
+              </select>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={handleExportTeacherExcel}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-3 py-2.5 text-center text-[13px] font-bold leading-5 text-white transition hover:bg-[#720B24] focus:outline-none focus:ring-2 focus:ring-[#8C0F2D]/30"
+                >
+                  <Download className="h-4 w-4 shrink-0" />
+                  <span>Export Excel Guru</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintTeacherAttendance}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-3 py-2.5 text-center text-[13px] font-bold leading-5 text-[#8C0F2D] transition hover:bg-[#FFF4F0] focus:outline-none focus:ring-2 focus:ring-[#8C0F2D]/20"
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  <span>Cetak Absensi Guru</span>
+                </button>
+              </div>
+            </section>
+
+            {/* PANEL EXPORT ABSENSI MURID */}
+            <section className="min-w-0 rounded-2xl border border-[#E7D3C1] bg-[#FFFCF8] p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F7E8E9] text-[#8C0F2D]">
+                  <UsersRound className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-[15px] font-extrabold text-[#2B1B18]">Absensi Murid</h3>
+                  <p className="text-xs text-[#8A5A48]">Export seluruh data atau pilih satu siswa untuk laporan pribadi</p>
+                </div>
+              </div>
+
+              <select
+                value={printStudentId}
+                onChange={(event) => setPrintStudentId(event.target.value)}
+                className="h-11 w-full min-w-0 rounded-xl border border-[#DCC8B6] bg-white px-4 text-[14px] text-[#2B1B18] outline-none transition focus:border-[#9C0824] focus:ring-2 focus:ring-[#9C0824]/10"
+              >
+                <option value="">Pilih siswa untuk export / cetak</option>
+                {[...students]
+                  .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
+                  .map((student) => (
+                    <option key={student.id} value={student.id}>
+                      {student.full_name || "Tanpa nama"}
+                    </option>
+                  ))}
+              </select>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={handleExportStudentExcel}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-3 py-2.5 text-center text-[13px] font-bold leading-5 text-[#8C0F2D] transition hover:bg-[#FFF4F0] focus:outline-none focus:ring-2 focus:ring-[#8C0F2D]/20 sm:col-span-2"
+                >
+                  <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                  <span>Export Excel Semua Absensi Murid</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportStudentIndividualExcel}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8C0F2D] px-3 py-2.5 text-center text-[13px] font-bold leading-5 text-white transition hover:bg-[#720B24] focus:outline-none focus:ring-2 focus:ring-[#8C0F2D]/30"
+                >
+                  <Download className="h-4 w-4 shrink-0" />
+                  <span>Export Siswa Terpilih</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintStudentAttendance}
+                  className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#DCC8B6] bg-white px-3 py-2.5 text-center text-[13px] font-bold leading-5 text-[#8C0F2D] transition hover:bg-[#FFF4F0] focus:outline-none focus:ring-2 focus:ring-[#8C0F2D]/20"
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  <span>Cetak Siswa Terpilih</span>
+                </button>
+              </div>
+            </section>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#FFF8EF] px-3 py-2 text-xs text-[#8A5A48]">
+            <span>{teacherAttendance.length} data absensi guru tersimpan</span>
+            <span>{attendance.length} data absensi KBM tersimpan</span>
           </div>
         </div>
 

@@ -37,7 +37,9 @@ type KbmReportRow = {
   semester: string | null;
   chapter: string | null;
   material_topic: string | null;
+  incident_time: string | null;
   learning_issue: string | null;
+  consequence: string | null;
   solution: string | null;
   teacher_note: string | null;
   status: string | null;
@@ -365,7 +367,9 @@ export default function KepalaSekolahLaporanKBMPage() {
         normalizeText(report.material_topic).includes(keyword) ||
         normalizeText(report.chapter).includes(keyword) ||
         normalizeText(report.teacher_note).includes(keyword) ||
+        normalizeText(report.incident_time).includes(keyword) ||
         normalizeText(report.learning_issue).includes(keyword) ||
+        normalizeText(report.consequence).includes(keyword) ||
         normalizeText(report.solution).includes(keyword);
 
       const matchStatus =
@@ -666,7 +670,9 @@ export default function KepalaSekolahLaporanKBMPage() {
         ["Semester", report.semester || "-"],
         ["BAB", report.chapter || "-"],
         ["Materi Pokok", report.material_topic || "-"],
+        ["Jam Kejadian", report.incident_time || "-"],
         ["Masalah / Kendala", report.learning_issue || "-"],
+        ["Akibat", report.consequence || "-"],
         ["Solusi", report.solution || "-"],
         ["Catatan Guru / Revisi", report.teacher_note || "-"],
       ];
@@ -837,7 +843,7 @@ export default function KepalaSekolahLaporanKBMPage() {
       }
       worksheet["!rows"]![headerRow] = { hpt: 20 };
 
-      for (let r = detailStart; r < detailStart + 6; r++) {
+      for (let r = detailStart; r < detailStart + 8; r++) {
         const labelAddress = XLSX.utils.encode_cell({ r, c: 0 });
         const valueAddress = XLSX.utils.encode_cell({ r, c: 2 });
         if (worksheet[labelAddress]) worksheet[labelAddress].s = labelStyle;
@@ -944,7 +950,7 @@ export default function KepalaSekolahLaporanKBMPage() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Cari siswa, NIPD, NISN, guru, mapel, bab, materi, masalah, solusi..."
+              placeholder="Cari siswa, NIPD, NISN, guru, mapel, bab, materi, jam kejadian, masalah, akibat, solusi..."
               className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
             />
 
@@ -1040,9 +1046,16 @@ export default function KepalaSekolahLaporanKBMPage() {
 
                   <div className="mt-5 space-y-4 text-sm">
                     <InfoSection
+                      label="Jam Kejadian"
+                      value={report.incident_time || "-"}
+                    />
+
+                    <InfoSection
                       label="Masalah / Kendala"
                       value={report.learning_issue || "-"}
                     />
+
+                    <InfoSection label="Akibat" value={report.consequence || "-"} />
 
                     <InfoSection label="Solusi" value={report.solution || "-"} />
 
@@ -1205,7 +1218,9 @@ function ReportDetailModal({
         </div>
 
         <InfoBox label="Materi Pokok" value={report.material_topic || "-"} />
+        <InfoBox label="Jam Kejadian" value={report.incident_time || "-"} />
         <InfoBox label="Masalah / Kendala" value={report.learning_issue || "-"} />
+        <InfoBox label="Akibat" value={report.consequence || "-"} />
         <InfoBox label="Solusi" value={report.solution || "-"} />
         <InfoBox
           label="Catatan Guru / Revisi"

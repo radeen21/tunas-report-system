@@ -8,7 +8,6 @@ import {
   BookOpen,
   CalendarDays,
   CalendarRange,
-  ClipboardCheck,
   FileText,
   GalleryVerticalEnd,
   GraduationCap,
@@ -30,6 +29,7 @@ type ActiveMenu =
   | "Guru"
   | "Data Mapel"
   | "ABSENSI KBM SISWA DAN GURU HARIAN"
+  | "Atur Jadwal"
   | "Laporan KBM"
   | "Laporan Akademik"
   | "RPP"
@@ -76,6 +76,11 @@ const menus: MenuItem[] = [
     name: "ABSENSI KBM SISWA DAN GURU HARIAN",
     icon: CalendarDays,
     href: "/kepalaSekolah/jadwal",
+  },
+  {
+    name: "Atur Jadwal",
+    icon: CalendarRange,
+    href: "/kepalaSekolah/atur-jadwal-guru",
   },
   {
     name: "Laporan KBM",

@@ -51,7 +51,9 @@ type KbmReportRow = {
   semester: string | null;
   chapter: string | null;
   material_topic: string | null;
+  incident_time: string | null;
   learning_issue: string | null;
+  consequence: string | null;
   solution: string | null;
   teacher_note: string | null;
   status: string | null;
@@ -76,7 +78,9 @@ type KbmForm = {
   semester: string;
   chapter: string;
   material_topic: string;
+  incident_time: string;
   learning_issue: string;
+  consequence: string;
   solution: string;
   teacher_note: string;
   status: string;
@@ -91,7 +95,9 @@ const initialForm: KbmForm = {
   semester: "Ganjil",
   chapter: "",
   material_topic: "",
+  incident_time: "",
   learning_issue: "",
+  consequence: "",
   solution: "",
   teacher_note: "",
   status: "draft",
@@ -517,7 +523,9 @@ export default function TeacherLaporanKbmPage() {
         normalizeText(report.subject_name).includes(keyword) ||
         normalizeText(report.chapter).includes(keyword) ||
         normalizeText(report.material_topic).includes(keyword) ||
+        normalizeText(report.incident_time).includes(keyword) ||
         normalizeText(report.learning_issue).includes(keyword) ||
+        normalizeText(report.consequence).includes(keyword) ||
         normalizeText(report.solution).includes(keyword) ||
         normalizeText(report.teacher_note).includes(keyword);
 
@@ -586,7 +594,9 @@ export default function TeacherLaporanKbmPage() {
       semester: report.semester || "Ganjil",
       chapter: report.chapter || "",
       material_topic: report.material_topic || "",
+      incident_time: report.incident_time || "",
       learning_issue: report.learning_issue || "",
+      consequence: report.consequence || "",
       solution: report.solution || "",
       teacher_note: report.teacher_note || "",
       status: report.status || "draft",
@@ -681,7 +691,9 @@ export default function TeacherLaporanKbmPage() {
         semester: form.semester,
         chapter: form.chapter.trim() || null,
         material_topic: form.material_topic.trim(),
+        incident_time: form.incident_time || null,
         learning_issue: form.learning_issue.trim() || null,
+        consequence: form.consequence.trim() || null,
         solution: form.solution.trim() || null,
         teacher_note: form.teacher_note.trim() || null,
         status: form.status,
@@ -867,7 +879,7 @@ export default function TeacherLaporanKbmPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cari siswa, NIPD, NISN, mapel, bab, materi, masalah, solusi..."
+                  placeholder="Cari siswa, NIPD, NISN, mapel, bab, materi, jam kejadian, masalah, akibat, solusi..."
                   className="w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                 />
 
@@ -973,10 +985,28 @@ export default function TeacherLaporanKbmPage() {
                     <div className="mt-5 space-y-3">
                       <div className="grid grid-cols-1 gap-2 border-b border-dashed border-[#E8D6C1] pb-3 md:grid-cols-[160px_1fr]">
                         <p className="text-sm font-bold text-[#6B4A3A]">
-                          Masalah
+                          Jam Kejadian
+                        </p>
+                        <p className="text-sm text-[#2B1B18]">
+                          {report.incident_time || "-"}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 border-b border-dashed border-[#E8D6C1] pb-3 md:grid-cols-[160px_1fr]">
+                        <p className="text-sm font-bold text-[#6B4A3A]">
+                          Masalah / Kendala
                         </p>
                         <p className="text-sm text-[#2B1B18]">
                           {report.learning_issue || "-"}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 border-b border-dashed border-[#E8D6C1] pb-3 md:grid-cols-[160px_1fr]">
+                        <p className="text-sm font-bold text-[#6B4A3A]">
+                          Akibat
+                        </p>
+                        <p className="text-sm text-[#2B1B18]">
+                          {report.consequence || "-"}
                         </p>
                       </div>
 
@@ -1292,7 +1322,22 @@ export default function TeacherLaporanKbmPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-bold">Masalah Belajar</label>
+                  <label className="text-sm font-bold">Jam Kejadian</label>
+                  <input
+                    type="time"
+                    value={form.incident_time}
+                    onChange={(event) =>
+                      setForm({ ...form, incident_time: event.target.value })
+                    }
+                    className="mt-2 w-full rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  />
+                  <p className="mt-1 text-xs text-[#6B4A3A]">
+                    Isi waktu saat kendala atau kejadian berlangsung.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Masalah / Kendala</label>
                   <textarea
                     value={form.learning_issue}
                     onChange={(event) =>
@@ -1300,6 +1345,19 @@ export default function TeacherLaporanKbmPage() {
                     }
                     rows={3}
                     placeholder="Contoh: Siswa masih kesulitan memahami materi tertentu"
+                    className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-bold">Akibat</label>
+                  <textarea
+                    value={form.consequence}
+                    onChange={(event) =>
+                      setForm({ ...form, consequence: event.target.value })
+                    }
+                    rows={3}
+                    placeholder="Jelaskan dampak dari masalah/kejadian terhadap proses KBM atau siswa"
                     className="mt-2 w-full resize-none rounded-xl border border-[#E8D6C1] bg-white px-4 py-3 text-sm outline-none focus:border-[#7A1F2B]"
                   />
                 </div>

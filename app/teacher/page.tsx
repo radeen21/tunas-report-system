@@ -49,6 +49,10 @@ type ScheduleRow = {
   student_id: string | null;
   subject_id: string | null;
   schedule_date: string | null;
+  day_name?: string | null;
+  class_id?: string | null;
+  rombel_id?: string | null;
+  academic_year?: string | null;
   start_time: string | null;
   end_time: string | null;
   session_name: string | null;
@@ -146,6 +150,19 @@ type AcademicReportSummary = AcademicReportRow & {
   student_name: string;
   subject_name: string;
 };
+
+const WEEK_DAYS = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"];
+
+function todayDayName() {
+  return WEEK_DAYS[(new Date().getDay() + 6) % 7];
+}
+
+function dayNameFromDate(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  return WEEK_DAYS[(date.getDay() + 6) % 7];
+}
 
 function todayYMD() {
   const date = new Date();
@@ -655,7 +672,10 @@ export default function TeacherDashboardPage() {
     const grouped = new Map<string, RombelToday>();
 
     schedules
-      .filter((schedule) => schedule.schedule_date === today)
+      .filter((schedule) =>
+        schedule.schedule_date === today ||
+        (!schedule.schedule_date && schedule.day_name === todayDayName())
+      )
       .forEach((schedule) => {
         const key = createRombelKey(schedule);
 
@@ -709,6 +729,18 @@ export default function TeacherDashboardPage() {
       )
     );
   }, [schedules, attendance, subjectMap, studentMap]);
+
+  const weeklySchedules = useMemo(() => {
+    const dayOrder = new Map(WEEK_DAYS.map((day, index) => [day, index]));
+    return [...schedules]
+      .filter((schedule) => Boolean(schedule.day_name))
+      .sort((a, b) => {
+        const dayA = dayOrder.get(a.day_name || "") ?? 99;
+        const dayB = dayOrder.get(b.day_name || "") ?? 99;
+        if (dayA !== dayB) return dayA - dayB;
+        return (a.start_time || "").localeCompare(b.start_time || "");
+      });
+  }, [schedules]);
 
   const summary = useMemo(() => {
     return {
@@ -925,6 +957,53 @@ export default function TeacherDashboardPage() {
                 </div>
               </DashboardPanel>
             </div>
+
+            <DashboardPanel
+              title="Jadwal Mingguan"
+              subtitle="Jadwal rutin yang diatur oleh Kepala Sekolah. Perubahan jadwal akan mengikuti data terbaru dari Supabase."
+            >
+              {weeklySchedules.length === 0 ? (
+                <EmptyText text="Belum ada jadwal mingguan. Jadwal dengan kolom hari (day_name) akan tampil di sini." />
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {WEEK_DAYS.map((day) => {
+                    const dayItems = weeklySchedules.filter((item) => item.day_name === day);
+                    if (dayItems.length === 0) return null;
+
+                    return (
+                      <div key={day} className="rounded-2xl border border-[#EADACA] bg-[#FFFCF8] p-4">
+                        <h3 className="mb-3 flex items-center gap-2 font-extrabold text-[#8C0F2D]">
+                          <CalendarDays className="h-4 w-4" />
+                          {day}
+                        </h3>
+                        <div className="space-y-2">
+                          {dayItems.map((item) => {
+                            const subject = item.subject_id ? subjectMap.get(item.subject_id) : null;
+                            const student = item.student_id ? studentMap.get(item.student_id) : null;
+
+                            return (
+                              <div key={item.id} className="rounded-xl border border-[#F0E4DA] bg-white p-3">
+                                <p className="font-bold text-[#2B1B18]">{subject?.name || "Mata pelajaran"}</p>
+                                <p className="mt-1 text-xs font-semibold text-[#8C0F2D]">
+                                  {formatTime(item.start_time)} – {formatTime(item.end_time)}
+                                  {item.session_name ? ` • ${item.session_name}` : ""}
+                                </p>
+                                <p className="mt-1 text-xs text-[#6F5549]">
+                                  {student?.full_name ? `Siswa: ${student.full_name}` : "Jadwal kelas/rombel"}
+                                </p>
+                                {item.material_topic ? (
+                                  <p className="mt-1 text-xs text-[#8A746C]">Materi: {item.material_topic}</p>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </DashboardPanel>
 
             <div className="grid gap-5 xl:grid-cols-4">
               <DashboardPanel
